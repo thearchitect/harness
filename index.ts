@@ -4,6 +4,7 @@
  * Per-message PLAN/BUILD mode (custom editor, mode colors, mode selector
  * message), plan-mode write/edit gating with TUI confirmation, and per-cycle
  * "planning/building finished" banners annotated with duration and USD cost.
+ * Static CONFIG block (top of file) drives all tunables: edit it, not the logic.
  *
  * // generate blocks using `echo "block name" | dev-fig-code-small`
  */
@@ -40,6 +41,56 @@ import {
   resolve,
   sep,
 } from "node:path";
+
+/* ============================================================================
+ * ▄▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▄ ▀▀█▀▀ ▀▀█▀▀ ▄▀▀▀▀       ▄▀▀▀▀ ▄▀▀▀▄ █▄  █ █▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▀
+ *  ▀▀▀▄   █   █▀▀▀█   █     █   █           █     █   █ █ ▀▄█ █▀▀     █   █ ▀▀█
+ * ▀▀▀▀    ▀   ▀   ▀   ▀   ▀▀▀▀▀  ▀▀▀▀        ▀▀▀▀  ▀▀▀  ▀   ▀ ▀     ▀▀▀▀▀  ▀▀▀
+ * ----------------------------------------------------------------------------
+ * Static configuration - single source of truth for personal defaults.
+ * Pull settings from CONFIG below; don't hardcode values in the logic.
+ *
+ * providers.*.modelOverrides mirrors the semantics of pi's models.json:
+ * entries apply to the active model when provider/model match.
+ * ========================================================================== */
+
+type ModelOverrideConfig = { contextWindow?: number };
+type ProviderConfig = { modelOverrides?: Record<string, ModelOverrideConfig> };
+
+/**
+ * Extension-level static configuration.
+ *
+ * The models below ship with pi's 272000-token default context window;
+ * the override raises it so long sessions run further before compaction.
+ * (OpenAI bills the whole request at the long-context rate once input
+ * exceeds 272K tokens regardless of the configured window.)
+ */
+const CONFIG: { providers: Record<string, ProviderConfig> } = {
+  providers: {
+    "openai-codex": {
+      modelOverrides: {
+        "gpt-6-astra": { contextWindow: 872_000 },
+        "gpt-5.6-sol": { contextWindow: 872_000 },
+      },
+    },
+  },
+};
+
+/**
+ * Apply CONFIG model overrides to a live model object. ctx.model / event.model
+ * is the session's active model - the same object pi reads for requests and
+ * compaction decisions - so setting contextWindow here is the extension-level
+ * equivalent of a models.json override. No-op for models without an entry.
+ */
+function applyContextWindowOverrides(model: ExtensionContext["model"]): void {
+  if (!model) return;
+  const override =
+    CONFIG.providers[model.provider]?.modelOverrides?.[model.id];
+  const target = override?.contextWindow;
+  if (target !== undefined && model.contextWindow !== target) {
+    model.contextWindow = target;
+  }
+}
 
 /* ============================================================================
  * ▄▀▀▀▀ █   █ ▄▀▀▀▀ ▀▀█▀▀ █▀▀▀▀ █▀▄▀█       █▀▀▀▄ █▀▀▀▄ ▄▀▀▀▄ █▀▄▀█ █▀▀▀▄ ▀▀█▀▀
@@ -603,6 +654,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
       cycleStartTime = undefined;
       baselineCost = 0;
       blockedToolCalls.clear();
+      applyContextWindowOverrides(ctx.model);
       updateStatusWidget(ctx);
       ensureThinkingBlocksVisible();
       if (ctx.mode !== "tui") return;
@@ -629,6 +681,15 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
           );
         },
       );
+    },
+  );
+
+  // Model changes (/model, Ctrl+P cycle, session restore): apply static
+  // overrides to the freshly selected model object.
+  pi.on(
+    "model_select",
+    (event: EventOf<"model_select">, _ctx: ExtensionContext): void => {
+      applyContextWindowOverrides(event.model);
     },
   );
 
@@ -696,6 +757,9 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
       event: EventOf<"before_agent_start">,
       ctx: ExtensionContext,
     ): Promise<BeforeAgentStartEventResult> => {
+      // Idempotent re-assertion each cycle: survives /reload mid-session and
+      // catalog refreshes that replace the model object.
+      applyContextWindowOverrides(ctx.model);
       applyModeWorkingMessage(ctx, activeMode);
       cycleStartTime = Date.now();
       baselineCost = totalSessionCost(ctx.sessionManager.getEntries());

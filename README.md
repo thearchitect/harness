@@ -51,6 +51,17 @@ Unless already set by the caller, the extension configures:
 
 It also ensures `showThinking: true` in Pi's global `settings.json`.
 
+### Static configuration
+
+The `CONFIG` object at the top of `index.ts` is the single source of truth for
+personal defaults — change it there, never in the logic below.
+
+- `providers.*.modelOverrides` raises the active model's `contextWindow`
+  beyond Pi's default, mirroring the semantics of a `models.json` override.
+  Currently `openai-codex/gpt-6-astra` and `openai-codex/gpt-5.6-sol` are
+  lifted to 872000 tokens so long sessions compact later. Overrides are
+  applied at session start, on every model switch, and before each agent run.
+
 ## Requirements
 
 - Pi `>=0.85.0`
