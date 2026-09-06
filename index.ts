@@ -100,7 +100,7 @@ function applyContextWindowOverrides(model: ExtensionContext["model"]): void {
  * █▀▀▀█  ▀▀▀▄  ▀▀▀▄ █▀▀   █   █ █▀▀▀▄ █     ▀▀▀▀█
  * ▀   ▀ ▀▀▀▀  ▀▀▀▀  ▀▀▀▀▀ ▀   ▀ ▀▀▀▀  ▀▀▀▀▀ ▀▀▀▀▀
  * ----------------------------------------------------------------------------
- * Mode-independent system prompt (stable across PLAN/BUILD for provider prompt caching) with {{TEMP_ROOT}}/{{WORKSPACE_TMP}} substitution.
+ * Mode-independent base prompt (stable across PLAN/BUILD for provider prompt caching) with {{TEMP_ROOT}}/{{WORKSPACE_TMP}} substitution and the {{TOOL_SECTIONS}} slot filled at assembly with registry-driven Available tools/Guidelines.
  * ----------------------------------------------------------------------------
  * ❤︎ → × ✻
  * ========================================================================== */
@@ -127,27 +127,7 @@ You must also act as an expert in any other field when requested by the user.
 
 # Tools
 
-Available tools:
-
-* \`read\`: Read file contents.
-* \`bash\`: Execute Bash commands such as \`ls\`, \`grep\`, and \`find\`.
-* \`edit\`: Make precise file edits using exact text replacement, including multiple disjoint edits in a single call.
-* \`write\`: Create or overwrite files.
-
-In addition to the tools listed above, you may use any available custom tools, depending on the project.
-
-Guidelines:
-
-* Use \`bash\` for file operations such as \`ls\`, \`rg\`, and \`find\`.
-* Use \`read\` to inspect file contents instead of \`cat\` or \`sed\`.
-* Use \`edit\` for precise changes. Each \`edits[].oldText\` value must match the source text exactly.
-* When modifying multiple separate locations in a single file, use one \`edit\` call with multiple entries in \`edits[]\` instead of making multiple \`edit\` calls.
-* Each \`edits[].oldText\` value is matched against the original file contents, before any other edits from the same call are applied.
-* Do not create overlapping or nested edits. Merge nearby changes into a single edit.
-* Keep each \`edits[].oldText\` value as small as possible while ensuring that it uniquely identifies the intended text. Do not include unnecessarily large unchanged regions.
-* Use \`write\` only when creating a new file or completely rewriting an existing file.
-* Clearly show file paths when working with files.
-
+{{TOOL_SECTIONS}}
 <mode-policies>
     <mode-prompt mode="plan">
         # Plan Mode
@@ -173,41 +153,94 @@ Guidelines:
 </mode-policies>
 `;
 
+const TOOL_SECTIONS_MARKER = "{{TOOL_SECTIONS}}";
+
 /**
- * Reproduces Pi's customPrompt assembly path while deliberately excluding its
- * built-in assistant preamble, tool prose, prompt guidelines, and customPrompt.
- * The result must remain independent of the active per-message mode so provider
- * prompt caching survives PLAN/BUILD switches.
+ * Mirrors pi's default assembly: bash earns the file-exploration guideline
+ * only when grep/find/ls are not active.
+ */
+function hasFileExplorationRule(tools: readonly string[]): boolean {
+  return (
+    tools.includes("bash") &&
+    !tools.includes("grep") &&
+    !tools.includes("find") &&
+    !tools.includes("ls")
+  );
+}
+
+/**
+ * Assembles the run's system prompt: the static base prompt (mode policies
+ * and instructions, with the {{TOOL_SECTIONS}} slot) plus registry-driven
+ * tool prose - the same "Available tools" / "Guidelines" sections pi's
+ * default assembly derives from the active tools' promptSnippet and
+ * promptGuidelines - then project context files, skills, and cwd. Any tool
+ * registered with a snippet/guidelines (built-in or custom) therefore shows
+ * up in the prompt automatically. The output must stay independent of the
+ * active per-message mode so provider prompt caching survives PLAN/BUILD
+ * switches.
  */
 function composeSystemPrompt(
   basePrompt: string,
   options: BuildSystemPromptOptions,
 ): string {
-  let prompt = basePrompt;
+  const tools = options.selectedTools ?? ["read", "bash", "edit", "write"];
+  const snippets = options.toolSnippets ?? {};
+  // Same visibility rule as pi: a tool appears in "Available tools" only
+  // when it provides a one-line promptSnippet.
+  const visibleTools = tools.filter((name) => snippets[name]);
+  const toolsList = visibleTools
+    .map((name) => `- ${name}: ${snippets[name]}`)
+    .join("\n");
+
+  // Registry guidelines first, deduped; then extension-specific extras.
+  const guidelines: string[] = [];
+  const seen = new Set<string>();
+  const addGuideline = (text: string): void => {
+    const trimmed = text.trim();
+    if (trimmed.length === 0 || seen.has(trimmed)) return;
+    seen.add(trimmed);
+    guidelines.push(trimmed);
+  };
+
+  if (hasFileExplorationRule(tools)) {
+    addGuideline("Use `bash` for file operations such as `ls`, `rg`, and `find`");
+  }
+  for (const guideline of options.promptGuidelines ?? []) {
+    addGuideline(guideline);
+  }
+  addGuideline("Clearly show file paths when working with files");
+
+  const toolSections =
+    `Available tools:\n${toolsList.length > 0 ? toolsList : "(none)"}\n\n` +
+    "In addition to the tools listed above, you may use any available custom tools, depending on the project.\n\n" +
+    `Guidelines:\n${guidelines.map((guideline) => `- ${guideline}`).join("\n")}`;
+
+  const prompt = basePrompt.replace(TOOL_SECTIONS_MARKER, toolSections);
+  let result = prompt;
 
   if (options.appendSystemPrompt) {
-    prompt += `\n\n${options.appendSystemPrompt}`;
+    result += `\n\n${options.appendSystemPrompt}`;
   }
 
   const contextFiles = options.contextFiles ?? [];
   if (contextFiles.length > 0) {
-    prompt += "\n\n<project_context>\n\n";
-    prompt += "Project-specific instructions and guidelines:\n\n";
+    result += "\n\n<project_context>\n\n";
+    result += "Project-specific instructions and guidelines:\n\n";
     for (const { path, content } of contextFiles) {
-      prompt += `<project_instructions path="${path}">\n${content}\n</project_instructions>\n\n`;
+      result += `<project_instructions path="${path}">\n${content}\n</project_instructions>\n\n`;
     }
-    prompt += "</project_context>\n";
+    result += "</project_context>\n";
   }
 
   const readAvailable =
     !options.selectedTools || options.selectedTools.includes("read");
   const skills = options.skills ?? [];
   if (readAvailable && skills.length > 0) {
-    prompt += formatSkillsForPrompt(skills);
+    result += formatSkillsForPrompt(skills);
   }
 
-  prompt += `\nCurrent working directory: ${options.cwd.replace(/\\/g, "/")}\n`;
-  return prompt;
+  result += `\nCurrent working directory: ${options.cwd.replace(/\\/g, "/")}\n`;
+  return result;
 }
 
 /* ============================================================================

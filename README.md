@@ -18,6 +18,10 @@ The extension provides:
 - trusted per-turn mode selectors appended during preflight;
 - stable system-prompt assembly so switching modes does not invalidate the
   provider prompt cache;
+- registry-driven `Available tools` / `Guidelines` sections: the base prompt
+  carries only policies and instructions, and tool prose is rendered at
+  assembly time from the active tools' `promptSnippet`/`promptGuidelines`,
+  so custom tools registered via `pi.registerTool()` show up automatically;
 - completion/interruption banners with cycle duration and USD cost.
 
 ### File mutation gates
