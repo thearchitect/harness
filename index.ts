@@ -769,6 +769,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
       if (event.toolName === "ask_user") {
         event.input.allowComment = true;
         event.input.allowFreeform = true;
+        event.input.contextExpanded = true;
         return;
       }
 
