@@ -22,6 +22,9 @@ The extension provides:
   carries only policies and instructions, and tool prose is rendered at
   assembly time from the active tools' `promptSnippet`/`promptGuidelines`,
   so custom tools registered via `pi.registerTool()` show up automatically;
+- first-run system prompt dump: the exact assembled prompt appears once per
+  session as a collapsible `◆ System prompt` transcript entry (display only,
+  never sent to the model; toggle via `CONFIG.showSystemPromptOnFirstRun`);
 - completion/interruption banners with cycle duration and USD cost.
 
 ### File mutation gates

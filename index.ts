@@ -52,10 +52,17 @@ import {
  *
  * providers.*.modelOverrides mirrors the semantics of pi's models.json:
  * entries apply to the active model when provider/model match.
+ * showSystemPromptOnFirstRun surfaces the assembled system prompt as a
+ * collapsible transcript entry on the session's first request.
  * ========================================================================== */
 
 type ModelOverrideConfig = { contextWindow?: number };
 type ProviderConfig = { modelOverrides?: Record<string, ModelOverrideConfig> };
+type ExtensionConfig = {
+  /** Debug aid: dump the assembled system prompt into the transcript on the session's first request (display-only, never sent to the model). */
+  showSystemPromptOnFirstRun?: boolean;
+  providers: Record<string, ProviderConfig>;
+};
 
 /**
  * Extension-level static configuration.
@@ -65,7 +72,8 @@ type ProviderConfig = { modelOverrides?: Record<string, ModelOverrideConfig> };
  * (OpenAI bills the whole request at the long-context rate once input
  * exceeds 272K tokens regardless of the configured window.)
  */
-const CONFIG: { providers: Record<string, ProviderConfig> } = {
+const CONFIG: ExtensionConfig = {
+  showSystemPromptOnFirstRun: true,
   providers: {
     "openai-codex": {
       modelOverrides: {
@@ -128,6 +136,7 @@ You must also act as an expert in any other field when requested by the user.
 # Tools
 
 {{TOOL_SECTIONS}}
+
 <mode-policies>
     <mode-prompt mode="plan">
         # Plan Mode
@@ -259,6 +268,9 @@ function composeSystemPrompt(
 const MODE_ENTRY_TYPE = "per-message-mode";
 const MODE_SELECTOR_MESSAGE_TYPE = "thearchitect-active-mode";
 const FINISHED_ENTRY_TYPE = "per-message-mode-finished";
+const SYSTEM_PROMPT_ENTRY_TYPE = "thearchitect-system-prompt";
+
+type SystemPromptEntryData = { text: string; model: string };
 
 type TurnMode = "plan" | "normal";
 type ModeDetails = { mode: TurnMode; durationMs?: number; costUsd?: number; interrupted?: boolean };
@@ -531,6 +543,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   let madnessEnabled = false;
   let cycleStartTime: number | undefined;
   let baselineCost = 0;
+  let systemPromptEntryShown = false;
   const blockedToolCalls = new Set<string>();
 
 /* ============================================================================
@@ -676,6 +689,40 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   );
 
   // ------------------------------------------------------------------
+  // First-run system prompt dump: collapsible transcript entry showing the
+  // exact prompt assembled for the first request of the session. Collapsed
+  // it is a one-line chip; expanded it shows the full prompt text.
+  // ------------------------------------------------------------------
+  pi.registerEntryRenderer<SystemPromptEntryData>(
+    SYSTEM_PROMPT_ENTRY_TYPE,
+    (
+      entry: CustomEntry<SystemPromptEntryData>,
+      options: EntryRenderOptions,
+      theme: Theme,
+    ): Text => {
+      const data = entry.data;
+      const summary = data
+        ? `◆ System prompt · ${data.model}`
+        : "◆ System prompt";
+      if (!data || !options.expanded) {
+        return new Text(
+          summary + (data ? theme.fg("muted", " · expand to view") : ""),
+          0,
+          0,
+        );
+      }
+      return new Text(
+        `${theme.bold(summary)}${theme.fg(
+          "muted",
+          ` · ${data.text.length.toLocaleString()} chars · first request of this session`,
+        )}\n\n${data.text}`,
+        0,
+        0,
+      );
+    },
+  );
+
+  // ------------------------------------------------------------------
   // Session lifecycle: per-message editor component + state reset
   // ------------------------------------------------------------------
   pi.on(
@@ -686,6 +733,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
       madnessEnabled = false;
       cycleStartTime = undefined;
       baselineCost = 0;
+      systemPromptEntryShown = false;
       blockedToolCalls.clear();
       applyContextWindowOverrides(ctx.model);
       updateStatusWidget(ctx);
@@ -797,16 +845,32 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
       cycleStartTime = Date.now();
       baselineCost = totalSessionCost(ctx.sessionManager.getEntries());
       const workspaceRoot = await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager);
+      const finalSystemPrompt = composeSystemPrompt(
+        workspaceRoot
+          ? systemPrompt.replaceAll("{{WORKSPACE_TMP}}", workspaceRoot)
+          : systemPrompt.replaceAll(
+              "{{WORKSPACE_TMP}}",
+              resolve(ctx.cwd, ".agent-workspace-tmp"),
+            ),
+        event.systemPromptOptions,
+      );
+      // First request of the session: surface the exact assembled prompt in
+      // the transcript as a collapsible entry (display only - never sent to
+      // the model). Reset on session_start, so a /reload shows it again.
+      if (
+        CONFIG.showSystemPromptOnFirstRun !== false &&
+        !systemPromptEntryShown
+      ) {
+        systemPromptEntryShown = true;
+        pi.appendEntry<SystemPromptEntryData>(SYSTEM_PROMPT_ENTRY_TYPE, {
+          text: finalSystemPrompt,
+          model: ctx.model
+            ? `${ctx.model.provider}/${ctx.model.id}`
+            : "unknown",
+        });
+      }
       return {
-        systemPrompt: composeSystemPrompt(
-          workspaceRoot
-            ? systemPrompt.replaceAll("{{WORKSPACE_TMP}}", workspaceRoot)
-            : systemPrompt.replaceAll(
-                "{{WORKSPACE_TMP}}",
-                resolve(ctx.cwd, ".agent-workspace-tmp"),
-              ),
-          event.systemPromptOptions,
-        ),
+        systemPrompt: finalSystemPrompt,
         message: {
           customType: MODE_SELECTOR_MESSAGE_TYPE,
           content: formatModeSelector(activeMode),
