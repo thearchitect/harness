@@ -700,28 +700,13 @@ class GateDialog implements Component {
     );
 
     if (split) {
-      const optionsActive = this.zone === "options";
-      const caption = (label: string, active: boolean, paneWidth: number): string =>
-        truncateToWidth(
-          active ? theme.fg("accent", theme.bold(`▸ ${label}`)) : theme.fg("dim", label),
-          paneWidth,
-          "",
-          true,
-        );
-      lines.push(
-        caption("decision", optionsActive, GATE_LEFT_WIDTH) +
-          " " +
-          caption("comment", !optionsActive, rightWidth),
-      );
-      const bodyRows = 1 + Math.max(editorLines.length, GATE_OPTION_LABELS.length);
-      for (let row = 1; row < bodyRows; row++) {
-        const paneRow = row - 1;
+      const bodyRows = Math.max(GATE_OPTION_LABELS.length, editorLines.length);
+      for (let row = 0; row < bodyRows; row++) {
         const left =
-          paneRow < GATE_OPTION_LABELS.length
-            ? this.optionRow(paneRow, GATE_LEFT_WIDTH)
+          row < GATE_OPTION_LABELS.length
+            ? this.optionRow(row, GATE_LEFT_WIDTH)
             : " ".repeat(GATE_LEFT_WIDTH);
-        const right =
-          paneRow < editorLines.length ? editorLines[paneRow] : " ".repeat(rightWidth);
+        const right = editorLines[row] ?? " ".repeat(rightWidth);
         lines.push(left + " " + right);
       }
     } else {

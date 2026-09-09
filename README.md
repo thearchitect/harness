@@ -51,9 +51,10 @@ The gate comment reaches the running model without interrupting the run:
   in the error reason, and the current run ends (no steering — there is no
   run left to steer).
 
-The dialog shows an explicit active zone: `▸ decision` or `▸ comment` caption,
-`borderMuted`/`accent` textarea frame, and a dimmed option list while the
-comment field is focused. The comment field spans the full dialog width minus
+The dialog shows an explicit active zone without pane headers: the textarea
+frame switches `borderMuted`/`accent`, the option list turns muted while its
+armed choice stays accent-highlighted, and the status line is prefixed with
+`▸ options` / `▸ comment`. The comment field spans the full dialog width minus
 the option column.
 
 Gate keys: in the option list `↑`/`↓` choose, `Enter` submits, `Esc` stops

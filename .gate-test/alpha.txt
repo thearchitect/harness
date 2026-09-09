@@ -1,1 +1,0 @@
-gate test 1 — plain Yes
