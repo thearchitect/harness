@@ -2,14 +2,17 @@
  * thearchitect.pi - personal Pi extension.
  *
  * Per-message PLAN/BUILD mode (custom editor, mode colors, mode selector
- * message), plan-mode write/edit gating with TUI confirmation, and per-cycle
- * "planning/building finished" banners annotated with duration and USD cost.
+ * message), plan-mode write/edit gating, and per-cycle "planning/building
+ * finished" banners annotated with duration and USD cost. BUILD write/edit
+ * gates use an interactive Yes / No (why?) / Stop dialog whose comment is
+ * fed back to the running model without interrupting it.
  * Static CONFIG block (top of file) drives all tunables: edit it, not the logic.
  *
  * // generate blocks using `echo "block name" | dev-fig-code-small`
  */
 
 import {
+  createEditToolDefinition,
   createWriteToolDefinition,
   CustomEditor,
   formatSkillsForPrompt,
@@ -28,7 +31,19 @@ import {
   type Theme,
   type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { Text, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import {
+  decodeKittyPrintable,
+  Editor,
+  Key,
+  matchesKey,
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+  type Component,
+  type EditorTheme,
+  type TUI,
+} from "@earendil-works/pi-tui";
 import { readFileSync, writeFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
@@ -408,6 +423,427 @@ function formatCost(costUsd: number): string {
 }
 
 /* ============================================================================
+ * █▀▀▀▀ █▀▀▀▄ █  ▄▀ █▀▀▀▀ █▀▀▀▄       ▄▀▀▀▀ █▀▀▀▀ ▀▀█▀▀ █▀▀▀▀ █▀▀▀▀ ▄▀▀▀▀ █▀▀▀▀
+ * █▀▀   █▀▀▀▄ █▀▀▄  █▀▀   █   █       █     █▀▀     █   █▀▀   █▀▀    ▀▀▀▄  █▀▀
+ * ▀▀▀▀▀ ▀   ▀ ▀   ▀ ▀▀▀▀▀ ▀▀▀▀        ▀▀▀▀  ▀▀▀▀▀   ▀   ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀  ▀▀▀▀▀
+ * ▄▀▀▀▀ ▄▀▀▀▄ █▀▀▀▄ █▀▀▀▀ ▄▀▀▀▀ ▀▀█▀▀  █  ▄▀ █▀▀▀▀ █▀▀▀▄ █▀▀▀▀ ▄▀▀▀▀ ▀▀█▀▀
+ * █   █ █   █ █   █ █▀▀   █  ▀▀▄   █   █▀▀▄  █▀▀   █▀▀▀▄ █▀▀    ▀▀▀▄   █
+ * ▀   ▀  ▀▀▀  ▀▀▀▀  ▀▀▀▀▀  ▀▀▀▀  ▀▀▀▀▀  ▀   ▀ ▀▀▀▀▀ ▀   ▀ ▀▀▀▀▀ ▀▀▀▀  ▀▀▀▀▀
+ * ----------------------------------------------------------------------------
+ * Permission-gate dialog: BUILD write/edit confirmations offer Yes / No (why?) /
+ * Stop with a multiline comment field (options left, wider textarea right). The
+ * comment is delivered back to the model without interrupting the run: as the
+ * tool-result text (error reason for No/Stop, appended content for Yes) and as
+ * a steer message — Stop carries it in the tool result only.
+ * ========================================================================== */
+
+type GateAction = "allow" | "reject" | "stop";
+type GateDecision = { action: GateAction; comment?: string };
+
+const GATE_MIN_EDITOR_WIDTH = 34;
+const GATE_LEFT_WIDTH = 24;
+const GATE_COMMENT_FIFO_LIMIT = 256;
+
+const GATE_OPTION_LABELS: readonly { action: GateAction; label: string }[] = [
+  { action: "allow", label: "Yes" },
+  { action: "reject", label: "No (why?)" },
+  { action: "stop", label: "Stop" },
+];
+
+/** Minimal select-list palette the Editor theme requires (mirrors pi-ask-user). */
+function gateSelectListTheme(theme: Theme): EditorTheme["selectList"] {
+  return {
+    selectedPrefix: (t: string): string => theme.fg("accent", t),
+    selectedText: (t: string): string => theme.fg("accent", t),
+    description: (t: string): string => theme.fg("muted", t),
+    scrollInfo: (t: string): string => theme.fg("dim", t),
+    noMatch: (t: string): string => theme.fg("warning", t),
+  };
+}
+
+/** Editor theme whose border color follows the dialog's active zone. */
+function gateEditorTheme(theme: Theme, commentActive: () => boolean): EditorTheme {
+  return {
+    borderColor: (s: string): string =>
+      theme.fg(commentActive() ? "accent" : "borderMuted", s),
+    selectList: gateSelectListTheme(theme),
+  };
+}
+
+function gateTopBorder(theme: Theme, width: number, title: string): string {
+  const inner = Math.max(1, width - 2);
+  const label = ` ${title} `;
+  if (inner < label.length + 2) {
+    return theme.fg("accent", "╭" + "─".repeat(inner) + "╮");
+  }
+  return (
+    theme.fg("accent", "╭─") +
+    theme.fg("dim", theme.bold(label)) +
+    theme.fg("accent", "─".repeat(Math.max(0, inner - 1 - label.length)) + "╮")
+  );
+}
+
+function gateBottomBorder(theme: Theme, width: number): string {
+  const inner = Math.max(1, width - 2);
+  return theme.fg("accent", "╰" + "─".repeat(inner) + "╯");
+}
+
+/** Pad an ANSI-aware line to exactly `width` columns (no truncation). */
+function padLineToWidth(line: string, width: number): string {
+  const used = visibleWidth(line);
+  return used >= width ? line : line + " ".repeat(width - used);
+}
+
+/** First printable single character of the data, or undefined for controls. */
+function printableChar(data: string): string | undefined {
+  const kittyPrintable = decodeKittyPrintable(data);
+  if (kittyPrintable !== undefined) return kittyPrintable;
+  const characters = [...data];
+  if (characters.length !== 1) return undefined;
+  const [character] = characters;
+  if (!character) return undefined;
+  const code = character.charCodeAt(0);
+  if (code < 32 || code === 0x7f || (code >= 0x80 && code <= 0x9f)) return undefined;
+  return character;
+}
+
+/**
+ * Inline (editor-slot) dialog: option column on the left, multiline comment
+ * editor taking the larger share of the width on the right.
+ *
+ * Keys:
+ * - options zone: ↑/↓ choose, Enter submit, Tab ⇄ comment, Esc = cancel (null)
+ * - comment zone: Enter newline, Ctrl+Enter submit, Shift+Enter/Ctrl+J newline,
+ *   Esc back to options, Tab ⇄ options. Typing in the options zone drops
+ *   straight into the comment field.
+ */
+class GateDialog implements Component {
+  private readonly editor: Editor;
+  private readonly tui: TUI;
+  private readonly theme: Theme;
+  private readonly keybindings: KeybindingsManager;
+  private readonly onDone: (result: GateDecision | null) => void;
+  private readonly detail: string;
+
+  private selectedIndex = 0; // Yes
+  private zone: "options" | "comment" = "options";
+  private warning: string | undefined;
+  private _focused = false;
+
+  constructor(
+    tui: TUI,
+    theme: Theme,
+    keybindings: KeybindingsManager,
+    tool: string,
+    path: string,
+    onDone: (result: GateDecision | null) => void,
+  ) {
+    this.tui = tui;
+    this.theme = theme;
+    this.keybindings = keybindings;
+    this.onDone = onDone;
+    this.detail = `${tool}: ${path}`;
+    // Enter must insert a newline in the comment field; submission happens via
+    // Ctrl+Enter or from the options zone. disableSubmit makes the editor
+    // swallow plain Enter instead of invoking onSubmit. The border color
+    // follows the active zone (see gateEditorTheme).
+    this.editor = new Editor(
+      tui,
+      gateEditorTheme(theme, () => this.zone === "comment"),
+      { paddingX: 1 },
+    );
+    this.editor.disableSubmit = true;
+  }
+
+  get focused(): boolean {
+    return this._focused;
+  }
+
+  set focused(value: boolean) {
+    if (this._focused === value) return;
+    this._focused = value;
+    this.editor.focused = value && this.zone === "comment";
+  }
+
+  invalidate(): void {
+    this.editor.invalidate();
+  }
+
+  private comment(): string {
+    return this.editor.getText().trim();
+  }
+
+  private setZone(zone: "options" | "comment"): void {
+    if (this.zone === zone) return;
+    this.zone = zone;
+    this.editor.focused = zone === "comment" && this._focused;
+    this.tui.requestRender();
+  }
+
+  private submit(): void {
+    const option = GATE_OPTION_LABELS[this.selectedIndex];
+    const text = this.comment();
+    if (option.action === "reject" && text.length === 0) {
+      this.warning = "No (why?) requires a comment — say what is wrong / what to fix";
+      this.setZone("comment");
+      return;
+    }
+    this.warning = undefined;
+    this.onDone({ action: option.action, comment: text.length > 0 ? text : undefined });
+  }
+
+  private moveSelection(delta: number): void {
+    this.selectedIndex = Math.max(
+      0,
+      Math.min(GATE_OPTION_LABELS.length - 1, this.selectedIndex + delta),
+    );
+    this.warning = undefined;
+    this.tui.requestRender();
+  }
+
+  handleInput(data: string): void {
+    if (this.zone === "comment") {
+      // Ctrl+Enter submits from the comment field; plain Enter is a newline.
+      if (matchesKey(data, Key.ctrl("enter"))) {
+        this.submit();
+        return;
+      }
+      if (matchesKey(data, Key.escape)) {
+        this.setZone("options");
+        return;
+      }
+      if (this.keybindings.matches(data, "tui.input.newLine")) {
+        this.editor.handleInput(data);
+        this.tui.requestRender();
+        return;
+      }
+      if (this.keybindings.matches(data, "tui.input.submit")) {
+        this.editor.insertTextAtCursor("\n");
+        this.tui.requestRender();
+        return;
+      }
+      if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift("tab"))) {
+        this.setZone("options");
+        return;
+      }
+      this.editor.handleInput(data);
+      this.tui.requestRender();
+      return;
+    }
+
+    // Options zone.
+    if (this.keybindings.matches(data, "tui.select.up")) {
+      this.moveSelection(-1);
+      return;
+    }
+    if (this.keybindings.matches(data, "tui.select.down")) {
+      this.moveSelection(1);
+      return;
+    }
+    if (this.keybindings.matches(data, "tui.select.confirm")) {
+      this.submit();
+      return;
+    }
+    if (this.keybindings.matches(data, "tui.select.cancel")) {
+      this.onDone(null);
+      return;
+    }
+    if (matchesKey(data, Key.tab) || matchesKey(data, Key.shift("tab"))) {
+      this.setZone("comment");
+      return;
+    }
+    if (printableChar(data) !== undefined) {
+      // Typing jumps straight into the comment field.
+      this.setZone("comment");
+      this.editor.handleInput(data);
+      this.tui.requestRender();
+    }
+  }
+
+  private optionRow(index: number, width: number): string {
+    const option = GATE_OPTION_LABELS[index];
+    const selected = index === this.selectedIndex;
+    const mark = selected ? "●" : "○";
+    const line = `${mark} ${option.label}`;
+    let styled: string;
+    if (this.zone === "comment") {
+      // The list is inert while the comment field is active, but the armed
+      // submit target must stay readable: accent without bold, peers muted.
+      styled = selected
+        ? this.theme.fg("accent", line)
+        : this.theme.fg("muted", line);
+    } else if (selected) {
+      styled = this.theme.fg("accent", this.theme.bold(line));
+    } else {
+      styled = this.theme.fg("text", line);
+    }
+    return truncateToWidth(styled, width, "", true);
+  }
+
+  render(width: number): string[] {
+    const theme = this.theme;
+    const lines: string[] = [];
+    lines.push(gateTopBorder(theme, width, "Allow file change?"));
+    lines.push(
+      padLineToWidth(
+        truncateToWidth(theme.fg("muted", this.detail), width - 2, "", false),
+        width,
+      ),
+    );
+    lines.push("");
+
+    // The comment field takes everything left over after the option list.
+    const split = width >= GATE_LEFT_WIDTH + 1 + GATE_MIN_EDITOR_WIDTH;
+    const rightWidth = split ? width - GATE_LEFT_WIDTH - 1 : width;
+    const editorLines = this.editor.render(rightWidth).map((line) =>
+      padLineToWidth(line, rightWidth),
+    );
+
+    if (split) {
+      const optionsActive = this.zone === "options";
+      const caption = (label: string, active: boolean, paneWidth: number): string =>
+        truncateToWidth(
+          active ? theme.fg("accent", theme.bold(`▸ ${label}`)) : theme.fg("dim", label),
+          paneWidth,
+          "",
+          true,
+        );
+      lines.push(
+        caption("decision", optionsActive, GATE_LEFT_WIDTH) +
+          " " +
+          caption("comment", !optionsActive, rightWidth),
+      );
+      const bodyRows = 1 + Math.max(editorLines.length, GATE_OPTION_LABELS.length);
+      for (let row = 1; row < bodyRows; row++) {
+        const paneRow = row - 1;
+        const left =
+          paneRow < GATE_OPTION_LABELS.length
+            ? this.optionRow(paneRow, GATE_LEFT_WIDTH)
+            : " ".repeat(GATE_LEFT_WIDTH);
+        const right =
+          paneRow < editorLines.length ? editorLines[paneRow] : " ".repeat(rightWidth);
+        lines.push(left + " " + right);
+      }
+    } else {
+      for (let row = 0; row < GATE_OPTION_LABELS.length; row++) {
+        lines.push(this.optionRow(row, width));
+      }
+      lines.push("");
+      for (const editorLine of editorLines) {
+        lines.push(editorLine);
+      }
+    }
+
+    lines.push("");
+    const submitTarget = GATE_OPTION_LABELS[this.selectedIndex].label;
+    const status =
+      this.warning ??
+      (this.zone === "comment"
+        ? `submit: ${submitTarget} · Enter newline · Ctrl+Enter submit · Tab/Esc → options`
+        : `↑/↓ choose · Enter submit · Tab → comment · Esc = Stop`);
+    const zoneTag =
+      this.zone === "comment" ? theme.fg("accent", "▸ comment") : theme.fg("accent", "▸ options");
+    const styledStatus = this.warning
+      ? theme.fg("warning", status)
+      : theme.fg("dim", status);
+    lines.push(
+      padLineToWidth(
+        truncateToWidth(`${zoneTag} ${styledStatus}`, width - 2, "", false),
+        width,
+      ),
+    );
+    lines.push(gateBottomBorder(theme, width));
+    return lines;
+  }
+}
+
+/**
+ * Wraps a tool-call renderer, appending the user's gate comment below the
+ * rendered call content (approve-with-comment only). Display-only: the
+ * comment itself still travels to the model through the tool result and the
+ * steer message.
+ */
+class GateCommentRow implements Component {
+  constructor(
+    private readonly base: Component,
+    private readonly theme: Theme,
+    private readonly comment: string,
+  ) {}
+
+  invalidate(): void {
+    this.base.invalidate();
+  }
+
+  render(width: number): string[] {
+    const label = `${this.theme.fg("dim", "✻ your comment:")} ${this.comment}`;
+    const commentLines = wrapTextWithAnsi(label, Math.max(8, width)).map((line) =>
+      padLineToWidth(line, width),
+    );
+    return [...this.base.render(width), "", ...commentLines];
+  }
+}
+
+/**
+ * Show the permission-gate dialog. Returns the decision, or null when the
+ * user cancels (Esc) — treated by the caller as Stop without a comment.
+ * TUI uses the rich GateDialog component; other dialog-capable modes fall
+ * back to a select + input chain.
+ */
+async function askGateDecision(
+  ctx: ExtensionContext,
+  tool: string,
+  path: string,
+): Promise<GateDecision | null> {
+  if (ctx.mode === "tui") {
+    try {
+      return await ctx.ui.custom<GateDecision | null>(
+        (tui, theme, keybindings, done) => {
+          let closed = false;
+          const close = (result: GateDecision | null): void => {
+            if (closed) return;
+            closed = true;
+            ctx.signal?.removeEventListener("abort", onAbort);
+            done(result);
+          };
+          const onAbort = (): void => close(null);
+          ctx.signal?.addEventListener("abort", onAbort, { once: true });
+          return new GateDialog(tui, theme, keybindings, tool, path, close);
+        },
+      );
+    } catch {
+      // Component failed to mount; degrade to the dialog chain below.
+    }
+  }
+
+  const prompt = `Allow file change?\n${tool}: ${path}`;
+  const choice = await ctx.ui.select(prompt, [
+    "Yes",
+    "No — reject (comment required)",
+    "Stop",
+  ]);
+  if (choice === "Yes") {
+    const comment = await ctx.ui.input(
+      "Optional comment (Enter to skip).",
+      "Comment for the model…",
+    );
+    const trimmed = comment?.trim();
+    return { action: "allow", comment: trimmed ? trimmed : undefined };
+  }
+  if (choice === "No — reject (comment required)") {
+    const comment = await ctx.ui.input(
+      "Why reject? Required — the model sees this comment.",
+      "What is wrong / what to fix…",
+    );
+    const trimmed = comment?.trim();
+    if (!trimmed) return { action: "stop" };
+    return { action: "reject", comment: trimmed };
+  }
+  // "Stop" or a cancelled dialog both mean reject-and-stop without steer.
+  return { action: "stop" };
+}
+
+
+/* ============================================================================
  * █▀▀▀▀ ▀▀█▀▀ █     █▀▀▀▀       ▄▀▀▀▀ █   █ ▄▀▀▀▄ █▄  █ ▄▀▀▀▀ █▀▀▀▀
  * █▀▀     █   █     █▀▀         █     █▀▀▀█ █▀▀▀█ █ ▀▄█ █ ▀▀█ █▀▀
  * ▀     ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀▀        ▀▀▀▀ ▀   ▀ ▀   ▀ ▀   ▀  ▀▀▀  ▀▀▀▀▀
@@ -533,11 +969,28 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
 
   // Keep write calls fully visible without expanding every tool row. Reuse
   // Pi's definition and renderer; only override the renderer's expansion input.
+  // renderCall also appends the user's gate comment (approve-with-comment)
+  // below the rendered content — see GateCommentRow.
   const writeTool = createWriteToolDefinition(process.cwd());
   pi.registerTool({
     ...writeTool,
-    renderCall: (args, theme, context) =>
-      writeTool.renderCall!(args, theme, { ...context, expanded: true }),
+    renderCall: (args, theme, context) => {
+      const base = writeTool.renderCall!(args, theme, { ...context, expanded: true });
+      const comment = pendingGateComments.get(context.toolCallId);
+      return comment === undefined ? base : new GateCommentRow(base, theme, comment);
+    },
+  });
+
+  // Mirror the same comment row for edit gates (keeps Pi's own renderer and
+  // its collapse behavior otherwise untouched).
+  const editTool = createEditToolDefinition(process.cwd());
+  pi.registerTool({
+    ...editTool,
+    renderCall: (args, theme, context) => {
+      const base = editTool.renderCall!(args, theme, context);
+      const comment = pendingGateComments.get(context.toolCallId);
+      return comment === undefined ? base : new GateCommentRow(base, theme, comment);
+    },
   });
 
   const tempRoot = await canonicalizeProspectivePath(tmpdir());
@@ -549,6 +1002,35 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   let baselineCost = 0;
   let systemPromptEntryShown = false;
   const blockedToolCalls = new Set<string>();
+  // toolCallId -> comment for write/edit calls approved with a comment: the
+  // comment is appended to the real tool result once the tool completes.
+  const pendingGateComments = new Map<string, string>();
+
+  /**
+   * Deliver a gate comment to the running agent as a steer message (same path
+   * as user typing while streaming). expandPromptTemplates=false keeps the
+   * comment verbatim: a leading "/" must not trigger a command or template.
+   */
+  function sendGateSteer(comment: string): void {
+    try {
+      pi.sendUserMessage(comment, { deliverAs: "steer", expandPromptTemplates: false });
+    } catch {
+      // Best-effort: the tool-result channel still carries the comment.
+    }
+  }
+
+  /**
+   * Remember an approved-with-comment tool call. Entries stay until the
+   * session starts over (bounded FIFO) so tool rows keep showing the comment
+   * on any later re-render.
+   */
+  function rememberGateComment(toolCallId: string, comment: string): void {
+    if (pendingGateComments.size >= GATE_COMMENT_FIFO_LIMIT) {
+      const oldest = pendingGateComments.keys().next().value;
+      if (oldest !== undefined) pendingGateComments.delete(oldest);
+    }
+    pendingGateComments.set(toolCallId, comment);
+  }
 
 /* ============================================================================
  * █   █ █▀▀▀▀ █▀▀▀▄ █▀▀▀▄ █▀▀▀▄       █▀▀▀▄ █     ▄▀▀▀▄ ▄▀▀▀▀ █  ▄▀ █▀▀▀▀ █▀▀▀▄
@@ -739,6 +1221,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
       baselineCost = 0;
       systemPromptEntryShown = false;
       blockedToolCalls.clear();
+      pendingGateComments.clear();
       applyContextWindowOverrides(ctx.model);
       updateStatusWidget(ctx);
       ensureThinkingBlocksVisible();
@@ -811,6 +1294,9 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   // Input: per-message mode selection (steering/follow-up keep the run)
   // ------------------------------------------------------------------
   pi.on("input", (event: EventOf<"input">): InputEventResult => {
+    // Extension-originated prompts (gate steer comments) must pass through
+    // verbatim: no "!"-prefix handling, no mode chip, no mode flip.
+    if (event.source === "extension") return { action: "continue" };
     let text = event.text;
     let requestedMode: TurnMode;
 
@@ -919,7 +1405,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   //  - ask_user: always offer the optional-comment row and the custom
   //    (freeform) answer row in the dialog, whatever the model passed.
   //  - write/edit gate: plan blocks outside /tmp + session workspace,
-  //    build asks for UI confirmation (TUI or RPC), madness bypasses
+  //    build asks the Yes/No(why?)/Stop dialog (TUI or RPC), madness bypasses
   // ------------------------------------------------------------------
   pi.on(
     "tool_call",
@@ -995,12 +1481,63 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
 
       reportBlocked(true, `${tool} approval`);
       try {
-        const allowed = await ctx.ui.confirm("Allow file change?", `${tool}: ${path}`);
-        if (!allowed) return { block: true, reason: "Rejected by user" };
+        const decision = await askGateDecision(ctx, tool, path);
+        if (!decision || decision.action === "stop") {
+          // Esc or Stop: reject and end the run (tool result only, no steer —
+          // the agent stops after this batch, so there is nowhere to steer to).
+          const comment = decision?.comment;
+          return {
+            block: true,
+            terminate: true,
+            reason: comment
+              ? `File change stopped by user — ${comment}`
+              : "File change stopped by user",
+          };
+        }
+        if (decision.action === "reject") {
+          // No (why?): reject this call and let the model correct course — the
+          // comment reaches it both as the error result and as a steer message.
+          const comment = decision.comment ?? "";
+          if (comment) sendGateSteer(comment);
+          return {
+            block: true,
+            reason: comment
+              ? `File change rejected by user — ${comment}`
+              : "Rejected by user",
+          };
+        }
+        // Yes: allow the change; an optional comment is appended to the tool
+        // result after execution and also steered to the model.
+        if (decision.comment) {
+          rememberGateComment(event.toolCallId, decision.comment);
+          sendGateSteer(decision.comment);
+        }
+        return;
       } finally {
         reportBlocked(false, `${tool} approval`);
       }
-      return;
+    },
+  );
+
+  // ------------------------------------------------------------------
+  // Approved-with-comment write/edit calls: the comment opens the tool's
+  // result content (so the model always sees it attached to the executed
+  // change) and stays in pendingGateComments for the row renderer to draw it
+  // under the call content. Blocked calls never reach this hook — their
+  // comment is already part of the error reason.
+  // ------------------------------------------------------------------
+  pi.on(
+    "tool_result",
+    (event: EventOf<"tool_result">) => {
+      const comment = pendingGateComments.get(event.toolCallId);
+      if (comment === undefined) return;
+      if (event.isError) return; // nothing was written; the row marker stays
+      return {
+        content: [
+          { type: "text", text: `✻ your comment: ${comment}` },
+          ...(event.content ?? []),
+        ],
+      };
     },
   );
 }

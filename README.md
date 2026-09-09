@@ -33,9 +33,34 @@ Calls to the built-in `write` and `edit` tools are intercepted:
 
 - PLAN permits mutations only inside the OS temporary directory or the
   session workspace;
-- BUILD asks for UI confirmation before mutations outside those locations;
+- BUILD asks for a three-way decision before mutations outside those
+  locations — `Yes` / `No (why?)` / `Stop` — in a dialog with a multiline
+  comment field (options on the left, wider textarea on the right);
 - non-interactive mutations that require confirmation are blocked;
 - `/madness` or `Ctrl+\` toggles a full bypass for the current session.
+
+The gate comment reaches the running model without interrupting the run:
+
+- `Yes` + optional comment: the change is applied; the comment is shown
+  right under the call content in the tool row and prepended to the tool
+  result, then steered to the model as a user message.
+- `No (why?)` + required comment: the call is rejected with the comment as
+  the error reason, and the same comment is steered to the model as a user
+  message — the model sees why the change was refused and corrects course.
+- `Stop` + optional comment: the call is rejected, the comment appears only
+  in the error reason, and the current run ends (no steering — there is no
+  run left to steer).
+
+The dialog shows an explicit active zone: `▸ decision` or `▸ comment` caption,
+`borderMuted`/`accent` textarea frame, and a dimmed option list while the
+comment field is focused. The comment field spans the full dialog width minus
+the option column.
+
+Gate keys: in the option list `↑`/`↓` choose, `Enter` submits, `Esc` stops
+without a comment; in the comment field `Enter` inserts a newline and
+`Ctrl+Enter` submits, `Esc` returns to the options; `Tab`/`Shift+Tab`
+switches between the two zones. In RPC/headless modes the gate degrades to
+a `select`/`input` dialog chain.
 
 The status line below the editor shows whether mutation gates are active.
 
