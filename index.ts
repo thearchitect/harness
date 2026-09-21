@@ -5,13 +5,17 @@
  * message), plan-mode write/edit gating, and per-cycle "planning/building
  * finished" banners annotated with duration and USD cost. BUILD write/edit
  * gates use an interactive Yes / No (why?) / Stop dialog whose comment is
- * fed back to the running model without interrupting it.
+ * fed back to the running model without interrupting it. The "/-" command
+ * aborts the bash call that is currently executing (its process tree only)
+ * and steers the given message to the model without aborting the run.
  * Static CONFIG block (top of file) drives all tunables: edit it, not the logic.
  *
  * // generate blocks using `echo "block name" | dev-fig-code-small`
  */
 
 import {
+  CONFIG_DIR_NAME,
+  createBashToolDefinition,
   createEditToolDefinition,
   createWriteToolDefinition,
   CustomEditor,
@@ -180,29 +184,19 @@ You must also act as an expert in any other field when requested by the user.
 # Tools
 
 {{TOOL_SECTIONS}}
+
+* Pass file text to \`edit\`/\`write\` tools literally: emit real Unicode characters (Cyrillic, —, «», etc) in edit oldText/newText and write content — do not pre-escape them as \\uXXXX; matching is literal.
+
 `;
 
 const TOOL_SECTIONS_MARKER = "{{TOOL_SECTIONS}}";
-
-/**
- * Mirrors pi's default assembly: bash earns the file-exploration guideline
- * only when grep/find/ls are not active.
- */
-function hasFileExplorationRule(tools: readonly string[]): boolean {
-  return (
-    tools.includes("bash") &&
-    !tools.includes("grep") &&
-    !tools.includes("find") &&
-    !tools.includes("ls")
-  );
-}
 
 /**
  * Assembles the run's system prompt: the static base prompt (mode policies
  * and instructions, with the {{TOOL_SECTIONS}} slot) plus registry-driven
  * tool prose - the same "Available tools" / "Guidelines" sections pi's
  * default assembly derives from the active tools' promptSnippet and
- * promptGuidelines - then project context files, skills, and cwd. Any tool
+ * toolGuidelines - then project context files, skills, and cwd. Any tool
  * registered with a snippet/guidelines (built-in or custom) therefore shows
  * up in the prompt automatically. The output must stay independent of the
  * active per-message mode so provider prompt caching survives PLAN/BUILD
@@ -221,7 +215,12 @@ function composeSystemPrompt(
     .map((name) => `- ${name}: ${snippets[name]}`)
     .join("\n");
 
-  // Registry guidelines first, deduped; then extension-specific extras.
+  // Guidelines: mirror pi's buildRules (pi-coding-agent 0.86.1
+  // dist/core/system-prompt.js) so the full prompt replacement carries the
+  // same bullets pi's own assembly derives for this tool set - the
+  // file-exploration rule, every active tool's toolGuidelines in
+  // selectedTools order, extra promptGuidelines, then pi's defaults. Keep in
+  // sync when pi updates these rules.
   const guidelines: string[] = [];
   const seen = new Set<string>();
   const addGuideline = (text: string): void => {
@@ -231,13 +230,31 @@ function composeSystemPrompt(
     guidelines.push(trimmed);
   };
 
-  if (hasFileExplorationRule(tools)) {
-    addGuideline("Use `bash` for file operations such as `ls`, `rg`, and `find`");
+  const hasBash = tools.includes("bash");
+  const hasPowerShell = tools.includes("powershell");
+  const hasGrep = tools.includes("grep");
+  const hasFind = tools.includes("find");
+  const hasLs = tools.includes("ls");
+  if ((hasBash || hasPowerShell) && !hasGrep && !hasFind && !hasLs) {
+    addGuideline(
+      hasBash && hasPowerShell
+        ? "Use bash or PowerShell for file operations like listing, searching, and finding files"
+        : hasPowerShell
+          ? "Use PowerShell for file operations like listing, searching, and finding files"
+          : "Use bash for file operations like ls, rg, find",
+    );
+  }
+  const toolGuidelines = options.toolGuidelines ?? {};
+  for (const name of tools) {
+    for (const guideline of toolGuidelines[name] ?? []) {
+      addGuideline(guideline);
+    }
   }
   for (const guideline of options.promptGuidelines ?? []) {
     addGuideline(guideline);
   }
-  addGuideline("Clearly show file paths when working with files");
+  addGuideline("Be concise in your responses");
+  addGuideline("Show file paths clearly when working with files");
 
   const toolSections =
     `Available tools:\n${toolsList.length > 0 ? toolsList : "(none)"}\n\n` +
@@ -919,6 +936,38 @@ function agentSettingsPath(): string {
 }
 
 /**
+ * Shell overrides pi passes to the built-in bash tool, read from the same
+ * settings files pi merges (global agent settings first, then the project
+ * settings on top). Missing keys mean pi's defaults. Needed because the "/-"
+ * feature re-registers bash with an interrupt handle of its own; without this
+ * the wrapper would silently drop shellPath and shellCommandPrefix.
+ */
+function bashShellOptions(): { commandPrefix?: string; shellPath?: string } {
+  type ShellSettings = { shellCommandPrefix?: unknown; shellPath?: unknown };
+  const merged: { commandPrefix?: string; shellPath?: string } = {};
+  const settingsFiles = [
+    agentSettingsPath(),
+    join(process.cwd(), CONFIG_DIR_NAME, "settings.json"),
+  ];
+  for (const settingsPath of settingsFiles) {
+    let settings: ShellSettings;
+    try {
+      settings = JSON.parse(readFileSync(settingsPath, "utf8")) as ShellSettings;
+    } catch {
+      continue; // Missing/unreadable file: pi's defaults apply.
+    }
+    if (typeof settings.shellCommandPrefix === "string") {
+      merged.commandPrefix = settings.shellCommandPrefix;
+    }
+    if (typeof settings.shellPath === "string") {
+      // pi expands a leading "~" in getShellPath(); mirror that here.
+      merged.shellPath = settings.shellPath.replace(/^~(?=\/|$)/, homedir());
+    }
+  }
+  return merged;
+}
+
+/**
  * Ctrl+T (app.thinking.toggle) persists hideThinkingBlock=true into global
  * settings, which would hide thinking blocks on every later startup. Flip it
  * back to false so thinking blocks stay visible by default. No-op when
@@ -938,6 +987,9 @@ function ensureThinkingBlocksVisible(): void {
     // Ignore: missing/unreadable settings file, nothing to fix.
   }
 }
+
+/** Per-call bash interrupt handle for "/-": abort the controller and record why. */
+type BashInterrupt = { controller: AbortController; reason?: string };
 
 export default async function thearchitectExtension(pi: ExtensionAPI): Promise<void> {
   process.env.PI_ASK_USER_DISPLAY_MODE ??= "inline";
@@ -979,6 +1031,48 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
     },
   });
 
+  // Built-in bash is re-registered only to give "/-" a per-call interrupt
+  // handle: the wrapper combines the run's abort signal with its own
+  // controller, so aborting the controller kills this command's process tree
+  // (the tool then reports "Command aborted") without aborting the run.
+  // Everything else - spawn, timeout, truncation, renderers, snippet - comes
+  // from pi's definition unchanged.
+  const bashTool = createBashToolDefinition(process.cwd(), bashShellOptions());
+  pi.registerTool({
+    ...bashTool,
+    execute: async (toolCallId, params, signal, onUpdate, ctx) => {
+      const interrupt: BashInterrupt = { controller: new AbortController() };
+      bashInterrupts.set(toolCallId, interrupt);
+      try {
+        return await bashTool.execute(
+          toolCallId,
+          params,
+          signal
+            ? AbortSignal.any([signal, interrupt.controller.signal])
+            : interrupt.controller.signal,
+          onUpdate,
+          ctx,
+        );
+      } catch (error) {
+        // "/-" records the user's reason on the handle before aborting; append
+        // it to the tool error so the model sees why the command stopped even
+        // before the steer message arrives.
+        if (interrupt.reason !== undefined && error instanceof Error) {
+          // ". " keeps the sentence boundary readable for errors that do not
+          // end with a final period (bash's "Command aborted" does not).
+          const separator = error.message.endsWith(".") ? " " : ". ";
+          throw new Error(
+            error.message +
+              `${separator}Aborted by user. User-provided abort reason: ${interrupt.reason}`,
+          );
+        }
+        throw error;
+      } finally {
+        bashInterrupts.delete(toolCallId);
+      }
+    },
+  });
+
   const tempRoot = await canonicalizeProspectivePath(tmpdir());
   const systemPrompt = SYSTEM_PROMPT.replaceAll("{{TEMP_ROOT}}", tempRoot);
   let pendingSubmissionMode: TurnMode | undefined;
@@ -991,6 +1085,9 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   // toolCallId -> comment for write/edit calls approved with a comment: the
   // comment is appended to the real tool result once the tool completes.
   const pendingGateComments = new Map<string, string>();
+  // toolCallId -> interrupt handle of a running wrapped bash call: "/-" aborts
+  // it to kill the command without aborting its run and records the reason.
+  const bashInterrupts = new Map<string, BashInterrupt>();
 
   /**
    * Deliver a gate comment to the running agent as a steer message (same path
@@ -1106,6 +1203,64 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   });
 
 /* ============================================================================
+ * ▄▀▀▀▀ █     ▄▀▀▀▄ ▄▀▀▀▀ █   █       █▀▀▀▄ ▄▀▀▀▄ ▄▀▀▀▀ █   █
+ *  ▀▀▀▄ █     █▀▀▀█  ▀▀▀▄ █▀▀▀█       █   █ █▀▀▀█  ▀▀▀▄ █▀▀▀█
+ * ▀▀▀▀  ▀▀▀▀▀ ▀   ▀ ▀▀▀▀  ▀   ▀       ▀▀▀▀  ▀   ▀ ▀▀▀▀  ▀   ▀
+ * ----------------------------------------------------------------------------
+ * "/- <message>": aborts the bash call that is currently executing (its
+ * process tree only - the run keeps going) and steers <message> to the running
+ * model. The aborted call's error also carries "Aborted by user. User-provided
+ * abort reason: <message>" so the model sees the reason even before the steer
+ * message arrives. Without a live bash call the message is simply steered: it
+ * waits for the current tool batch, or starts the next turn when the session
+ * is idle. No run is ever aborted here - that stays on Esc.
+ * ========================================================================== */
+
+  /** Abort every in-flight wrapped bash call; returns how many were running. */
+  function interruptRunningBash(reason: string): number {
+    let killed = 0;
+    for (const interrupt of bashInterrupts.values()) {
+      if (interrupt.controller.signal.aborted) continue;
+      // Recorded before abort() so the wrapper can append it to the tool error.
+      interrupt.reason = reason;
+      interrupt.controller.abort();
+      killed += 1;
+    }
+    return killed;
+  }
+
+  pi.registerCommand("-", {
+    description: "Abort the running bash call and steer the message",
+    handler: async (
+      args: string,
+      ctx: ExtensionCommandContext,
+    ): Promise<void> => {
+      // Everything after "/- ", newlines included; trim only the edges.
+      const text = args.trim();
+      if (text.length === 0) {
+        if (ctx.hasUI) ctx.ui.notify("Usage: /- <message>", "warning");
+        return;
+      }
+      const wasIdle = ctx.isIdle();
+      const killed = interruptRunningBash(text);
+      // Same delivery channel as the gate comments (sendGateSteer):
+      // expandPromptTemplates=false keeps the text verbatim, so a leading "/"
+      // must not trigger a command or template, and "steer" continues the
+      // current run once its tool batch finishes.
+      pi.sendUserMessage(text, { deliverAs: "steer", expandPromptTemplates: false });
+      if (!ctx.hasUI) return;
+      ctx.ui.notify(
+        killed > 0
+          ? `bash aborted (${killed}) — message steered to the model`
+          : wasIdle
+            ? "message sent to the model"
+            : "message steered to the model",
+        "info",
+      );
+    },
+  });
+
+/* ============================================================================
  * █▀▄▀█ ▄▀▀▀▄ █▀▀▀▄ █▀▀▀▀       █▀▀▀▄ ▄▀▀▀▄ █▄  █ █▄  █ █▀▀▀▀ █▀▀▀▄
  * █   █ █   █ █   █ █▀▀         █▀▀▀▄ █▀▀▀█ █ ▀▄█ █ ▀▄█ █▀▀   █▀▀▀▄
  * ▀   ▀  ▀▀▀  ▀▀▀▀  ▀▀▀▀▀       ▀▀▀▀  ▀   ▀ ▀   ▀ ▀   ▀ ▀▀▀▀▀ ▀   ▀
@@ -1217,6 +1372,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
       systemPromptEntryShown = false;
       blockedToolCalls.clear();
       pendingGateComments.clear();
+      bashInterrupts.clear();
       applyContextWindowOverrides(ctx.model);
       updateStatusWidget(ctx);
       ensureThinkingBlocksVisible();

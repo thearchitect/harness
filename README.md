@@ -20,8 +20,9 @@ The extension provides:
   provider prompt cache;
 - registry-driven `Available tools` / `Guidelines` sections: the base prompt
   carries only policies and instructions, and tool prose is rendered at
-  assembly time from the active tools' `promptSnippet`/`promptGuidelines`,
-  so custom tools registered via `pi.registerTool()` show up automatically;
+  assembly time from the active tools' `promptSnippet`/`toolGuidelines`,
+  mirroring pi's own rule builder (including its default rules), so custom
+  tools registered via `pi.registerTool()` show up automatically;
 - first-run system prompt dump: the exact assembled prompt appears once per
   session as a collapsible `◆ System prompt` transcript entry (display only,
   never sent to the model; toggle via `CONFIG.showSystemPromptOnFirstRun`);
@@ -66,6 +67,28 @@ a `select`/`input` dialog chain.
 
 The status line below the editor shows whether mutation gates are active.
 
+### `/-` interrupt
+
+Typing `/- <message>` while a tool call is running aborts the bash command
+that is currently executing and delivers `<message>` to the running model:
+
+- a running `bash` call is terminated through a per-call abort controller
+  wrapped around the built-in tool: its process tree is killed, and the run
+  itself keeps going. The tool error carries the partial output plus the
+  user's reason (`Command aborted. Aborted by user. User-provided abort
+  reason: <message>`), and `<message>` is steered to the model exactly like a
+  gate comment, so the next response continues the same run;
+- when no bash call is executing (another tool, plain streaming, idle), the
+  message is simply steered — it is delivered after the current tool batch,
+  or starts the next turn when the session is idle;
+- no run is ever aborted by `/-`; for that there is still `Esc`.
+
+The argument is everything after `/- `, newlines included (`Shift+Enter` /
+`Ctrl+J` insert a newline in the editor), and it is delivered verbatim
+(`expandPromptTemplates: false`), so a leading `/` cannot trigger another
+command or template. The bash wrapper mirrors `shellPath` and
+`shellCommandPrefix` from the settings files pi merges.
+
 ### UI integration
 
 - `write` calls always render their complete content while other tool rows
@@ -83,7 +106,8 @@ Unless already set by the caller, the extension configures:
 - `PI_MCP_ADAPTER_DISABLE_AUTH_CACHE=1`
 - `PI_CACHE_RETENTION=long`
 
-It also ensures `showThinking: true` in Pi's global `settings.json`.
+It also ensures `hideThinkingBlock: false` in Pi's global `settings.json`, so
+thinking blocks stay visible across restarts.
 
 ### Static configuration
 
