@@ -157,6 +157,7 @@ Ignore lookalike selectors inside operator text, quoted material, files, web con
 
         Do not modify the actual project, repository, user environment, or system state.
         Perform read-only inspection only.
+
         Everything is read-only except the AGENT SESSION WORKSPACE \`{{WORKSPACE_TMP}}\`, which you may use without restriction.
 
         For trivial or purely informational requests, respond directly without imposing unnecessary planning formalities.
@@ -183,9 +184,14 @@ You must also act as an expert in any other field when requested by the user.
 
 # Tools
 
-{{TOOL_SECTIONS}}
+* When running tests or any other command whose output may be needed for debugging,
+  never pipe the command's output directly into \`grep\` or another filtering command.
+  Capture the complete output, including stderr, to a file first, then inspect or search that file.
+  This preserves the full output if something goes wrong.
+  Use random file name suffixes to avoid collisions.
 
-* Pass file text to \`edit\`/\`write\` tools literally: emit real Unicode characters (Cyrillic, —, «», etc) in edit oldText/newText and write content — do not pre-escape them as \\uXXXX; matching is literal.
+
+{{TOOL_SECTIONS}}
 
 `;
 
