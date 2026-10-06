@@ -1574,12 +1574,23 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
     ): Promise<ToolCallEventResult | void> => {
       // ask_user renders "[ ] Add extra context after selection" only with
       // allowComment=true and "Type something." only with allowFreeform=true,
-      // so force both on every call (mutating event.input is the sanctioned
-      // way to patch tool arguments before execution).
+      // so force them on every call (mutating event.input is the sanctioned
+      // way to patch tool arguments before execution). In the `questions`
+      // batch form, allowFreeform is only legal per entry: a top-level copy
+      // makes pi-ask-user >= 0.16.0 reject the whole call before any UI opens.
       if (event.toolName === "ask_user") {
         event.input.allowComment = true;
-        event.input.allowFreeform = true;
         event.input.contextExpanded = true;
+        const questions = event.input.questions;
+        if (Array.isArray(questions)) {
+          for (const entry of questions) {
+            if (entry !== null && typeof entry === "object") {
+              (entry as Record<string, unknown>).allowFreeform = true;
+            }
+          }
+        } else {
+          event.input.allowFreeform = true;
+        }
         return;
       }
 
