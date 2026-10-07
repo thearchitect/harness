@@ -3,7 +3,8 @@
  *
  * Per-message PLAN/BUILD mode (custom editor, mode colors, mode selector
  * message), plan-mode write/edit gating, and per-cycle "planning/building
- * finished" banners annotated with duration and USD cost. BUILD write/edit
+ * finished" banners annotated with finish time, duration and USD cost. BUILD
+ * write/edit
  * gates use an interactive Yes / No (why?) / Stop dialog whose comment is
  * fed back to the running model without interrupting it. The "/-" command
  * aborts the bash call that is currently executing (its process tree only)
@@ -316,7 +317,7 @@ const SYSTEM_PROMPT_ENTRY_TYPE = "thearchitect-system-prompt";
 type SystemPromptEntryData = { text: string; model: string };
 
 type TurnMode = "plan" | "normal";
-type ModeDetails = { mode: TurnMode; model?: string; effort?: string; durationMs?: number; costUsd?: number; interrupted?: boolean };
+type ModeDetails = { mode: TurnMode; model?: string; effort?: string; finishedAt?: number; durationMs?: number; costUsd?: number; interrupted?: boolean };
 type ColorMode = ReturnType<Theme["getColorMode"]>;
 type EventOf<TType extends ExtensionEvent["type"]> = Extract<
   ExtensionEvent,
@@ -410,7 +411,7 @@ function formatModeSelector(mode: TurnMode): string {
  *  ▀▀▀▄   █   █▀▀▀█   █    ▀▀▀▄
  * ▀▀▀▀    ▀   ▀   ▀   ▀   ▀▀▀▀
  * ----------------------------------------------------------------------------
- * Duration + USD cost of the last cycle, diffed from session usage; rendered gray after "planning/building finished".
+ * Finish time + duration + USD cost of the last cycle, diffed from session usage; rendered gray after "planning/building finished".
  * ========================================================================== */
 function totalSessionCost(entries: SessionEntry[]): number {
   let cost = 0;
@@ -444,6 +445,15 @@ function formatCost(costUsd: number): string {
   if (costUsd < 0.001) return `$${costUsd.toFixed(4)}`;
   if (costUsd < 1) return `$${costUsd.toFixed(3)}`;
   return `$${costUsd.toFixed(2)}`;
+}
+
+function formatTimestamp(ms: number): string {
+  const date = new Date(ms);
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` +
+    ` • ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  );
 }
 
 /* ============================================================================
@@ -1274,7 +1284,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
  * █▀▀   █ ▀▄█   █   █▀▀▀▄   █   █▀▀    ▀▀▀▄
  * ▀▀▀▀▀ ▀   ▀   ▀   ▀   ▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀
  * ----------------------------------------------------------------------------
- * Chat chips: "◆ PLAN/◆ BUILD" markers and the "planning/building finished" banners (with gray duration/cost suffix).
+ * Chat chips: "◆ PLAN/◆ BUILD" markers and the "planning/building finished" banners (with gray finish-time/duration/cost suffix).
  * ========================================================================== */
 
   pi.registerEntryRenderer<ModeDetails>(
@@ -1306,18 +1316,27 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
       const text = interrupted
         ? mode === "plan" ? "planning interrupted" : "building interrupted"
         : mode === "plan" ? "planning finished" : "building finished";
-      const suffixParts: string[] = [];
-      if (entry.data?.model) suffixParts.push(entry.data.model);
-      if (entry.data?.effort) suffixParts.push(entry.data.effort);
+      const identityParts: string[] = [];
+      if (entry.data?.model) identityParts.push(entry.data.model);
+      if (entry.data?.effort) identityParts.push(entry.data.effort);
+      const statsParts: string[] = [];
+      if (entry.data?.finishedAt !== undefined) {
+        statsParts.push(formatTimestamp(entry.data.finishedAt));
+      }
       if (
         entry.data?.durationMs !== undefined &&
         entry.data?.costUsd !== undefined
       ) {
-        suffixParts.push(
+        statsParts.push(
           formatDuration(entry.data.durationMs),
           formatCost(entry.data.costUsd),
         );
       }
+      // Model • effort form one identity group; groups stay " / "-separated.
+      const suffixParts =
+        identityParts.length > 0
+          ? [identityParts.join(" • "), ...statsParts]
+          : statsParts;
       const statsSuffix =
         suffixParts.length > 0
           ? theme.fg("muted", `  ${suffixParts.join(" / ")}`)
@@ -1529,14 +1548,15 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   );
 
   // ------------------------------------------------------------------
-  // Cycle end: "… finished" banner with duration / USD cost
+  // Cycle end: "… finished" banner with finish time / duration / USD cost
   // ------------------------------------------------------------------
   pi.on(
     "agent_settled",
     (_event: EventOf<"agent_settled">, ctx: ExtensionContext): void => {
       if (ctx.mode !== "tui" || !ctx.isIdle()) return;
+      const now = Date.now();
       const durationMs =
-        cycleStartTime !== undefined ? Date.now() - cycleStartTime : undefined;
+        cycleStartTime !== undefined ? now - cycleStartTime : undefined;
       const costUsd =
         durationMs !== undefined
           ? totalSessionCost(ctx.sessionManager.getEntries()) - baselineCost
@@ -1552,6 +1572,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
         mode: activeMode,
         model: ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : undefined,
         effort: ctx.thinkingLevel,
+        finishedAt: now,
         durationMs,
         costUsd,
         interrupted,

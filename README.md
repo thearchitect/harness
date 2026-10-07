@@ -26,8 +26,8 @@ The extension provides:
 - first-run system prompt dump: the exact assembled prompt appears once per
   session as a collapsible `◆ System prompt` transcript entry (display only,
   never sent to the model; toggle via `CONFIG.showSystemPromptOnFirstRun`);
-- completion/interruption banners with cycle model, thinking effort, duration
-  and USD cost.
+- completion/interruption banners with cycle model, thinking effort, finish
+  time, duration and USD cost.
 
 ### File mutation gates
 
