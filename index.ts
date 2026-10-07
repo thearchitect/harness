@@ -1,5 +1,5 @@
 /**
- * thearchitect.pi - personal Pi extension.
+ * harness - personal Pi workflow extension.
  *
  * Per-message PLAN/BUILD mode (custom editor, mode colors, mode selector
  * message), plan-mode write/edit gating, and per-cycle "planning/building
@@ -64,7 +64,7 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installWorkarounds } from "./workarounds.ts";
-import { installDeps } from "./deps.ts";
+import { claimHarnessInstance, installDeps } from "./deps.ts";
 
 /* ============================================================================
  * ▄▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▄ ▀▀█▀▀ ▀▀█▀▀ ▄▀▀▀▀       ▄▀▀▀▀ ▄▀▀▀▄ █▄  █ █▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▀
@@ -205,9 +205,16 @@ const OUTPUT_CAPTURE_RULE =
  * Per-message !plan/!build switching: custom editor, mode colors, working message, and the <active-mode> selector message.
  * ========================================================================== */
 const MODE_ENTRY_TYPE = "per-message-mode";
-const MODE_SELECTOR_MESSAGE_TYPE = "thearchitect-active-mode";
+const MODE_SELECTOR_MESSAGE_TYPE = "harness-active-mode";
 const FINISHED_ENTRY_TYPE = "per-message-mode-finished";
-const SYSTEM_PROMPT_ENTRY_TYPE = "thearchitect-system-prompt";
+const SYSTEM_PROMPT_ENTRY_TYPE = "harness-system-prompt";
+/**
+ * Entry types written by sessions created before the rename to "harness".
+ * Renderers are registered for them too, so old transcripts still display.
+ * (The old mode selector message type needs no alias: it has no renderer and
+ * reaches the model by content.)
+ */
+const LEGACY_SYSTEM_PROMPT_ENTRY_TYPE = "thearchitect-system-prompt";
 
 type SystemPromptEntryData = { text: string; model: string };
 
@@ -838,7 +845,10 @@ async function sessionWorkspaceRoot(
 /** Per-call bash interrupt handle for "/-": abort the controller and record why. */
 type BashInterrupt = { controller: AbortController; reason?: string };
 
-export default async function thearchitectExtension(pi: ExtensionAPI): Promise<void> {
+export default async function harnessExtension(pi: ExtensionAPI): Promise<void> {
+  // Only one harness copy per process (dev checkout vs installed package).
+  if (!claimHarnessInstance()) return;
+
   process.env.PI_ASK_USER_DISPLAY_MODE ??= "inline";
 
   // Temporary workarounds for upstream gaps live in workarounds.ts.
@@ -1014,7 +1024,7 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
  * "/madness" command and Ctrl+\\ shortcut: bypasses write/edit permission gates.
  * ========================================================================== */
 
-  const STATUS_WIDGET_KEY = "thearchitect:status";
+  const STATUS_WIDGET_KEY = "harness:status";
 
   // Single status line below the editor: "❤︎ <gate> × session <id>".
   function updateStatusWidget(ctx: ExtensionContext): void {
@@ -1198,34 +1208,34 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
   // exact prompt assembled for the first request of the session. Collapsed
   // it is a one-line chip; expanded it shows the full prompt text.
   // ------------------------------------------------------------------
-  pi.registerEntryRenderer<SystemPromptEntryData>(
-    SYSTEM_PROMPT_ENTRY_TYPE,
-    (
-      entry: CustomEntry<SystemPromptEntryData>,
-      options: EntryRenderOptions,
-      theme: Theme,
-    ): Text => {
-      const data = entry.data;
-      const summary = data
-        ? `◆ System prompt · ${data.model}`
-        : "◆ System prompt";
-      if (!data || !options.expanded) {
-        return new Text(
-          summary + (data ? theme.fg("muted", " · expand to view") : ""),
-          0,
-          0,
-        );
-      }
+  const renderSystemPromptEntry = (
+    entry: CustomEntry<SystemPromptEntryData>,
+    options: EntryRenderOptions,
+    theme: Theme,
+  ): Text => {
+    const data = entry.data;
+    const summary = data
+      ? `◆ System prompt · ${data.model}`
+      : "◆ System prompt";
+    if (!data || !options.expanded) {
       return new Text(
-        `${theme.bold(summary)}${theme.fg(
-          "muted",
-          ` · ${data.text.length.toLocaleString()} chars · first request of this session`,
-        )}\n\n${data.text}`,
+        summary + (data ? theme.fg("muted", " · expand to view") : ""),
         0,
         0,
       );
-    },
-  );
+    }
+    return new Text(
+      `${theme.bold(summary)}${theme.fg(
+        "muted",
+        ` · ${data.text.length.toLocaleString()} chars · first request of this session`,
+      )}\n\n${data.text}`,
+      0,
+      0,
+    );
+  };
+  for (const type of [SYSTEM_PROMPT_ENTRY_TYPE, LEGACY_SYSTEM_PROMPT_ENTRY_TYPE]) {
+    pi.registerEntryRenderer<SystemPromptEntryData>(type, renderSystemPromptEntry);
+  }
 
   // ------------------------------------------------------------------
   // Session lifecycle: per-message editor component + state reset

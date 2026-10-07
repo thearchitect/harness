@@ -1,5 +1,5 @@
 /**
- * thearchitect.pi - temporary workarounds for upstream gaps.
+ * harness - temporary workarounds for upstream gaps.
  *
  * Every mechanism here compensates for something pi or another extension does
  * not (yet) provide. Each one is meant to be deleted, not maintained, once its
@@ -35,7 +35,7 @@ import {
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-const LOG_PREFIX = "[thearchitect.pi workarounds]";
+const LOG_PREFIX = "[harness workarounds]";
 
 /** Registers all workarounds. Call once at extension load. */
 export function installWorkarounds(pi: ExtensionAPI): void {

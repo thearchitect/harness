@@ -1,4 +1,4 @@
-# thearchitect.pi
+# harness
 
 Personal workflow, safety, and UI extension for
 [Pi](https://github.com/earendil-works/pi).
@@ -119,21 +119,32 @@ or when Ollama is unavailable.
 
 ### Workflow dependencies
 
-pi, magic-context, codegraph, lightpanda and herdr are treated as this
-extension's dependencies. `scripts/deps.sh` owns the logic and works from a
-terminal:
+harness itself, pi, magic-context, codegraph, lightpanda and herdr are treated
+as this extension's dependencies. `scripts/deps.sh` owns the logic and works
+from a terminal:
 
 ```bash
 scripts/deps.sh check              # installed / pinned / latest per component
-scripts/deps.sh update <id|all>    # pi, magic-context, codegraph, lightpanda, herdr
+scripts/deps.sh update <id|all>    # harness, pi, magic-context, codegraph, lightpanda, herdr
+scripts/deps.sh install-pinned     # install pinned codegraph/lightpanda if missing
 ```
+
+The behavior depends on the [installation mode](#installation):
+
+- **installed** (pi git package): pi owns the checkout and resets it on
+  update, so nothing in it is written. `deps.lock.json` pins arrive with
+  harness updates; codegraph and lightpanda are only installed at the pinned
+  version.
+- **dev** (folder or submodule): updating codegraph or lightpanda bumps
+  `deps.lock.json`; commit it.
 
 | Component | Source of truth | Update |
 |---|---|---|
+| harness | installed: pi package; dev: git checkout | installed: `pi update <source>`; dev: `git pull --ff-only` (only when behind and clean); then `install-pinned` (`/reload`) |
 | pi | global npm install | `pi update --self` (restart pi) |
 | magic-context | pi package | `pi update --extension`, `doctor --force --harness pi`, workaround check (`/reload`) |
-| codegraph | `deps.lock.json` (npm version) | pre-install into the bun cache, MCP handshake, pin |
-| lightpanda | `deps.lock.json` (stable GitHub release) | download to `~/.local/share/thearchitect.pi/lightpanda/<version>/`, MCP handshake, pin (previous version kept) |
+| codegraph | `deps.lock.json` (npm version) | pre-install into the bun cache, MCP handshake; dev: pin the latest |
+| lightpanda | `deps.lock.json` (stable GitHub release) | download to `~/.local/share/harness/lightpanda/<version>/`, MCP handshake; dev: pin the latest (previous version kept) |
 | herdr | herdr's own installer | `herdr update`, `herdr integration install pi` |
 
 The extension registers the `codegraph` and `lightpanda` MCP servers itself
@@ -188,28 +199,35 @@ personal defaults — change it there, never in the logic below.
 
 ## Requirements
 
-- Pi `>=0.85.0`
+- Pi `>=1.0` (built-in MCP, `registerMcpServer`, structured prompt sections)
 - Node.js `>=22.19.0`
+- `bun`, `git`, `curl`, `jq` for workflow dependencies
 
 Pi loads the TypeScript entry point directly through `jiti`; no build step is
 required.
 
 ## Installation
 
-Use exactly one installation method.
+Use exactly one installation method. If both are present, the copy pi loads
+first claims the process and the other one is ignored with a warning.
 
-### Pi Git package
+### Pi git package (installed mode)
 
 ```bash
-pi install git:git@github.com:thearchitect/thearchitect.pi.git
+pi install git:git@github.com:thearchitect/harness        # ssh (private repository)
+pi install git:github.com/thearchitect/harness            # https, once the repository is public
+scripts/deps.sh install-pinned                             # from the package checkout, or /deps in pi
 ```
 
-### Auto-discovered checkout
+pi reports harness updates at startup ("Package Updates Available"); update
+with `pi update --extensions`, `pi update <source>`, or `/deps`.
+
+### Checkout (dev mode)
 
 Clone or add the repository as a submodule at:
 
 ```text
-~/.pi/agent/extensions/thearchitect.pi
+~/.pi/agent/extensions/harness
 ```
 
 Pi discovers the package through `package.json` and its `pi.extensions`

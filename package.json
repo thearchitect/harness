@@ -1,18 +1,18 @@
 {
-  "name": "thearchitect.pi",
+  "name": "harness",
   "version": "0.1.0",
   "private": true,
-  "description": "Turboslop workflow, mode, safety, and UI extension for Pi",
+  "description": "Personal pi workflow: PLAN/BUILD modes, mutation gates, prompt contributions, workflow dependencies (/deps), web-research skill",
   "type": "module",
   "author": "The Architect",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/thearchitect/thearchitect.pi.git"
+    "url": "git+https://github.com/thearchitect/harness.git"
   },
-  "homepage": "https://github.com/thearchitect/thearchitect.pi#readme",
+  "homepage": "https://github.com/thearchitect/harness#readme",
   "bugs": {
-    "url": "https://github.com/thearchitect/thearchitect.pi/issues"
+    "url": "https://github.com/thearchitect/harness/issues"
   },
   "keywords": [
     "pi-package",
@@ -39,8 +39,8 @@
     "node": ">=22.19.0"
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": ">=0.85.0",
-    "@earendil-works/pi-tui": ">=0.85.0"
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
   },
   "peerDependenciesMeta": {
     "@earendil-works/pi-coding-agent": {

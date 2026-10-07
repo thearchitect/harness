@@ -1,8 +1,11 @@
 /**
- * thearchitect.pi - workflow dependencies.
+ * harness - workflow dependencies.
  *
- * pi, magic-context, codegraph, lightpanda and herdr are part of this
- * extension's workflow. scripts/deps.sh owns the logic (check + update, usable
+ * harness itself, pi, magic-context, codegraph, lightpanda and herdr are part
+ * of this extension's workflow. The extension runs in one of two modes
+ * (harnessMode()): "installed" as a pi git package (pi owns and resets the
+ * checkout; pins come with harness releases) or "dev" from any other checkout
+ * (folder / submodule; /deps bumps deps.lock.json). scripts/deps.sh owns the logic (check + update, usable
  * from a terminal); this module:
  *
  * - registers the codegraph and lightpanda MCP servers with the exact versions
@@ -16,6 +19,7 @@
  */
 
 import {
+  getAgentDir,
   type ExtensionAPI,
   type ExtensionContext,
   type Theme,
@@ -32,15 +36,15 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const LOCK_PATH = join(EXTENSION_DIR, "deps.lock.json");
 const DEPS_SCRIPT = join(EXTENSION_DIR, "scripts", "deps.sh");
-const STATUS_KEY = "thearchitect-deps";
+const STATUS_KEY = "harness-deps";
 const SHORTCUT = "alt+u";
 
 type DepsLock = Partial<Record<"codegraph" | "lightpanda", { version?: string }>>;
@@ -56,7 +60,52 @@ function readLock(): DepsLock {
 /** Mirrors LP_ROOT in scripts/deps.sh. */
 function lightpandaBinary(version: string): string {
   const dataHome = process.env.XDG_DATA_HOME || join(homedir(), ".local", "share");
-  return join(dataHome, "thearchitect.pi", "lightpanda", version, "lightpanda");
+  return join(dataHome, "harness", "lightpanda", version, "lightpanda");
+}
+
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * "installed" when pi manages this checkout as a git package (<agent-dir>/git
+ * for installs, <agent-dir>/tmp/extensions for `pi -e` runs), else "dev".
+ * Mirrors MODE in deps.sh.
+ */
+export function harnessMode(): "installed" | "dev" {
+  const self = realOrSelf(EXTENSION_DIR);
+  const managedRoots = [join(getAgentDir(), "git"), join(getAgentDir(), "tmp", "extensions")];
+  return managedRoots.some((root) => {
+    const rel = relative(realOrSelf(root), self);
+    return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+  })
+    ? "installed"
+    : "dev";
+}
+
+/**
+ * Double-load guard. With both a dev checkout and an installed package present,
+ * pi loads two copies and their commands/tools collide. The first copy to load
+ * claims the process; another checkout warns once and registers nothing.
+ * The claim is reused on /reload (same path) and released when its checkout no
+ * longer exists.
+ */
+export function claimHarnessInstance(): boolean {
+  const key = Symbol.for("harness.extensionDir");
+  const store = globalThis as Record<symbol, string | undefined>;
+  const owner = store[key];
+  if (owner && owner !== EXTENSION_DIR && existsSync(owner)) {
+    console.warn(
+      `[harness] another harness copy is already loaded from ${owner}; ignoring ${EXTENSION_DIR} (${harnessMode()}). Remove one of them and restart pi.`,
+    );
+    return false;
+  }
+  store[key] = EXTENSION_DIR;
+  return true;
 }
 
 /* ----------------------------------------------------------------------------
@@ -317,7 +366,7 @@ export function installDeps(pi: ExtensionAPI): void {
   });
 
   pi.registerCommand("deps", {
-    description: "Check and update workflow dependencies (pi, magic-context, codegraph, lightpanda, herdr)",
+    description: "Check and update workflow dependencies (harness, pi, magic-context, codegraph, lightpanda, herdr)",
     handler: async (_args, ctx) => openDepsDialog(pi, ctx),
   });
   pi.registerShortcut(SHORTCUT, {
