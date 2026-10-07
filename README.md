@@ -16,16 +16,12 @@ The extension provides:
 
 - mode-colored editor borders and working messages;
 - trusted per-turn mode selectors appended during preflight;
-- stable system-prompt assembly so switching modes does not invalidate the
-  provider prompt cache;
-- registry-driven `Available tools` / `Guidelines` sections: the base prompt
-  carries only policies and instructions, and tool prose is rendered at
-  assembly time from the active tools' `promptSnippet`/`toolGuidelines`,
-  mirroring pi's own rule builder (including its default rules), so custom
-  tools registered via `pi.registerTool()` show up automatically;
-- first-run system prompt dump: the exact assembled prompt appears once per
-  session as a collapsible `◆ System prompt` transcript entry (display only,
-  never sent to the model; toggle via `CONFIG.showSystemPromptOnFirstRun`);
+- mode-independent prompt contributions, so switching modes does not
+  invalidate the provider prompt cache (see [System prompt](#system-prompt));
+- first-run system prompt dump: the final prompt (after every extension's
+  contributions) appears once per session as a collapsible `◆ System prompt`
+  transcript entry (display only, never sent to the model; toggle via
+  `CONFIG.showSystemPromptOnFirstRun`);
 - completion/interruption banners with cycle model, thinking effort, finish
   time, duration and USD cost.
 
@@ -87,7 +83,8 @@ The argument is everything after `/- `, newlines included (`Shift+Enter` /
 `Ctrl+J` insert a newline in the editor), and it is delivered verbatim
 (`expandPromptTemplates: false`), so a leading `/` cannot trigger another
 command or template. The bash wrapper mirrors `shellPath` and
-`shellCommandPrefix` from the settings files pi merges.
+`shellCommandPrefix` from pi's settings (global plus trusted project), resolved
+through the public `SettingsManager` like pi's own bash tool.
 
 ### UI integration
 
@@ -96,7 +93,22 @@ command or template. The bash wrapper mirrors `shellPath` and
 - `ask_user` calls always allow free-form answers and optional extra context.
 - Pending questions and mutation confirmations emit the `herdr:blocked`
   event for Herdr integration.
-- Thinking blocks are kept visible across restarts.
+- Thinking blocks are kept visible across restarts (workaround W2).
+
+### System prompt
+
+Pi owns and renders the system prompt: its preamble, tools, rules, docs,
+project context, skills, working directory, and the sections other
+extensions contribute (for example the built-in MCP `<mcp_servers>` list).
+Following pi's guidance for `before_agent_start`, the extension never returns
+a full `systemPrompt`; it only edits the structured `systemPromptOptions`:
+
+- `sections.mode_policies`: the mode-selector rule and the PLAN/BUILD
+  `<mode-policies>`;
+- `promptGuidelines`: the "capture command output to a file before filtering"
+  rule, rendered by pi among its tool rules.
+
+Both are independent of the active mode.
 
 ### Bundled skill
 
@@ -105,9 +117,24 @@ model to search and read the web with the Ollama web tools and to fall back to
 Lightpanda (`mcp__lightpanda__*`) for JavaScript-rendered pages, interaction,
 or when Ollama is unavailable.
 
-The custom system prompt also renders extension-contributed prompt sections
-(for example the built-in MCP `<mcp_servers>` list) after the working
-directory.
+### Workarounds
+
+`workarounds.ts` isolates every mechanism that compensates for an upstream
+gap. Each block documents the problem, the workaround, the pi internals it
+loads at runtime, the exact removal check, and the upstream issue. Removing a
+workaround means deleting its block and its line in `installWorkarounds()`;
+IDs are never reused.
+
+| ID | Compensates for | Remove when |
+|---|---|---|
+| W1 | pi-magic-context returns a full `systemPrompt`, which drops the built-in MCP `<mcp_servers>` section | MC contributes through `systemPromptOptions.sections` |
+| W2 | Ctrl+T persists `hideThinkingBlock: true` globally | the toggle stops persisting or becomes configurable |
+
+Run the removal checks with:
+
+```bash
+npm run check-workarounds        # or scripts/check-workarounds.sh [model]
+```
 
 ### Process defaults
 
@@ -116,8 +143,8 @@ Unless already set by the caller, the extension configures:
 - `PI_ASK_USER_DISPLAY_MODE=inline`
 - `PI_CACHE_RETENTION=long`
 
-It also ensures `hideThinkingBlock: false` in Pi's global `settings.json`, so
-thinking blocks stay visible across restarts.
+Workaround W2 also ensures `hideThinkingBlock: false` in Pi's global
+`settings.json`, so thinking blocks stay visible across restarts.
 
 ### Static configuration
 

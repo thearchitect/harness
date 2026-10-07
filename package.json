@@ -22,12 +22,15 @@
   ],
   "files": [
     "index.ts",
+    "scripts/",
+    "workarounds.ts",
     "skills/",
     "README.md",
     "LICENSE"
   ],
   "scripts": {
-    "check": "npm pack --dry-run"
+    "check": "npm pack --dry-run",
+    "check-workarounds": "scripts/check-workarounds.sh"
   },
   "engines": {
     "node": ">=22.19.0"
