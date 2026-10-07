@@ -22,6 +22,7 @@
   ],
   "files": [
     "index.ts",
+    "skills/",
     "README.md",
     "LICENSE"
   ],

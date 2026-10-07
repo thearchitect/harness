@@ -98,12 +98,22 @@ command or template. The bash wrapper mirrors `shellPath` and
   event for Herdr integration.
 - Thinking blocks are kept visible across restarts.
 
+### Bundled skill
+
+`skills/web-research` is registered through `resources_discover`. It tells the
+model to search and read the web with the Ollama web tools and to fall back to
+Lightpanda (`mcp__lightpanda__*`) for JavaScript-rendered pages, interaction,
+or when Ollama is unavailable.
+
+The custom system prompt also renders extension-contributed prompt sections
+(for example the built-in MCP `<mcp_servers>` list) after the working
+directory.
+
 ### Process defaults
 
 Unless already set by the caller, the extension configures:
 
 - `PI_ASK_USER_DISPLAY_MODE=inline`
-- `PI_MCP_ADAPTER_DISABLE_AUTH_CACHE=1`
 - `PI_CACHE_RETENTION=long`
 
 It also ensures `hideThinkingBlock: false` in Pi's global `settings.json`, so

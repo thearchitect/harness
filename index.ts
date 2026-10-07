@@ -61,6 +61,7 @@ import {
   resolve,
   sep,
 } from "node:path";
+import { fileURLToPath } from "node:url";
 
 /* ============================================================================
  * ▄▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▄ ▀▀█▀▀ ▀▀█▀▀ ▄▀▀▀▀       ▄▀▀▀▀ ▄▀▀▀▄ █▄  █ █▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▀
@@ -293,6 +294,12 @@ function composeSystemPrompt(
   }
 
   result += `\nCurrent working directory: ${options.cwd.replace(/\\/g, "/")}\n`;
+
+  // Extension-contributed XML sections (e.g. built-in MCP's <mcp_servers>),
+  // appended after cwd in insertion order like pi's own assembly.
+  for (const [name, content] of Object.entries(options.sections ?? {})) {
+    if (content) result += `\n<${name}>\n${content}\n</${name}>\n`;
+  }
   return result;
 }
 
@@ -1010,12 +1017,11 @@ type BashInterrupt = { controller: AbortController; reason?: string };
 export default async function thearchitectExtension(pi: ExtensionAPI): Promise<void> {
   process.env.PI_ASK_USER_DISPLAY_MODE ??= "inline";
 
-  // MCP OAuth: pi-mcp-adapter кэширует auth-entry per-process, поэтому при
-  // нескольких pi-инстансах один из них может отрефрешить по устаревшему
-  // refresh-токену (ротация в Pocket ID) и отозвать всю OAuth-цепочку.
-  // Отключаем кэш: каждое чтение идёт в общий keyring (читается per-call,
-  // поэтому из расширения работает).
-  process.env.PI_MCP_ADAPTER_DISABLE_AUTH_CACHE ??= "1";
+  // Bundled skills (web-research: ollama web tools + lightpanda fallback).
+  const extensionDir = dirname(fileURLToPath(import.meta.url));
+  pi.on("resources_discover", () => ({
+    skillPaths: [join(extensionDir, "skills", "web-research", "SKILL.md")],
+  }));
   // Долгая кэш-ретенция промптов (читается при каждом запросе модели).
   process.env.PI_CACHE_RETENTION ??= "long";
   // Thinking blocks stay visible across restarts even after a stray Ctrl+T.
