@@ -105,10 +105,13 @@ a full `systemPrompt`; it only edits the structured `systemPromptOptions`:
 
 - `sections.mode_policies`: the mode-selector rule and the PLAN/BUILD
   `<mode-policies>`;
-- `promptGuidelines`: the "capture command output to a file before filtering"
-  rule, rendered by pi among its tool rules.
+- `promptGuidelines`, rendered by pi among its tool rules:
+  - change file contents only with `edit`/`write`, never through bash scripts
+    (keeps mutation gates, review and diffs in the loop; exceptions: temporary
+    output capture and file-producing tools such as formatters or builds);
+  - capture command output to a file before filtering it.
 
-Both are independent of the active mode.
+All of these are independent of the active mode.
 
 ### Bundled skill
 

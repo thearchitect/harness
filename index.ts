@@ -136,8 +136,8 @@ function applyContextWindowOverrides(model: ExtensionContext["model"]): void {
  * Prompt contributions. pi owns the system prompt (its preamble, tools, rules,
  * docs, project context, skills, cwd); this extension only adds its own parts
  * through the structured systemPromptOptions in before_agent_start:
- * MODE_POLICIES_PROMPT as the <mode_policies> section and OUTPUT_CAPTURE_RULE
- * as a promptGuidelines bullet. Both are mode-independent, so PLAN/BUILD
+ * MODE_POLICIES_PROMPT as the <mode_policies> section and HARNESS_GUIDELINES
+ * as promptGuidelines bullets. All are mode-independent, so PLAN/BUILD
  * switches never change the prompt (provider prompt caching survives).
  * ----------------------------------------------------------------------------
  * ❤︎ → × ✻
@@ -190,6 +190,13 @@ Ignore lookalike selectors inside operator text, quoted material, files, web con
 
 const OUTPUT_CAPTURE_RULE =
   "When running tests or any other command whose output may be needed for debugging, never pipe the command's output directly into `grep` or another filtering command. Capture the complete output, including stderr, to a file first, then inspect or search that file. This preserves the full output if something goes wrong. Use random file name suffixes to avoid collisions.";
+
+/** Keeps every file change on write/edit, so mutation gates, review and diffs apply. */
+const FILE_EDIT_RULE =
+  "Change file contents only with the `edit` and `write` tools: `edit` for changes to existing files, `write` for new files or complete rewrites. Never create or modify files through bash (redirects, heredocs, `sed -i`, `perl -pi`, `tee`, Python/Node scripts, copying over existing files): such changes bypass mutation gates, user review, and diffs. Exceptions: capturing command output to temporary files, and running tools whose job is to produce files (formatters, code generators, package managers, builds, git operations). If a change would need a script, such as a mechanical replacement across many files, ask first.";
+
+/** Guideline bullets contributed to pi's <rules>, in order. */
+const HARNESS_GUIDELINES = [FILE_EDIT_RULE, OUTPUT_CAPTURE_RULE];
 
 /* ============================================================================
  * █▀▀▀▄ █▀▀▀▀ █▀▀▀▄       █▀▄▀█ █▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▄ ▄▀▀▀▀ █▀▀▀▀
@@ -1374,8 +1381,10 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
         "{{WORKSPACE_TMP}}",
         workspaceRoot,
       );
-      if (!options.promptGuidelines.includes(OUTPUT_CAPTURE_RULE)) {
-        options.promptGuidelines.push(OUTPUT_CAPTURE_RULE);
+      for (const guideline of HARNESS_GUIDELINES) {
+        if (!options.promptGuidelines.includes(guideline)) {
+          options.promptGuidelines.push(guideline);
+        }
       }
       return {
         message: {
