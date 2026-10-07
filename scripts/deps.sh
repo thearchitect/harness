@@ -18,8 +18,9 @@
 #
 # Output is human-readable. Lines starting with "ACTION <id> <label>" list the
 # actions the /deps dialog offers; "NOTICE ..." lines are follow-ups.
-# Updates run strictly one at a time (concurrent `bun x` installs of the same
-# package corrupt each other).
+# Updates run strictly one at a time. npm packages (codegraph, magic-context's
+# doctor) run through scripts/locked-exec.mjs: `bun x` when bun is available,
+# else `npx`, with installs serialized across processes.
 set -uo pipefail
 
 EXT_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -31,6 +32,7 @@ LP_ASSET="lightpanda-x86_64-linux"
 MC_SOURCE="npm:@cortexkit/pi-magic-context"
 MC_PKG_JSON="$AGENT_DIR/npm/node_modules/@cortexkit/pi-magic-context/package.json"
 CODEGRAPH_PKG="@colbymchenry/codegraph"
+LOCKED_EXEC="$EXT_DIR/scripts/locked-exec.mjs"
 HARNESS_REPO="thearchitect/harness"
 COMPONENTS=(harness pi magic-context codegraph lightpanda herdr)
 
@@ -63,7 +65,9 @@ herdr_latest() {
     sed -E 's|.*/tag/v?||'
 }
 lp_bin() { printf '%s/%s/lightpanda' "$LP_ROOT" "$1"; }
-cg_installed() { bun x --no-install "$CODEGRAPH_PKG@$1" --version >/dev/null 2>&1; }
+# Runs an npm package binary: locked-exec.mjs <pkg>[@spec] [args...]
+lx() { node "$LOCKED_EXEC" "$@"; }
+cg_installed() { lx --is-installed "$CODEGRAPH_PKG@$1" >/dev/null 2>&1; }
 
 # The harness source as configured in pi's settings (git:..., https://...).
 harness_source() {
@@ -197,10 +201,11 @@ cmd_check() {
 # ---------------------------------------------------------------------------
 install_codegraph() {
   local v="$1" name
-  step "installing $CODEGRAPH_PKG@$v into the bun cache"
-  bun x "$CODEGRAPH_PKG@$v" --version || fail "codegraph $v does not run" || return 1
+  step "installing $CODEGRAPH_PKG@$v"
+  lx --install-only "$CODEGRAPH_PKG@$v" || fail "codegraph $v install failed" || return 1
+  lx "$CODEGRAPH_PKG@$v" --version </dev/null || fail "codegraph $v does not run" || return 1
   step "MCP handshake"
-  name="$(mcp_server_name bun x "$CODEGRAPH_PKG@$v" serve --mcp)"
+  name="$(mcp_server_name node "$LOCKED_EXEC" "$CODEGRAPH_PKG@$v" serve --mcp)"
   [[ "$name" == codegraph ]] || fail "codegraph $v MCP handshake failed"
 }
 
@@ -257,7 +262,7 @@ update_magic_context() {
   step "pi update --extension $MC_SOURCE"
   pi update --extension "$MC_SOURCE" || return 1
   step "magic-context doctor --force --harness pi"
-  (cd "$HOME" && bun x --bun @cortexkit/magic-context@latest doctor --force --harness pi) || return 1
+  (cd "$HOME" && lx @cortexkit/magic-context@latest doctor --force --harness pi) || return 1
   step "checking workarounds against the new version"
   "$EXT_DIR/scripts/check-workarounds.sh" || true
   say "NOTICE magic-context updated: run /reload (or restart pi)."

@@ -38,12 +38,20 @@ import {
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, isAbsolute } from "node:path";
+import { basename, dirname, join, relative, isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const LOCK_PATH = join(EXTENSION_DIR, "deps.lock.json");
 const DEPS_SCRIPT = join(EXTENSION_DIR, "scripts", "deps.sh");
+const LOCKED_EXEC = join(EXTENSION_DIR, "scripts", "locked-exec.mjs");
+
+/**
+ * JS runtime for scripts/locked-exec.mjs: the one running pi (node, or bun),
+ * falling back to `node` when pi is a standalone binary. locked-exec then
+ * runs packages through `bun x` when bun is available, else `npx`.
+ */
+const SCRIPT_RUNTIME = /^(node|bun)(\.exe)?$/.test(basename(process.execPath)) ? process.execPath : "node";
 const STATUS_KEY = "harness-deps";
 const SHORTCUT = "alt+u";
 
@@ -123,8 +131,8 @@ function registerPinnedServers(pi: ExtensionAPI, previous?: DepsLock): string[] 
   } else if (previous?.codegraph?.version !== codegraph) {
     pi.registerMcpServer("codegraph", {
       description: "Code knowledge graph of the indexed project: symbols, call paths, impact",
-      command: "bun",
-      args: ["x", `@colbymchenry/codegraph@${codegraph}`, "serve", "--mcp"],
+      command: SCRIPT_RUNTIME,
+      args: [LOCKED_EXEC, `@colbymchenry/codegraph@${codegraph}`, "serve", "--mcp"],
       env: { DO_NOT_TRACK: "1", CODEGRAPH_NO_UPDATE_CHECK: "1" },
       // codegraph exposes a single tool (codegraph_explore; the rest are hidden
       // by codegraph itself), so the whole server is direct and stays out of

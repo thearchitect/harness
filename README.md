@@ -146,19 +146,53 @@ The behavior depends on the [installation mode](#installation):
 | harness | installed: pi package; dev: git checkout | installed: `pi update <source>`; dev: `git pull --ff-only` (only when behind and clean); then `install-pinned` (`/reload`) |
 | pi | global npm install | `pi update --self` (restart pi) |
 | magic-context | pi package | `pi update --extension`, `doctor --force --harness pi`, workaround check (`/reload`) |
-| codegraph | `deps.lock.json` (npm version) | pre-install into the bun cache, MCP handshake; dev: pin the latest |
+| codegraph | `deps.lock.json` (npm version) | `locked-exec --install-only`, MCP handshake; dev: pin the latest |
 | lightpanda | `deps.lock.json` (stable GitHub release) | download to `~/.local/share/harness/lightpanda/<version>/`, MCP handshake; dev: pin the latest (previous version kept) |
 | herdr | herdr's own installer | `herdr update`, `herdr integration install pi` |
 
 The extension registers the `codegraph` and `lightpanda` MCP servers itself
 (`pi.registerMcpServer`) with the pinned versions, so there are no `@latest`
 installs at startup; an `mcp.json` entry with the same name overrides them. A
-missing or unpinned dependency shows in the status line.
+missing or unpinned dependency shows in the status line. codegraph runs
+through `locked-exec` under the runtime that runs pi, so it works with `bun`
+or with plain node/`npx`.
 
 `/deps` (or `alt+u`) opens a terminal-like dialog: it streams `deps.sh check`,
 then offers the reported actions in a list where a prompt would be. A chosen
 action streams its output into the same log, reconnects MCP servers whose
 pinned version changed, and checks again. Updates run one at a time.
+
+### locked-exec
+
+`scripts/locked-exec.mjs` runs an npm package binary through `bun x` or `npx`
+without install races: parallel pi sessions starting the same `@latest` MCP
+server otherwise install into the same cache directory at once and fail with
+`ENOENT` errors.
+
+```text
+locked-exec.mjs [--runner bun|npx|auto] [--install-only|--is-installed] <pkg>[@spec] [args...]
+locked-exec.mjs [...] -p|--package <spec> <bin> [args...]
+```
+
+A dist-tag (`latest`, none) is resolved to an exact version through the npm
+registry; the exact spec is installed under a lock and then run from the
+cache outside it, so runs stay parallel. Version ranges or an unreachable
+registry fall back to starting under the lock until the first stdout output.
+The runner defaults to `bun x` when bun is available, else `npx`; the script
+runs under node or bun. Locks are unix sockets: abstract (no file) on linux,
+a socket file in the temp directory on macos. Details and the bun behavior it
+relies on are in the file header.
+
+Use it in `mcp.json` in place of `bun x` / `npx` (pi expands `~`):
+
+```json
+"mikrotik": {
+  "command": "node",
+  "args": ["~/.pi/agent/extensions/harness/scripts/locked-exec.mjs", "@usex/mikrotik-mcp@latest"]
+}
+```
+
+`"command": "bun"` works the same.
 
 ### Workarounds
 
@@ -204,7 +238,8 @@ personal defaults — change it there, never in the logic below.
 
 - Pi `>=1.0` (built-in MCP, `registerMcpServer`, structured prompt sections)
 - Node.js `>=22.19.0`
-- `bun`, `git`, `curl`, `jq` for workflow dependencies
+- `git`, `curl`, `jq` for workflow dependencies; `bun` is optional (npm
+  packages run through `bun x` when it is available, else `npx`)
 
 Pi loads the TypeScript entry point directly through `jiti`; no build step is
 required.
