@@ -126,7 +126,10 @@ function registerPinnedServers(pi: ExtensionAPI, previous?: DepsLock): string[] 
       command: "bun",
       args: ["x", `@colbymchenry/codegraph@${codegraph}`, "serve", "--mcp"],
       env: { DO_NOT_TRACK: "1", CODEGRAPH_NO_UPDATE_CHECK: "1" },
-      toolExposure: { codegraph_explore: "direct" },
+      // codegraph exposes a single tool (codegraph_explore; the rest are hidden
+      // by codegraph itself), so the whole server is direct and stays out of
+      // the <mcp_servers> codemode listing.
+      exposure: "direct",
     });
   }
 
