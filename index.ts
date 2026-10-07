@@ -64,6 +64,7 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { installWorkarounds } from "./workarounds.ts";
+import { installDeps } from "./deps.ts";
 
 /* ============================================================================
  * ▄▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▄ ▀▀█▀▀ ▀▀█▀▀ ▄▀▀▀▀       ▄▀▀▀▀ ▄▀▀▀▄ █▄  █ █▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▀
@@ -842,6 +843,8 @@ export default async function thearchitectExtension(pi: ExtensionAPI): Promise<v
 
   // Temporary workarounds for upstream gaps live in workarounds.ts.
   installWorkarounds(pi);
+  // Workflow dependencies: pinned MCP servers + /deps dialog (deps.ts).
+  installDeps(pi);
 
   // Bundled skills (web-research: ollama web tools + lightpanda fallback).
   const extensionDir = dirname(fileURLToPath(import.meta.url));

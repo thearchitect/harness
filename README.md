@@ -117,6 +117,35 @@ model to search and read the web with the Ollama web tools and to fall back to
 Lightpanda (`mcp__lightpanda__*`) for JavaScript-rendered pages, interaction,
 or when Ollama is unavailable.
 
+### Workflow dependencies
+
+pi, magic-context, codegraph, lightpanda and herdr are treated as this
+extension's dependencies. `scripts/deps.sh` owns the logic and works from a
+terminal:
+
+```bash
+scripts/deps.sh check              # installed / pinned / latest per component
+scripts/deps.sh update <id|all>    # pi, magic-context, codegraph, lightpanda, herdr
+```
+
+| Component | Source of truth | Update |
+|---|---|---|
+| pi | global npm install | `pi update --self` (restart pi) |
+| magic-context | pi package | `pi update --extension`, `doctor --force --harness pi`, workaround check (`/reload`) |
+| codegraph | `deps.lock.json` (npm version) | pre-install into the bun cache, MCP handshake, pin |
+| lightpanda | `deps.lock.json` (stable GitHub release) | download to `~/.local/share/thearchitect.pi/lightpanda/<version>/`, MCP handshake, pin (previous version kept) |
+| herdr | herdr's own installer | `herdr update`, `herdr integration install pi` |
+
+The extension registers the `codegraph` and `lightpanda` MCP servers itself
+(`pi.registerMcpServer`) with the pinned versions, so there are no `@latest`
+installs at startup; an `mcp.json` entry with the same name overrides them. A
+missing or unpinned dependency shows in the status line.
+
+`/deps` (or `alt+u`) opens a terminal-like dialog: it streams `deps.sh check`,
+then offers the reported actions in a list where a prompt would be. A chosen
+action streams its output into the same log, reconnects MCP servers whose
+pinned version changed, and checks again. Updates run one at a time.
+
 ### Workarounds
 
 `workarounds.ts` isolates every mechanism that compensates for an upstream

@@ -22,6 +22,8 @@
   ],
   "files": [
     "index.ts",
+    "deps.lock.json",
+    "deps.ts",
     "scripts/",
     "workarounds.ts",
     "skills/",
@@ -30,7 +32,8 @@
   ],
   "scripts": {
     "check": "npm pack --dry-run",
-    "check-workarounds": "scripts/check-workarounds.sh"
+    "check-workarounds": "scripts/check-workarounds.sh",
+    "deps": "scripts/deps.sh"
   },
   "engines": {
     "node": ">=22.19.0"
