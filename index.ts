@@ -195,8 +195,23 @@ const OUTPUT_CAPTURE_RULE =
 const FILE_EDIT_RULE =
   "Change file contents only with the `edit` and `write` tools: `edit` for changes to existing files, `write` for new files or complete rewrites. Never create or modify files through bash (redirects, heredocs, `sed -i`, `perl -pi`, `tee`, Python/Node scripts, copying over existing files): such changes bypass mutation gates, user review, and diffs. Exceptions: capturing command output to temporary files, and running tools whose job is to produce files (formatters, code generators, package managers, builds, git operations). If a change would need a script, such as a mechanical replacement across many files, ask first.";
 
+/** Keeps edit/write diffs visible: nested codemode calls hide them inside the collapsed script output. */
+const DIRECT_EDIT_RULE =
+  "Call `edit` and `write` directly, never through `codemode`. Direct calls render their diffs in the transcript for user review; calls nested in a codemode script are hidden inside its collapsed output. To change several files, issue several `edit`/`write` calls in the same turn instead of batching them in a script.";
+
 /** Guideline bullets contributed to pi's <rules>, in order. */
-const HARNESS_GUIDELINES = [FILE_EDIT_RULE, OUTPUT_CAPTURE_RULE];
+const HARNESS_GUIDELINES = [FILE_EDIT_RULE, DIRECT_EDIT_RULE, OUTPUT_CAPTURE_RULE];
+
+/**
+ * codegraph's tool: deps.ts registers the server as "codegraph", and pi names
+ * MCP tools mcp__<server>__<tool>.
+ */
+const CODEGRAPH_NAMESPACE = "mcp__codegraph";
+const CODEGRAPH_TOOL = `${CODEGRAPH_NAMESPACE}__codegraph_explore`;
+
+/** Added to <rules> only while CODEGRAPH_TOOL is active. */
+const CODEGRAPH_EXPLORE_RULE =
+  "Whenever you need to understand code (where something is defined or used, how a flow works, what an edit will affect), query `mcp__codegraph__codegraph_explore` before reaching for rg/read: when starting a task, when moving to another area, before editing symbols, and while debugging. Use rg/read for what it does not cover (styles, configs, non-indexed files) or when its result is insufficient.";
 
 /* ============================================================================
  * █▀▀▀▄ █▀▀▀▀ █▀▀▀▄       █▀▄▀█ █▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▄ ▄▀▀▀▀ █▀▀▀▀
@@ -958,6 +973,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   let cycleStartTime: number | undefined;
   let baselineCost = 0;
   let systemPromptEntryShown = false;
+  let codegraphNameErrorShown = false;
   const blockedToolCalls = new Set<string>();
   // toolCallId -> comment for write/edit calls approved with a comment: the
   // comment is appended to the real tool result once the tool completes.
@@ -1256,6 +1272,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       cycleStartTime = undefined;
       baselineCost = 0;
       systemPromptEntryShown = false;
+      codegraphNameErrorShown = false;
       blockedToolCalls.clear();
       pendingGateComments.clear();
       bashInterrupts.clear();
@@ -1355,6 +1372,33 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       : { action: "transform", text };
   });
 
+  /**
+   * Adds CODEGRAPH_EXPLORE_RULE while CODEGRAPH_TOOL is active and removes it
+   * otherwise. No codegraph tools at all means the server is not connected
+   * (yet): no rule, checked again next prompt. Codegraph tools without
+   * CODEGRAPH_TOOL means the assumed name is wrong: reported once.
+   */
+  function applyCodegraphRule(guidelines: string[], ctx: ExtensionContext): void {
+    const index = guidelines.indexOf(CODEGRAPH_EXPLORE_RULE);
+    if (index !== -1) guidelines.splice(index, 1);
+    const active = new Set(pi.getActiveTools());
+    if (active.has(CODEGRAPH_TOOL)) {
+      guidelines.push(CODEGRAPH_EXPLORE_RULE);
+      return;
+    }
+    if (codegraphNameErrorShown) return;
+    const codegraphTools = pi
+      .getAllTools()
+      .filter((tool) => tool.namespace?.name === CODEGRAPH_NAMESPACE)
+      .map((tool) => tool.name);
+    // Registered but deactivated on purpose (setActiveTools) is not an error.
+    if (codegraphTools.length === 0 || codegraphTools.includes(CODEGRAPH_TOOL)) return;
+    codegraphNameErrorShown = true;
+    const message = `[harness] codegraph is connected but ${CODEGRAPH_TOOL} is not registered (found: ${codegraphTools.join(", ")}); codegraph rule not added.`;
+    console.error(message);
+    if (ctx.hasUI) ctx.ui.notify(message, "error");
+  }
+
   // ------------------------------------------------------------------
   // Cycle start: mode selector message + cost baseline snapshot
   // ------------------------------------------------------------------
@@ -1386,6 +1430,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
           options.promptGuidelines.push(guideline);
         }
       }
+      applyCodegraphRule(options.promptGuidelines, ctx);
       return {
         message: {
           customType: MODE_SELECTOR_MESSAGE_TYPE,
