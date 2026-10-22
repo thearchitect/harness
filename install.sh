@@ -14,7 +14,7 @@ FLAKE="github:thearchitect/harness"
 NIX_INSTALLER="https://nixos.org/nix/install"
 # Binary cache published by CI (GitHub Releases). Without it Nix builds locally.
 CACHE_URL="https://github.com/thearchitect/harness/releases/download/nix-cache"
-CACHE_KEY="" # filled in once CI publishes signed builds
+CACHE_KEY="harness-1:YE1emDZFHptBwqvSGZIoVkGgCUwvCrBxoMFA+zps0Dg="
 
 say() { printf '%s\n' "$*"; }
 warn() { printf 'warning: %s\n' "$*" >&2; }

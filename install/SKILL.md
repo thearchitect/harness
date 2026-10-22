@@ -16,7 +16,12 @@ rerun the script in a new shell.
 ## NixOS / home-manager
 Add the flake input `harness.url = "github:thearchitect/harness";` and the package
 `inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default` to `home.packages`
-(or `environment.systemPackages`), then rebuild. Upgrade with
+(or `environment.systemPackages`) and the binary cache (otherwise Nix builds locally):
+
+    nix.settings.extra-substituters = [ "https://github.com/thearchitect/harness/releases/download/nix-cache" ];
+    nix.settings.extra-trusted-public-keys = [ "harness-1:YE1emDZFHptBwqvSGZIoVkGgCUwvCrBxoMFA+zps0Dg=" ];
+
+then rebuild. Upgrade with
 `nix flake update harness` and a rebuild. Imperative alternative:
 `nix profile add github:thearchitect/harness`.
 
