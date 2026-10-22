@@ -8,7 +8,8 @@
 # names cannot contain '/'. The URL field is not covered by the signature.
 set -euo pipefail
 
-RESULT="$1"
+# A store path, not a flake reference (`nix path-info result` would look up a flake).
+RESULT="$(readlink -f "$1")"
 OUT="$2"
 mkdir -p "$OUT"
 
