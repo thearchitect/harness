@@ -1,0 +1,38 @@
+# Reusable: publishes the per-platform cache artifacts of build.yml as the
+# assets of the `nix-cache` release (the binary cache users substitute from)
+# and deletes assets the current bundle no longer references.
+name: publish-cache
+
+on:
+  workflow_call:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: cache-*
+          merge-multiple: true
+          path: cache
+      - name: Publish
+        run: |
+          set -euo pipefail
+          if ! ls cache/*.narinfo >/dev/null 2>&1; then
+            echo "::warning::no cache artifacts (signing key not configured?): nothing to publish"
+            exit 0
+          fi
+          gh release view nix-cache >/dev/null 2>&1 ||
+            gh release create nix-cache --prerelease --title "Nix binary cache" \
+              --notes "Binary cache of the harness bundle, maintained by CI. Not a release."
+          gh release upload nix-cache cache/* --clobber
+          # Prune assets of previous bundles.
+          ls cache >wanted.txt
+          gh release view nix-cache --json assets --jq '.assets[].name' | while read -r name; do
+            grep -qxF "$name" wanted.txt || gh release delete-asset nix-cache "$name" --yes
+          done

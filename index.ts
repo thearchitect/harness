@@ -211,7 +211,7 @@ const CODEGRAPH_TOOL = `${CODEGRAPH_NAMESPACE}__codegraph_explore`;
 
 /** Added to <rules> only while CODEGRAPH_TOOL is active. */
 const CODEGRAPH_EXPLORE_RULE =
-  "Whenever you need to understand code (where something is defined or used, how a flow works, what an edit will affect), query `mcp__codegraph__codegraph_explore` before reaching for rg/read: when starting a task, when moving to another area, before editing symbols, and while debugging. Use rg/read for what it does not cover (styles, configs, non-indexed files) or when its result is insufficient.";
+  "Whenever you need to understand code (where something is defined or used, how a flow works, what an edit will affect), query `mcp__codegraph__codegraph_explore` before reaching for rg/read: when starting a task, when moving to another area, before editing symbols, and while debugging. Use rg/read for what it does not cover (styles, configs, non-indexed files) or when its result is insufficient. When completeness matters (every reference, interface implementations, the full blast radius of a change), confirm with the type-resolved `mcp__lsp__*` tools; load the explore-and-refactor skill for exploration and refactoring.";
 
 /* ============================================================================
  * █▀▀▀▄ █▀▀▀▀ █▀▀▀▄       █▀▄▀█ █▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▄ ▄▀▀▀▀ █▀▀▀▀
@@ -875,13 +875,16 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
 
   // Temporary workarounds for upstream gaps live in workarounds.ts.
   installWorkarounds(pi);
-  // Workflow dependencies: pinned MCP servers + /deps dialog (deps.ts).
+  // Bundled dependencies: MCP servers from the Nix bundle manifest + /deps (deps.ts).
   installDeps(pi);
 
-  // Bundled skills (web-research: ollama web tools + lightpanda fallback).
+  // Bundled skills: web-research (ollama web tools + lightpanda fallback),
+  // explore-and-refactor (codegraph + LSP exploration, semantic refactoring).
   const extensionDir = dirname(fileURLToPath(import.meta.url));
   pi.on("resources_discover", () => ({
-    skillPaths: [join(extensionDir, "skills", "web-research", "SKILL.md")],
+    skillPaths: ["web-research", "explore-and-refactor"].map((name) =>
+      join(extensionDir, "skills", name, "SKILL.md"),
+    ),
   }));
   // Долгая кэш-ретенция промптов (читается при каждом запросе модели).
   process.env.PI_CACHE_RETENTION ??= "long";

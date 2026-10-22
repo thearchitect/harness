@@ -1,7 +1,11 @@
 # harness
 
 Personal workflow, safety, and UI extension for
-[Pi](https://github.com/earendil-works/pi).
+[Pi](https://github.com/earendil-works/pi), distributed as a Nix bundle with
+pi, the bundled pi packages and pinned MCP tools.
+
+> **For AI agents:** to install or upgrade harness, fetch and follow
+> https://raw.githubusercontent.com/thearchitect/harness/master/install/SKILL.md
 
 ## Features
 
@@ -113,86 +117,81 @@ a full `systemPrompt`; it only edits the structured `systemPromptOptions`:
 
 All of these are independent of the active mode.
 
-### Bundled skill
+### Bundled skills
 
-`skills/web-research` is registered through `resources_discover`. It tells the
-model to search and read the web with the Ollama web tools and to fall back to
-Lightpanda (`mcp__lightpanda__*`) for JavaScript-rendered pages, interaction,
-or when Ollama is unavailable.
+Registered through `resources_discover`:
 
-### Workflow dependencies
+- `skills/web-research` tells the model to search and read the web with the
+  Ollama web tools and to fall back to Lightpanda (`mcp__lightpanda__*`) for
+  JavaScript-rendered pages, interaction, or when Ollama is unavailable.
+- `skills/explore-and-refactor` tells the model what codegraph, the language
+  servers (agent-lsp) and `rg` each know, to batch exploration in codemode,
+  what is easy to miss, and which tool performs which refactoring. It states
+  capabilities and traps, not a procedure: the model plans the exploration
+  itself, from the current tree, with no index files to maintain.
 
-harness itself, pi, magic-context, codegraph, lightpanda and herdr are treated
-as this extension's dependencies. `scripts/deps.sh` owns the logic and works
-from a terminal:
+`install/SKILL.md` is not loaded into sessions: it is the installation guide
+for agents (see [Installation](#installation)).
 
-```bash
-scripts/deps.sh check              # installed / pinned / latest per component
-scripts/deps.sh update <id|all>    # harness, pi, magic-context, codegraph, lightpanda, herdr
-scripts/deps.sh install-pinned     # install pinned codegraph/lightpanda if missing
-```
+### Bundle
 
-The behavior depends on the [installation mode](#installation):
+harness is distributed only as a Nix flake. The bundle pins everything the
+workflow relies on; the project toolchain (go, node, the project's TypeScript,
+make, ssh, ...) is deliberately not part of it and comes from the user's PATH.
 
-- **installed** (pi git package): pi owns the checkout and resets it on
-  update, so nothing in it is written. `deps.lock.json` pins arrive with
-  harness updates; codegraph and lightpanda are only installed at the pinned
-  version.
-- **dev** (folder or submodule): updating codegraph or lightpanda bumps
-  `deps.lock.json`; commit it.
-
-| Component | Source of truth | Update |
+| Component | Pinned in | MCP server (exposure) |
 |---|---|---|
-| harness | installed: pi package; dev: git checkout | installed: `pi update <source>`; dev: `git pull --ff-only` (only when behind and clean); then `install-pinned` (`/reload`) |
-| pi | global npm install | `pi update --self` (restart pi) |
-| magic-context | pi package | `pi update --extension`, `doctor --force --harness pi`, workaround check (`/reload`) |
-| codegraph | `deps.lock.json` (npm version) | `locked-exec --install-only`, MCP handshake; dev: pin the latest |
-| lightpanda | `deps.lock.json` (stable GitHub release) | download to `~/.local/share/harness/lightpanda/<version>/`, MCP handshake; dev: pin the latest (previous version kept) |
-| herdr | herdr's own installer | `herdr update`, `herdr integration install pi` |
+| pi | `nix/npm` (lockfile) | - |
+| pi-magic-context, pi-ask-user, pi-ollama-cloud, pi-deepseek-search | `nix/npm` | - (loaded with `-e`) |
+| codegraph | nixpkgs (`flake.lock`) | `codegraph`: `codegraph_explore` direct; `node`, `search`, `callers`, `callees`, `impact` in codemode |
+| agent-lsp + gopls + typescript-language-server | `nix/sources.json` + nixpkgs | `lsp`: read-only tools in codemode, file-writing tools direct |
+| mcp-refactor-typescript | `nix/npm` | `ts-refactor`: direct (every tool writes) |
+| lightpanda | `nix/sources.json` | `lightpanda`: `goto`, `markdown` direct |
+| @playwright/mcp | `nix/npm` | `playwright`: codemode |
+| chrome-devtools-mcp | `nix/npm` | `chromium-devtools`: codemode, disabled by default |
+| herdr, pnpm | nixpkgs | - (in the bundle's `bin/`) |
 
-The extension registers the `codegraph` and `lightpanda` MCP servers itself
-(`pi.registerMcpServer`) with the pinned versions, so there are no `@latest`
-installs at startup; an `mcp.json` entry with the same name overrides them. A
-missing or unpinned dependency shows in the status line. codegraph runs
-through `locked-exec` under the runtime that runs pi, so it works with `bun`
-or with plain node/`npx`.
+The `pi` launcher (`nix/package.nix`) runs the pinned pi with `-e` for the
+harness extension and each bundled pi package (not for the subcommands pi
+handles before option parsing: `auth`, `install`, `remove`, `uninstall`,
+`update`, `list`, `config`, `mcp`), sets `PI_SKIP_VERSION_CHECK=1`, and points
+`HARNESS_MANIFEST` at a JSON file with the store paths and versions of the
+bundled tools. `deps.ts` registers the MCP servers from it
+(`pi.registerMcpServer`); an `mcp.json` entry with the same name takes
+precedence. Started without the launcher, harness reports the missing manifest
+in the status line and registers no servers.
 
-`/deps` (or `alt+u`) opens a terminal-like dialog: it streams `deps.sh check`,
-then offers the reported actions in a list where a prompt would be. A chosen
-action streams its output into the same log, reconnects MCP servers whose
-pinned version changed, and checks again. Updates run one at a time.
+Exposure policy: read-only tools go to codemode, where the model discovers and
+batches them; tools that write files are direct, so every write is a visible
+call in the transcript.
 
-### locked-exec
+Host settings, read from the environment:
 
-`scripts/locked-exec.mjs` runs an npm package binary through `bun x` or `npx`
-without install races: parallel pi sessions starting the same `@latest` MCP
-server otherwise install into the same cache directory at once and fail with
-`ENOENT` errors.
+- `HARNESS_BROWSER`: browser executable for `playwright`
+  (`PLAYWRIGHT_MCP_EXECUTABLE_PATH`);
+- `HARNESS_BROWSER_USER_DATA_DIR`: browser profile for `chromium-devtools`
+  (`--userDataDir`).
 
-```text
-locked-exec.mjs [--runner bun|npx|auto] [--install-only|--is-installed] <pkg>[@spec] [args...]
-locked-exec.mjs [...] -p|--package <spec> <bin> [args...]
-```
+`/deps` (or `alt+u`) shows the bundled versions and the herdr pi integration
+state. Updates replace the whole bundle: `nix profile upgrade harness`, or a
+flake update in a NixOS / home-manager config.
 
-A dist-tag (`latest`, none) is resolved to an exact version through the npm
-registry; the exact spec is installed under a lock and then run from the
-cache outside it, so runs stay parallel. Version ranges or an unreachable
-registry fall back to starting under the lock until the first stdout output.
-The runner defaults to `bun x` when bun is available, else `npx`; the script
-runs under node or bun. Locks are unix sockets: abstract (no file) on linux,
-a socket file in the temp directory on macos. Details and the bun behavior it
-relies on are in the file header.
+CI bumps every pin (`nix/update.sh`) on a schedule and merges the update when
+the builds and smoke tests pass on every platform.
 
-Use it in `mcp.json` in place of `bun x` / `npx` (pi expands `~`):
+### Your own npm MCP servers
+
+Run them with the bundled `pnpm dlx`. It is safe for parallel pi sessions
+starting the same server: each install goes into a unique directory that is
+linked into the cache atomically. Pin an exact version and keep stdout clean
+for the MCP stdio protocol:
 
 ```json
 "mikrotik": {
-  "command": "node",
-  "args": ["~/.pi/agent/extensions/harness/scripts/locked-exec.mjs", "@usex/mikrotik-mcp@latest"]
+  "command": "pnpm",
+  "args": ["--silent", "dlx", "@usex/mikrotik-mcp@1.2.3"]
 }
 ```
-
-`"command": "bun"` works the same.
 
 ### Workarounds
 
@@ -234,53 +233,39 @@ personal defaults — change it there, never in the logic below.
   lifted to 872000 tokens so long sessions compact later. Overrides are
   applied at session start, on every model switch, and before each agent run.
 
-## Requirements
-
-- Pi `>=1.0` (built-in MCP, `registerMcpServer`, structured prompt sections)
-- Node.js `>=22.19.0`
-- `git`, `curl`, `jq` for workflow dependencies; `bun` is optional (npm
-  packages run through `bun x` when it is available, else `npx`)
-
-Pi loads the TypeScript entry point directly through `jiti`; no build step is
-required.
-
 ## Installation
 
-Use exactly one installation method. If both are present, the copy pi loads
-first claims the process and the other one is ignored with a warning.
+Supported platforms: x86_64/aarch64 Linux and Apple Silicon macOS.
 
-### Pi git package (installed mode)
+Linux / macOS (installs Nix first if needed, after asking):
 
 ```bash
-pi install git:git@github.com:thearchitect/harness        # ssh (private repository)
-pi install git:github.com/thearchitect/harness            # https, once the repository is public
-scripts/deps.sh install-pinned                             # from the package checkout, or /deps in pi
+curl -fsSL https://raw.githubusercontent.com/thearchitect/harness/master/install.sh | bash
 ```
 
-pi reports harness updates at startup ("Package Updates Available"); update
-with `pi update --extensions`, `pi update <source>`, or `/deps`.
+NixOS / home-manager: add the flake input and the package.
 
-### Checkout (dev mode)
-
-Clone or add the repository as a submodule at:
-
-```text
-~/.pi/agent/extensions/harness
+```nix
+inputs.harness.url = "github:thearchitect/harness";
+# ...
+home.packages = [ inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default ];
 ```
 
-Pi discovers the package through `package.json` and its `pi.extensions`
-manifest. Run `/reload` after changing the source.
+The bundle replaces an npm-installed pi and the pi-package installs of harness
+and the bundled packages: remove those (the installer lists what it finds).
 
 ## Development
 
-Validate the package contents:
-
 ```bash
-npm run check
+nix develop        # shell with pi-dev
+pi-dev             # the bundle, with harness loaded from the current checkout (/reload after edits)
+nix build          # the bundle, as users get it
+nix/update.sh      # bump every pin (what CI does on a schedule)
 ```
 
-There are no runtime npm dependencies. Pi provides the declared peer modules
-to extensions through its loader.
+Pi loads the TypeScript entry point directly through `jiti`; no build step is
+required, and pi provides the declared peer modules to extensions through its
+loader. Never edit `nix/npm/package-lock.json` or `nix/sources.json` by hand.
 
 ## Security
 
