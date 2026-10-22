@@ -31,8 +31,11 @@ jobs:
             gh release create nix-cache --prerelease --title "Nix binary cache" \
               --notes "Binary cache of the harness bundle, maintained by CI. Not a release."
           gh release upload nix-cache cache/* --clobber
-          # Prune assets of previous bundles.
+          # Prune assets of previous bundles. (The list is read up front:
+          # gh would consume a piped loop's stdin.)
           ls cache >wanted.txt
-          gh release view nix-cache --json assets --jq '.assets[].name' | while read -r name; do
-            grep -qxF "$name" wanted.txt || gh release delete-asset nix-cache "$name" --yes
+          mapfile -t assets < <(gh release view nix-cache --json assets --jq '.assets[].name')
+          for name in "${assets[@]}"; do
+            grep -qxF "$name" wanted.txt || gh release delete-asset nix-cache "$name" --yes </dev/null
           done
+          echo "published $(wc -l <wanted.txt) assets, release had ${#assets[@]}"
