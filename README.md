@@ -261,12 +261,15 @@ and the bundled packages: remove those (the installer lists what it finds).
 ## Development
 
 ```bash
-nix develop        # shell with pi-dev
-pi-dev             # the bundle, with harness loaded from the current checkout (/reload after edits)
+export HARNESS_DEV_DIR=~/src/harness   # your harness checkout (default for pi-dev: the current directory)
+pi-dev             # the installed bundle, with harness loaded from $HARNESS_DEV_DIR (restart or /reload after edits)
 nix build          # the bundle, as users get it
 nix/update.sh      # bump every pin (what CI does on a schedule)
 ```
 
+`pi-dev` ships with the bundle, so it works in any project directory; `pi`
+keeps running the released harness. Keep the checkout outside
+`~/.pi/agent/extensions/` (pi would discover it there and load a second copy).
 Pi loads the TypeScript entry point directly through `jiti`; no build step is
 required, and pi provides the declared peer modules to extensions through its
 loader. Never edit `nix/npm/package-lock.json` or `nix/sources.json` by hand.

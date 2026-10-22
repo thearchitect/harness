@@ -233,8 +233,10 @@ let
       "$@"
   '';
 
-  # pi-dev: the same launcher with the extension loaded from a working tree
-  # ($HARNESS_DEV_DIR, default: the current directory), for developing harness.
+  # pi-dev: the same launcher (same pinned pi, packages and tools) with the
+  # extension loaded from a harness working tree ($HARNESS_DEV_DIR, default:
+  # the current directory). Edit the checkout, restart pi-dev (or /reload): no
+  # rebuild needed.
   dev = writeShellScriptBin "pi-dev" (
     ''
       HARNESS_DEV_DIR="$(cd "''${HARNESS_DEV_DIR:-$PWD}" && pwd)"
@@ -258,6 +260,7 @@ stdenvNoCC.mkDerivation {
     # A copy, not a symlink: scripts resolve the bundle (and its manifest)
     # from `readlink -f $(command -v pi)`.
     install -Dm755 ${pi}/bin/pi $out/bin/pi
+    ln -s ${dev}/bin/pi-dev $out/bin/pi-dev
     ln -s ${lib.getExe herdr} $out/bin/herdr
     ln -s ${lib.getExe pnpm} $out/bin/pnpm
     ln -s ${manifest} $out/share/harness/manifest.json
