@@ -2,7 +2,7 @@
   "name": "harness",
   "version": "0.1.0",
   "private": true,
-  "description": "Personal pi workflow: PLAN/BUILD modes, mutation gates, prompt contributions, workflow dependencies (/deps), web-research skill",
+  "description": "Personal pi workflow: PLAN/BUILD modes, mutation gates, prompt contributions, bundled MCP tools (/deps), web-research and explore-and-refactor skills; distributed as a Nix bundle",
   "type": "module",
   "author": "The Architect",
   "license": "MIT",
@@ -15,25 +15,12 @@
     "url": "https://github.com/thearchitect/harness/issues"
   },
   "keywords": [
-    "pi-package",
     "pi",
     "pi-coding-agent",
     "extension"
   ],
-  "files": [
-    "index.ts",
-    "deps.lock.json",
-    "deps.ts",
-    "scripts/",
-    "workarounds.ts",
-    "skills/",
-    "README.md",
-    "LICENSE"
-  ],
   "scripts": {
-    "check": "npm pack --dry-run",
-    "check-workarounds": "scripts/check-workarounds.sh",
-    "deps": "scripts/deps.sh"
+    "check-workarounds": "scripts/check-workarounds.sh"
   },
   "engines": {
     "node": ">=22.19.0"

@@ -86,13 +86,15 @@ async function loadPiInternal<T>(relPath: string, exportNames: readonly string[]
  *   `systemPrompt` (forceSystemPrompt). pi then sends that text verbatim and
  *   drops every later section change, so the model never learns which MCP
  *   servers exist (codemode and tool_search do not list them).
- *   Reproduce (prints the section without MC, NONE with MC):
- *     pi -p --no-extensions -e builtin:mcp -e builtin:codemode "<print <mcp_servers> or NONE>"
- *     pi -p --no-extensions -e builtin:mcp -e builtin:codemode \
- *       -e ~/.pi/agent/npm/node_modules/@cortexkit/pi-magic-context "<same>"
+ *   Reproduce (prints the section without MC, NONE with MC; HARNESS_RAW=1
+ *   makes the bundle launcher run plain pi, MC's directory is
+ *   .packages["@cortexkit/pi-magic-context"] in the bundle manifest):
+ *     HARNESS_RAW=1 pi -p --no-extensions -e builtin:mcp -e builtin:codemode "<print <mcp_servers> or NONE>"
+ *     HARNESS_RAW=1 pi -p --no-extensions -e builtin:mcp -e builtin:codemode \
+ *       -e <MC package dir> "<same>"
  *
- * Workaround: this extension's before_agent_start runs before MC (local
- *   extensions load before packages). It renders the section with pi's own
+ * Workaround: this extension's before_agent_start runs before MC (the bundle
+ *   launcher passes harness first among its -e extensions). It renders the section with pi's own
  *   loadMcpConfig + renderServersSection and writes it into
  *   sections.mcp_servers, so MC's forced prompt includes it. Servers
  *   registered by extensions (pi.getMcpServers()) are included; a configured

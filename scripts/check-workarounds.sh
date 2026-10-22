@@ -8,8 +8,13 @@ set -uo pipefail
 
 MODEL="${1:-${PI_CHECK_MODEL:-}}"
 PI_BIN="$(command -v pi)" || { echo "pi not found in PATH" >&2; exit 2; }
-PI_PKG="$(cd "$(dirname "$(readlink -f "$PI_BIN")")/../.." && pwd)"
-MC_PKG="${MC_PKG:-$HOME/.pi/agent/npm/node_modules/@cortexkit/pi-magic-context}"
+# The harness bundle: bin/pi + share/harness/manifest.json.
+MANIFEST="$(dirname "$(readlink -f "$PI_BIN")")/../share/harness/manifest.json"
+[[ -f "$MANIFEST" ]] || { echo "$PI_BIN is not the harness bundle launcher ($MANIFEST missing)" >&2; exit 2; }
+PI_PKG="$(jq -r '.packages.pi' "$MANIFEST")"
+MC_PKG="${MC_PKG:-$(jq -r '.packages["@cortexkit/pi-magic-context"]' "$MANIFEST")}"
+# Plain pinned pi, without the extensions the launcher adds.
+export HARNESS_RAW=1
 OUT="$(mktemp -d "${TMPDIR:-/tmp}/check-workarounds-XXXXXX")"
 
 echo "pi package: $PI_PKG ($(node -p "require('$PI_PKG/package.json').version" 2>/dev/null))"
