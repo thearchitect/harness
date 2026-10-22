@@ -34,7 +34,8 @@ jobs:
       - name: Build
         run: nix build --print-build-logs .#default
       - name: Smoke tests
-        run: nix shell nixpkgs#jq --command nix/smoke.sh result
+        # coreutils: `timeout` (missing on macOS runners).
+        run: nix shell nixpkgs#jq nixpkgs#coreutils --command nix/smoke.sh result
       - name: Export binary cache
         env:
           SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}

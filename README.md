@@ -250,6 +250,7 @@ NixOS / home-manager: add the flake input, the package and the binary cache
 inputs.harness.url = "github:thearchitect/harness";
 # ...
 home.packages = [ inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default ];
+# NixOS system configuration (the daemon must trust the cache):
 nix.settings.extra-substituters = [ "https://github.com/thearchitect/harness/releases/download/nix-cache" ];
 nix.settings.extra-trusted-public-keys = [ "harness-1:YE1emDZFHptBwqvSGZIoVkGgCUwvCrBxoMFA+zps0Dg=" ];
 ```
