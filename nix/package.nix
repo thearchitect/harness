@@ -77,6 +77,12 @@ let
         stdenv.cc.cc.lib
         libxcb # pi-tui's X11 clipboard addon
       ];
+      # The installed lockfiles point at every npm tarball in the store
+      # (importNpmLock rewrites `resolved`); dropping them keeps the tarballs
+      # out of the runtime closure.
+      postInstall = ''
+        rm -f $out/package.json $out/package-lock.json $out/node_modules/.package-lock.json
+      '';
       # npm cannot detect the libc inside the sandbox and installs sharp's musl
       # builds next to the glibc ones; they can never load here.
       preFixup = lib.optionalString stdenv.hostPlatform.isLinux ''
