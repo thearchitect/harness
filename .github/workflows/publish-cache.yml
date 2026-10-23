@@ -1,41 +1,43 @@
-# Reusable: publishes the per-platform cache artifacts of build.yml as the
-# assets of the `nix-cache` release (the binary cache users substitute from)
-# and deletes assets the current bundle no longer references.
+# Reusable: append missing immutable cache assets; never prune other revisions
+# or platforms. The shared release has a single writer across all workflows.
 name: publish-cache
 
 on:
   workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA whose checked artifacts may be published
+        type: string
+        required: true
 
 jobs:
   publish:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: nix-cache-publish
+      cancel-in-progress: false
     permissions:
       contents: write
+      actions: read
+      statuses: write
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      CI_SHA: ${{ inputs.ref }}
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@v7
         with:
-          pattern: cache-*
-          merge-multiple: true
+          ref: ${{ inputs.ref }}
+      - name: Check for cache artifacts
+        id: artifacts
+        run: python3 nix/ci.py artifacts >>"$GITHUB_OUTPUT"
+      - uses: actions/download-artifact@v8
+        if: steps.artifacts.outputs.available == 'true'
+        with:
+          pattern: cache-*-${{ inputs.ref }}
+          merge-multiple: false
           path: cache
-      - name: Publish
-        run: |
-          set -euo pipefail
-          if ! ls cache/*.narinfo >/dev/null 2>&1; then
-            echo "::warning::no cache artifacts (signing key not configured?): nothing to publish"
-            exit 0
-          fi
-          gh release view nix-cache >/dev/null 2>&1 ||
-            gh release create nix-cache --prerelease --title "Nix binary cache" \
-              --notes "Binary cache of the harness bundle, maintained by CI. Not a release."
-          gh release upload nix-cache cache/* --clobber
-          # Prune assets of previous bundles. (The list is read up front:
-          # gh would consume a piped loop's stdin.)
-          ls cache >wanted.txt
-          mapfile -t assets < <(gh release view nix-cache --json assets --jq '.assets[].name')
-          for name in "${assets[@]}"; do
-            grep -qxF "$name" wanted.txt || gh release delete-asset nix-cache "$name" --yes </dev/null
-          done
-          echo "published $(wc -l <wanted.txt) assets, release had ${#assets[@]}"
+      - name: Publish missing assets
+        if: steps.artifacts.outputs.available == 'true'
+        run: python3 nix/ci.py publish cache

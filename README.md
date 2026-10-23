@@ -201,8 +201,18 @@ Host settings, read from the environment:
 state. Updates replace the whole bundle: `nix profile upgrade harness`, or a
 flake update in a NixOS / home-manager config.
 
-CI bumps every pin (`nix/update.sh`) on a schedule and merges the update when
-the builds and smoke tests pass on every platform.
+CI checks and publishes `x86_64-linux` on ordinary pushes; pull requests only
+run checks. Scheduled pin updates (`nix/update.sh`) merge after the same Linux
+build and smoke tests. Unchanged pins do not trigger a build.
+
+The separate `compatibility` workflow covers all three platforms daily and on
+manual dispatch, without blocking ordinary publication. Per-commit, per-platform
+statuses skip revisions already checked and published. A failed publication
+reuses its checked artifact for up to 14 days; manual `force` requests a rebuild.
+Cache publication is serialized and append-only: existing assets are not
+reuploaded or pruned, and all archives arrive before their `.narinfo` files.
+CI also substitutes from this cache. Offline CI regression tests:
+`PYTHONDONTWRITEBYTECODE=1 python3 nix/test_ci.py`.
 
 ### Your own npm MCP servers
 

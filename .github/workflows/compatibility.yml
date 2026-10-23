@@ -1,0 +1,42 @@
+# Full platform coverage is off the ordinary publication path. Each platform
+# skips revisions already checked and cached by either workflow.
+name: compatibility
+
+on:
+  schedule:
+    - cron: "47 5 * * *"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: Rebuild all platforms even when already cached
+        type: boolean
+        default: false
+
+concurrency:
+  group: compatibility-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.sha }}
+      full-matrix: true
+      publish-cache: ${{ github.ref == 'refs/heads/master' }}
+      force: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
+    secrets: inherit
+
+  publish-cache:
+    if: github.ref == 'refs/heads/master'
+    needs: build
+    uses: ./.github/workflows/publish-cache.yml
+    with:
+      ref: ${{ github.sha }}
+    permissions:
+      contents: write
+      actions: read
+      statuses: write

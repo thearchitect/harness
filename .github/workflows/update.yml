@@ -1,6 +1,6 @@
-# Scheduled dependency update: bumps every pin (nix/update.sh), builds and
-# smoke-tests the result on every platform, and fast-forwards master to it when
-# everything is green ("auto-merge on green CI"). The update commit is pushed to
+# Scheduled dependency update: bumps every pin (nix/update.sh), checks the
+# primary Linux platform, and fast-forwards master on success. The full matrix
+# runs separately in compatibility.yml. The update commit is pushed to
 # the `auto/update` branch first; pushes made with GITHUB_TOKEN do not trigger
 # other workflows, so this workflow runs the checks and publishes the cache
 # itself.
@@ -51,9 +51,14 @@ jobs:
   build:
     needs: bump
     if: needs.bump.outputs.changed == 'true'
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
     uses: ./.github/workflows/build.yml
     with:
       ref: ${{ needs.bump.outputs.sha }}
+      publish-cache: true
     secrets: inherit
 
   merge:
@@ -74,7 +79,11 @@ jobs:
           git push origin --delete auto/update
 
   publish-cache:
-    needs: merge
+    needs: [bump, merge]
     uses: ./.github/workflows/publish-cache.yml
+    with:
+      ref: ${{ needs.bump.outputs.sha }}
     permissions:
       contents: write
+      actions: read
+      statuses: write

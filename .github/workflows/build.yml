@@ -1,47 +1,92 @@
-# Reusable: builds the bundle on every supported platform, runs the smoke
-# tests, and exports the store paths missing from cache.nixos.org as a signed
-# binary-cache artifact per platform (published by publish-cache.yml).
+# Reusable: one platform on the publication path; the full matrix is opt-in.
 name: build
 
 on:
   workflow_call:
     inputs:
       ref:
-        description: Git ref to build
+        description: Commit SHA to build
         type: string
         required: true
+      full-matrix:
+        type: boolean
+        default: false
+      publish-cache:
+        type: boolean
+        default: false
+      force:
+        description: Rebuild even when this revision is already cached
+        type: boolean
+        default: false
 
 jobs:
   build:
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - system: x86_64-linux
-            runner: ubuntu-latest
-          - system: aarch64-linux
-            runner: ubuntu-24.04-arm
-          - system: aarch64-darwin
-            runner: macos-latest
+        include: ${{ fromJSON(inputs.full-matrix && '[{"system":"x86_64-linux","runner":"ubuntu-latest"},{"system":"aarch64-linux","runner":"ubuntu-24.04-arm"},{"system":"aarch64-darwin","runner":"macos-latest"}]' || '[{"system":"x86_64-linux","runner":"ubuntu-latest"}]') }}
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      CI_SYSTEM: ${{ matrix.system }}
+      CI_SHA: ${{ inputs.ref }}
+      CI_PUBLISH: ${{ inputs.publish-cache }}
+      CI_FORCE: ${{ inputs.force }}
     steps:
       - uses: actions/checkout@v7
         with:
           ref: ${{ inputs.ref }}
+      - name: Check completed work
+        id: plan
+        run: python3 nix/ci.py plan >>"$GITHUB_OUTPUT"
       - uses: cachix/install-nix-action@v31
+        if: steps.plan.outputs.action == 'build'
+        with:
+          extra_nix_config: |
+            extra-substituters = https://github.com/thearchitect/harness/releases/download/nix-cache
+            extra-trusted-public-keys = harness-1:YE1emDZFHptBwqvSGZIoVkGgCUwvCrBxoMFA+zps0Dg=
+      - name: CI regression tests
+        if: steps.plan.outputs.action == 'build'
+        run: PYTHONDONTWRITEBYTECODE=1 python3 nix/test_ci.py
       - name: Flake check
-        run: nix flake check --print-build-logs
+        if: steps.plan.outputs.action == 'build'
+        run: nix flake check --no-build --print-build-logs
       - name: Build
+        if: steps.plan.outputs.action == 'build'
         run: nix build --print-build-logs .#default
       - name: Smoke tests
-        # coreutils: `timeout` (missing on macOS runners).
+        if: steps.plan.outputs.action == 'build'
+        # coreutils supplies timeout on macOS too.
         run: nix shell nixpkgs#jq nixpkgs#coreutils --command nix/smoke.sh result
       - name: Export binary cache
+        if: inputs.publish-cache && steps.plan.outputs.action == 'build'
         env:
           SIGNING_KEY: ${{ secrets.NIX_CACHE_SIGNING_KEY }}
-        run: nix/cache-export.sh result "cache-${{ matrix.system }}"
-      - uses: actions/upload-artifact@v7
+        run: |
+          nix/cache-export.sh result "cache-$CI_SYSTEM"
+          python3 nix/ci.py metadata "cache-$CI_SYSTEM"
+      - name: Reuse checked cache artifact
+        if: steps.plan.outputs.action == 'reuse'
+        uses: actions/download-artifact@v8
         with:
-          name: cache-${{ matrix.system }}
+          name: cache-${{ matrix.system }}-${{ inputs.ref }}
+          run-id: ${{ steps.plan.outputs.source_run }}
+          github-token: ${{ github.token }}
           path: cache-${{ matrix.system }}
-          retention-days: 3
+      - uses: actions/upload-artifact@v7
+        if: inputs.publish-cache && steps.plan.outputs.action != 'skip'
+        with:
+          name: cache-${{ matrix.system }}-${{ inputs.ref }}
+          path: cache-${{ matrix.system }}
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
+      - name: Record checked artifact
+        if: inputs.publish-cache && steps.plan.outputs.action != 'skip'
+        run: python3 nix/ci.py ready
