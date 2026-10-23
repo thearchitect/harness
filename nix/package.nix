@@ -227,7 +227,11 @@ let
     case "''${1-}" in
       ${piSubcommands}) exec ${lib.getExe nodejs} ${piCli} "$@" ;;
     esac
+    # Discover schemas inside codemode, without promoting tools into model
+    # declarations (tool_search changes invalidate the provider's prompt cache).
     exec ${lib.getExe nodejs} ${piCli} \
+      --tools +codemode \
+      --exclude-tools tool_search \
       -e ${extensionDir} \
       ${lib.concatMapStringsSep " " (p: "-e ${nodeModules}/${p}") piPackages} \
       "$@"

@@ -113,13 +113,24 @@ a full `systemPrompt`; it only edits the structured `systemPromptOptions`:
   - change file contents only with `edit`/`write`, never through bash scripts
     (keeps mutation gates, review and diffs in the loop; exceptions: temporary
     output capture and file-producing tools such as formatters or builds);
+  - discover undeclared tools inside codemode with `describeTool`, `describeNamespace`
+    and `searchTools`, without activating tools or changing model declarations;
+  - unpack codemode tool results for readable output: emit MCP text/image blocks
+    and bash output directly. Keep labels and source/prose/log bodies in one plain
+    text item rather than a JSON wrapper, including in parallel calls. Use JSON
+    for actual structured data, preserving errors, warnings and truncation metadata;
   - capture command output to a file before filtering it;
   - treat `No (why?)` comments, `Yes` caveats and `/-` messages as corrections
     within the ongoing task, not task cancellation: revise a rejected action
     without bypassing the refusal, account for caveats after an approved call,
     and continue after a bash abort unless the user explicitly asks to stop,
     pause or wait. A comment repeated in a tool result and a steered user
-    message is one correction, not two requests. `Stop`/`Esc` still stop the run.
+    message is one correction, not two requests. `Stop`/`Esc` still stop the run;
+  - investigate nontrivial code questions through project structure, data models
+    and API contracts, expanding their usages in codemode before fetching details.
+    The explore-and-refactor skill supplies this route even without codegraph;
+    when its explore tool is active, an additional rule explains graph/LSP usage
+    and fallback to ordinary search.
 
 All of these are independent of the active mode.
 
@@ -130,11 +141,11 @@ Registered through `resources_discover`:
 - `skills/web-research` tells the model to search and read the web with the
   Ollama web tools and to fall back to Lightpanda (`mcp__lightpanda__*`) for
   JavaScript-rendered pages, interaction, or when Ollama is unavailable.
-- `skills/explore-and-refactor` tells the model what codegraph, the language
-  servers (agent-lsp) and `rg` each know, to batch exploration in codemode,
-  what is easy to miss, and which tool performs which refactoring. It states
-  capabilities and traps, not a procedure: the model plans the exploration
-  itself, from the current tree, with no index files to maintain.
+- `skills/explore-and-refactor` is a short, self-contained route through project
+  structure → data types/fields → DTO/API contracts → usages and execution flows.
+  It batches traversal in codemode using codegraph and LSP, then retrieves missing
+  details with targeted queries or ordinary search. DAO/DTO/API are roles rather
+  than assumed directory names; no separate reference guides or required ledger.
 
 `install/SKILL.md` is not loaded into sessions: it is the installation guide
 for agents (see [Installation](#installation)).
@@ -169,7 +180,15 @@ in the status line and registers no servers.
 
 Exposure policy: read-only tools go to codemode, where the model discovers and
 batches them; tools that write files are direct, so every write is a visible
-call in the transcript.
+call in the transcript. Both launchers enable codemode and exclude `tool_search`
+using pi's native CLI options. Discovery returns schemas as ordinary tool output
+instead of promoting tools into model declarations and invalidating prompt caches.
+Known names use `describeTool`; `searchTools` is fuzzy capability search, optionally
+scoped by namespace.
+
+Launcher changes require rebuilding the bundle and restarting pi; `/reload` only
+updates extensions. Tools previously promoted on an existing session branch remain
+declared: start a new session for a clean baseline.
 
 Host settings, read from the environment:
 

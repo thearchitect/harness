@@ -199,12 +199,24 @@ const FILE_EDIT_RULE =
 const DIRECT_EDIT_RULE =
   "Call `edit` and `write` directly, never through `codemode`. Direct calls render their diffs in the transcript for user review; calls nested in a codemode script are hidden inside its collapsed output. To change several files, issue several `edit`/`write` calls in the same turn instead of batching them in a script.";
 
+/** Keeps discovery from changing model-facing tool declarations and their cache prefix. */
+const CODEMODE_DISCOVERY_RULE =
+  "Discover undeclared tools inside `codemode` without loading new model declarations: use `describeTool(name)` for an exact known name, `describeNamespace(name)` to list a server's tools, or `searchTools(query, { namespace })` for capability search. Search is fuzzy, not exact-name resolution. Reuse schemas already known; callable tools do not need activation before scripts call them.";
+
+/** Keeps codemode output readable without discarding result status or metadata. */
+const CODEMODE_OUTPUT_RULE =
+  "When using codemode, work with structured tool results internally and output their useful content, not transport envelopes. Follow each tool's declared return shape: strings go directly to `text()`; for MCP results, emit text blocks with `text(block.text)` and image blocks with `image(block)`, preserving their order; for bash results, emit `result.output` and check `exit_code` and truncation metadata; for structured data, select or aggregate relevant fields and pass the resulting object to `text()` when JSON is useful. Emit source code, prose, Markdown and logs as plain strings, even when adding labels. Do not wrap them in objects or arrays merely to attach metadata. Combine the label and body into one `text()` string, especially in parallel calls. Use JSON for actual structured data, not as a container for human-readable text. Handle rejected calls and returned error indicators; preserve relevant warnings, truncation notices and full-output paths. Do not print duplicate text and structured representations. Do not manually replace escaped newlines: extract the original text instead.";
+
 /** Distinguishes per-call user corrections from stopping the task or run. */
 const TOOL_FEEDBACK_RULE =
   "Treat user feedback from tool approval gates and `/-` as corrections to the current action within the ongoing task, not as cancellation of the task or run. `No (why?)` with a comment rejects only that tool call: use the explanation to revise the action and continue the original task; do not repeat the rejected action unchanged or bypass the rejection with another tool. `Yes` with a comment approves the call as submitted: account for the caveat in subsequent work, and do not assume the approved call was changed or rejected. `/- <message>` aborts any running bash calls, not the agent run: use the explanation to adjust your next action and continue. Do not end your response merely to acknowledge the correction or wait for a new request unless the user explicitly asks you to stop, pause, or wait. The same comment may appear in both a tool result and a steered user message; treat these as one correction, not two separate requests. `Stop` and `Esc` remain explicit run-stopping controls.";
 
+/** Data- and contract-led investigation, even when codegraph is unavailable. */
+const CODE_EXPLORATION_RULE =
+  "For nontrivial questions about existing code, behavior, architecture, debugging or refactoring, load the explore-and-refactor skill. Navigate from project structure and relevant data types/fields through domain/DAO models, DTO/messages and API contracts to their usages and execution paths. Adapt these roles to the project. Batch independent read-only traversal in codemode, then fetch missing details; follow relevant alternative consumers rather than stopping at the first feature. Stop when the relevant paths answer the question, and state any remaining concrete gap.";
+
 /** Guideline bullets contributed to pi's <rules>, in order. */
-const HARNESS_GUIDELINES = [FILE_EDIT_RULE, DIRECT_EDIT_RULE, OUTPUT_CAPTURE_RULE, TOOL_FEEDBACK_RULE];
+const HARNESS_GUIDELINES = [FILE_EDIT_RULE, DIRECT_EDIT_RULE, CODEMODE_DISCOVERY_RULE, CODEMODE_OUTPUT_RULE, OUTPUT_CAPTURE_RULE, TOOL_FEEDBACK_RULE, CODE_EXPLORATION_RULE];
 
 /**
  * codegraph's tool: deps.ts registers the server as "codegraph", and pi names
@@ -215,7 +227,7 @@ const CODEGRAPH_TOOL = `${CODEGRAPH_NAMESPACE}__codegraph_explore`;
 
 /** Added to <rules> only while CODEGRAPH_TOOL is active. */
 const CODEGRAPH_EXPLORE_RULE =
-  "Whenever you need to understand code (where something is defined or used, how a flow works, what an edit will affect), query `mcp__codegraph__codegraph_explore` before reaching for rg/read: when starting a task, when moving to another area, before editing symbols, and while debugging. Use rg/read for what it does not cover (styles, configs, non-indexed files) or when its result is insufficient. When completeness matters (every reference, interface implementations, the full blast radius of a change), confirm with the type-resolved `mcp__lsp__*` tools; load the explore-and-refactor skill for exploration and refactoring.";
+  "Start indexed structural lookup with `mcp__codegraph__codegraph_explore`, then target discovered symbols and paths. Graph results are selective and heuristic, not exhaustive. Use type-resolved `mcp__lsp__*` references and implementations to expand data/contract usages, and `rg`/`read` for independent discovery, wiring, string-based links and missing details, including indexed code. Reuse fresh source already returned. If a project is not indexed, use ordinary tools there instead.";
 
 /* ============================================================================
  * █▀▀▀▄ █▀▀▀▀ █▀▀▀▄       █▀▄▀█ █▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▄ ▄▀▀▀▀ █▀▀▀▀
