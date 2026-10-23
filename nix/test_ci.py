@@ -134,6 +134,10 @@ class PublishTests(unittest.TestCase):
         self.assertEqual(publish(self.gh, self.root, SHA), 0)
         self.assertFalse(any(event[0] == "upload" for event in self.gh.events))
 
+    def test_single_artifact_flattened_by_download_action(self):
+        self.assertEqual(publish(self.gh, self.cache, SHA), 3)
+        self.assertEqual(self.gh.events[-1], ("status", SYSTEM, "cached"))
+
     def test_all_platform_archives_precede_any_narinfo(self):
         self.add_platform("aarch64-darwin", "zzz")
         publish(self.gh, self.root, SHA)

@@ -154,7 +154,11 @@ def metadata(directory, sha, system):
 def payload(directory, sha):
     files = {}
     systems = set()
-    for marker in sorted(directory.glob(f"cache-*/{METADATA}")):
+    # download-artifact can flatten a single match even with merge-multiple=false.
+    markers = sorted(directory.glob(f"cache-*/{METADATA}"))
+    if (directory / METADATA).is_file():
+        markers.append(directory / METADATA)
+    for marker in markers:
         info = json.loads(marker.read_text())
         if info.get("sha") != sha or info.get("system") not in SYSTEMS:
             raise ValueError(f"Unexpected cache metadata: {marker}")
