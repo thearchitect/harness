@@ -148,7 +148,7 @@ make, ssh, ...) is deliberately not part of it and comes from the user's PATH.
 | mcp-refactor-typescript | `nix/npm` | `ts-refactor`: direct (every tool writes) |
 | lightpanda | `nix/sources.json` | `lightpanda`: `goto`, `markdown` direct |
 | @playwright/mcp | `nix/npm` | `playwright`: codemode |
-| chrome-devtools-mcp | `nix/npm` | `chromium-devtools`: codemode, disabled by default |
+| chrome-devtools-mcp | `nix/npm` | `chromium-devtools`: codemode |
 | herdr, pnpm | nixpkgs | - (in the bundle's `bin/`) |
 
 The `pi` launcher (`nix/package.nix`) runs the pinned pi with `-e` for the

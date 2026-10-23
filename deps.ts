@@ -170,7 +170,6 @@ function registerServers(pi: ExtensionAPI, bin: Manifest["bin"]): void {
   });
 
   pi.registerMcpServer("chromium-devtools", {
-    enabled: false,
     description:
       "Control and inspect the user's running browser via DevTools: pages, DOM, console, network, screenshots",
     command: bin["chrome-devtools-mcp"],
