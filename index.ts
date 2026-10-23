@@ -10,7 +10,7 @@
  * aborts the bash call that is currently executing (its process tree only)
  * and steers the given message to the model without aborting the run.
  * System prompt: pi assembles it; the extension only contributes the
- * <mode_policies> section and one guideline bullet (see Prompt contributions).
+ * <mode_policies> section and guideline bullets (see Prompt contributions).
  * Temporary workarounds for upstream gaps are isolated in workarounds.ts.
  * Static CONFIG block (top of file) drives all tunables: edit it, not the logic.
  *
@@ -199,8 +199,12 @@ const FILE_EDIT_RULE =
 const DIRECT_EDIT_RULE =
   "Call `edit` and `write` directly, never through `codemode`. Direct calls render their diffs in the transcript for user review; calls nested in a codemode script are hidden inside its collapsed output. To change several files, issue several `edit`/`write` calls in the same turn instead of batching them in a script.";
 
+/** Distinguishes per-call user corrections from stopping the task or run. */
+const TOOL_FEEDBACK_RULE =
+  "Treat user feedback from tool approval gates and `/-` as corrections to the current action within the ongoing task, not as cancellation of the task or run. `No (why?)` with a comment rejects only that tool call: use the explanation to revise the action and continue the original task; do not repeat the rejected action unchanged or bypass the rejection with another tool. `Yes` with a comment approves the call as submitted: account for the caveat in subsequent work, and do not assume the approved call was changed or rejected. `/- <message>` aborts any running bash calls, not the agent run: use the explanation to adjust your next action and continue. Do not end your response merely to acknowledge the correction or wait for a new request unless the user explicitly asks you to stop, pause, or wait. The same comment may appear in both a tool result and a steered user message; treat these as one correction, not two separate requests. `Stop` and `Esc` remain explicit run-stopping controls.";
+
 /** Guideline bullets contributed to pi's <rules>, in order. */
-const HARNESS_GUIDELINES = [FILE_EDIT_RULE, DIRECT_EDIT_RULE, OUTPUT_CAPTURE_RULE];
+const HARNESS_GUIDELINES = [FILE_EDIT_RULE, DIRECT_EDIT_RULE, OUTPUT_CAPTURE_RULE, TOOL_FEEDBACK_RULE];
 
 /**
  * codegraph's tool: deps.ts registers the server as "codegraph", and pi names

@@ -113,7 +113,13 @@ a full `systemPrompt`; it only edits the structured `systemPromptOptions`:
   - change file contents only with `edit`/`write`, never through bash scripts
     (keeps mutation gates, review and diffs in the loop; exceptions: temporary
     output capture and file-producing tools such as formatters or builds);
-  - capture command output to a file before filtering it.
+  - capture command output to a file before filtering it;
+  - treat `No (why?)` comments, `Yes` caveats and `/-` messages as corrections
+    within the ongoing task, not task cancellation: revise a rejected action
+    without bypassing the refusal, account for caveats after an approved call,
+    and continue after a bash abort unless the user explicitly asks to stop,
+    pause or wait. A comment repeated in a tool result and a steered user
+    message is one correction, not two requests. `Stop`/`Esc` still stop the run.
 
 All of these are independent of the active mode.
 
