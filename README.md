@@ -121,8 +121,10 @@ a full `systemPrompt`; it only edits the structured `systemPromptOptions`:
   coincide; closed control flow — every path written, success is a branch,
   dependent steps nest as `if v, err := …; err != nil { … } else if …`,
   empty branches written as `{}` with a comment; values scoped to their use,
-  no flattening into the left-aligned happy path; codebase coding style; no
-  silent errors). Project `AGENTS.md`
+  no flattening into the left-aligned happy path; entry guards as one chain;
+  `default` over a closed set panics / `assertNever`; deep nesting means
+  sequential `{ … }` step blocks, extraction only for a named whole; codebase
+  coding style; no silent errors). Project `AGENTS.md`
   files keep only project specifics on top of these;
 - `promptGuidelines`, rendered by pi among its tool rules:
   - change file contents only with `edit`/`write`, never through bash scripts
