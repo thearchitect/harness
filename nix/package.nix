@@ -47,6 +47,7 @@ let
         ../index.ts
         ../deps.ts
         ../workarounds.ts
+        ../prompt.yaml
         ../package.json
         ../skills
         ../LICENSE
