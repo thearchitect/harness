@@ -118,7 +118,11 @@ a full `systemPrompt`; it only edits the structured `systemPromptOptions`:
   change fits the whole system and the product logic, predictable consistency,
   simple and correct without compromise, zero tolerance for legacy) and
   **Coding Rules** (beautiful code whose semantic and visual structure
-  coincide, codebase coding style, no silent errors). Project `AGENTS.md`
+  coincide; closed control flow — every path written, success is a branch,
+  dependent steps nest as `if v, err := …; err != nil { … } else if …`,
+  empty branches written as `{}` with a comment; values scoped to their use,
+  no flattening into the left-aligned happy path; codebase coding style; no
+  silent errors). Project `AGENTS.md`
   files keep only project specifics on top of these;
 - `promptGuidelines`, rendered by pi among its tool rules:
   - change file contents only with `edit`/`write`, never through bash scripts
