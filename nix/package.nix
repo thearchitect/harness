@@ -220,11 +220,6 @@ let
         fd
       ]
     }:$PATH"
-    # HARNESS_RAW=1: plain pinned pi without the bundled extensions
-    # (scripts/check-workarounds.sh compares behaviour with and without them).
-    if [[ -n "''${HARNESS_RAW-}" ]]; then
-      exec ${lib.getExe nodejs} ${piCli} "$@"
-    fi
     case "''${1-}" in
       ${piSubcommands}) exec ${lib.getExe nodejs} ${piCli} "$@" ;;
     esac
