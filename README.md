@@ -33,7 +33,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `explore-and-refactor`
 - `install/SKILL.md` — the install/upgrade skill
 - `deps.ts` — MCP servers from the bundle manifest, `/deps`
-- `workarounds.ts` — pinned pi patches; `scripts/check-workarounds.sh` verifies they still apply
+- `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition
 - `nix/` — the bundle: `package.nix` (launchers, extension fileset, manifest), `npm/` (pi, pi packages and npm MCP servers from one lockfile), `sources.json`, `update.sh`, `smoke.sh`, CI tests
 
 Where a text goes: always in the system prompt → `prompt.yaml`; loaded on

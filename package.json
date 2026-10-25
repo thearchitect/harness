@@ -19,9 +19,6 @@
     "pi-coding-agent",
     "extension"
   ],
-  "scripts": {
-    "check-workarounds": "scripts/check-workarounds.sh"
-  },
   "engines": {
     "node": ">=22.19.0"
   },

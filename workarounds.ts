@@ -20,8 +20,6 @@
  * 5. Removing a workaround = deleting its block (+ its line in
  *    installWorkarounds()). IDs are never reused.
  *
- * scripts/check-workarounds.sh runs the removal checks.
- *
  * Verified against pi-coding-agent 1.4.0 and pi-magic-context 0.49.20.
  * Removed: W1 (<mcp_servers> lost behind magic-context) - MC ≥ 0.49 writes
  * its block into systemPromptOptions.sections and no longer forces
@@ -51,10 +49,9 @@ export function installWorkarounds(pi: ExtensionAPI): void {
  *
  * Internals used: none.
  *
- * Remove when: the toggle stops persisting to settings.json, or pi offers a
- *   setting to keep it session-only. Check: grep -n -i
- *   "hideThinkingBlock|thinking.toggle" in docs/settings.md,
- *   docs/keybindings.md, CHANGELOG.md (scripts/check-workarounds.sh, check W2).
+ * Remove when: toggleThinkingBlockVisibility in pi's
+ *   dist/modes/interactive/interactive-mode.js no longer calls
+ *   settingsManager.setHideThinkingBlock, or pi offers a session-only toggle.
  *
  * Upstream issue: not filed.
  * ========================================================================== */
