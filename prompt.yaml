@@ -126,6 +126,15 @@ guidelines:
     including stderr, to a file first, then inspect or search that file. This preserves the full output
     if something goes wrong. Use random file name suffixes to avoid collisions.
 
+  # Waits end when the work ends: no fixed sleeps that outlive the command they wait for.
+  wait_on_completion: >-
+    Never wait with a fixed `sleep` guessed from expected duration (for example, `sleep 420; tail log`).
+    Run long commands in the foreground with the bash tool's `timeout`, so the call returns the moment
+    the command finishes. If a process must run in the background, wait for its completion, not for
+    time: `wait $PID`, `tail --pid=$PID -f /dev/null`, or a short polling loop on a concrete readiness
+    condition (exit of the process, a file, a port, a log line), always bounded by `timeout`. Use a bare
+    `sleep` only when time itself is the requirement (rate limits, deliberate backoff), and keep it short.
+
   # Keeps filesystem searches scoped: a walk from `/` is slow, noisy and almost never needed.
   search_scope: >-
     Never recursively search the entire filesystem starting from `/` (for example, with `find / ...`):
