@@ -17,19 +17,19 @@
     }
   },
   "agent-lsp": {
-    "version": "0.23.1",
+    "version": "0.23.2",
     "assets": {
       "x86_64-linux": {
-        "url": "https://github.com/blackwell-systems/agent-lsp/releases/download/v0.23.1/agent-lsp_linux_amd64.tar.gz",
-        "hash": "sha256-yOYZyKcR0sI/guCTkamVyk/0BfoVXZd105VzlcyNhQ4="
+        "url": "https://github.com/blackwell-systems/agent-lsp/releases/download/v0.23.2/agent-lsp_linux_amd64.tar.gz",
+        "hash": "sha256-6SNimAfWjngHYdXh2fX+v2Wzx0HVBJdCgf7jk9Jqg/0="
       },
       "aarch64-linux": {
-        "url": "https://github.com/blackwell-systems/agent-lsp/releases/download/v0.23.1/agent-lsp_linux_arm64.tar.gz",
-        "hash": "sha256-ObyTLeg/pUHJpUJCVIxSB8Gb/xJkV1kaUBO46hxAAb8="
+        "url": "https://github.com/blackwell-systems/agent-lsp/releases/download/v0.23.2/agent-lsp_linux_arm64.tar.gz",
+        "hash": "sha256-l0qtrF6XHb+tELUZEs57FbBD+Ke5VAgYbm008g45v/c="
       },
       "aarch64-darwin": {
-        "url": "https://github.com/blackwell-systems/agent-lsp/releases/download/v0.23.1/agent-lsp_darwin_arm64.tar.gz",
-        "hash": "sha256-YjRpeKQ5mXKrPLH9kz1TJ/7hh0ZZua1eFTrSuYlVC2M="
+        "url": "https://github.com/blackwell-systems/agent-lsp/releases/download/v0.23.2/agent-lsp_darwin_arm64.tar.gz",
+        "hash": "sha256-xL0GPghwYFxhZA9KszqrMZ4UBykix03mQX4+jrbMl88="
       }
     }
   }
