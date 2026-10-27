@@ -138,8 +138,9 @@ function applyContextWindowOverrides(model: ExtensionContext["model"]): void {
  * Prompt contributions. pi owns the system prompt (its preamble, tools, rules,
  * docs, project context, skills, cwd); this extension only adds its own parts
  * through the structured systemPromptOptions in before_agent_start. Every
- * text lives in prompt.yaml: `sections` become <mode_policies> and
- * <engineering_principles>, `guidelines` become promptGuidelines bullets,
+ * text lives in prompt.yaml: `sections` become <mode_policies>,
+ * <engineering_principles> and <code_exploration>, `guidelines` become
+ * promptGuidelines bullets,
  * `conditional_guidelines` are added while their tool is active. All are
  * mode-independent, so PLAN/BUILD switches never change the prompt (provider
  * prompt caching survives).
@@ -148,9 +149,15 @@ function applyContextWindowOverrides(model: ExtensionContext["model"]): void {
  * ========================================================================== */
 const MODE_POLICIES_SECTION = "mode_policies";
 const ENGINEERING_PRINCIPLES_SECTION = "engineering_principles";
+const CODE_EXPLORATION_SECTION = "code_exploration";
 
 type PromptConfig = {
-  sections: Record<typeof MODE_POLICIES_SECTION | typeof ENGINEERING_PRINCIPLES_SECTION, string>;
+  sections: Record<
+    | typeof MODE_POLICIES_SECTION
+    | typeof ENGINEERING_PRINCIPLES_SECTION
+    | typeof CODE_EXPLORATION_SECTION,
+    string
+  >;
   guidelines: Record<string, string>;
   conditional_guidelines: Record<"codegraph_explore", string>;
 };
@@ -221,6 +228,7 @@ function loadPromptConfig(): PromptConfig {
       sections: {
         [MODE_POLICIES_SECTION]: text(sections, "sections", MODE_POLICIES_SECTION),
         [ENGINEERING_PRINCIPLES_SECTION]: text(sections, "sections", ENGINEERING_PRINCIPLES_SECTION),
+        [CODE_EXPLORATION_SECTION]: text(sections, "sections", CODE_EXPLORATION_SECTION),
       },
       guidelines: textMap(top.guidelines, "guidelines"),
       conditional_guidelines: {
@@ -235,6 +243,7 @@ const PROMPT = loadPromptConfig();
 /** {{WORKSPACE_TMP}} is filled per session in before_agent_start. */
 const MODE_POLICIES_PROMPT = PROMPT.sections[MODE_POLICIES_SECTION];
 const ENGINEERING_PRINCIPLES = PROMPT.sections[ENGINEERING_PRINCIPLES_SECTION];
+const CODE_EXPLORATION = PROMPT.sections[CODE_EXPLORATION_SECTION];
 /** Guideline bullets contributed to pi's <rules>, in prompt.yaml order. */
 const HARNESS_GUIDELINES = Object.values(PROMPT.guidelines);
 
@@ -913,11 +922,10 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   // Bundled dependencies: MCP servers from the Nix bundle manifest + /deps (deps.ts).
   installDeps(pi);
 
-  // Bundled skills: web-research (ollama web tools + lightpanda fallback),
-  // explore-and-refactor (codegraph + LSP exploration, semantic refactoring).
+  // Bundled skills: web-research (ollama web tools + lightpanda fallback).
   const extensionDir = dirname(fileURLToPath(import.meta.url));
   pi.on("resources_discover", () => ({
-    skillPaths: ["web-research", "explore-and-refactor"].map((name) =>
+    skillPaths: ["web-research"].map((name) =>
       join(extensionDir, "skills", name, "SKILL.md"),
     ),
   }));
@@ -1463,6 +1471,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
         workspaceRoot,
       );
       options.sections[ENGINEERING_PRINCIPLES_SECTION] = ENGINEERING_PRINCIPLES;
+      options.sections[CODE_EXPLORATION_SECTION] = CODE_EXPLORATION;
       for (const guideline of HARNESS_GUIDELINES) {
         if (!options.promptGuidelines.includes(guideline)) {
           options.promptGuidelines.push(guideline);

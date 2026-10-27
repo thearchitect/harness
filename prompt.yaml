@@ -1,7 +1,8 @@
 # Prompt contributions of the harness, loaded by index.ts at startup.
 #
 #   sections              → options.sections[<key>]: markdown blocks rendered as <key> in the
-#                           system prompt; {{WORKSPACE_TMP}} is filled per session.
+#                           system prompt (mode_policies, engineering_principles,
+#                           code_exploration); {{WORKSPACE_TMP}} is filled per session.
 #   guidelines            → options.promptGuidelines: bullets in <rules>, in this order.
 #   conditional_guidelines → bullets index.ts adds only while their tool is active.
 #
@@ -81,6 +82,51 @@ sections:
     - Follow the coding style of the codebase.
     - No silent errors.
 
+  # How to explore existing code. Always on rather than a skill: Claude undertriggers skills and
+  # skipped this one on bugs, features and UI changes.
+  code_exploration: |
+    # Code Exploration
+
+    Applies to every task that depends on existing code — questions, bugs, incidents, features, UI changes, refactoring — from the first lookup on.
+
+    Navigate by project structure and shared data/contracts, not broad feature-keyword searches. DAO, DTO and API are roles: find their equivalents in each project.
+
+    1. **Map the structure:** identify modules, workspace/build roots, data definitions, contracts, API entry points and composition/registration sites.
+    2. **Find the data anchors:** translate the question into domain entities, persisted structures, types and specific fields; inspect their definitions and related types.
+    3. **Connect the contracts:** find corresponding DTO/messages, converters and API methods; follow both sides of transport boundaries, including generated code back to its source contract.
+    4. **Expand usages:** use LSP references/implementations on the relevant types, fields and methods to find readers, writers, validation, authorization and consumers across modules — not just the first matching feature.
+    5. **Trace the relevant flows:** use codegraph callers/callees/impact and source to connect those usages to entry points, effects and actual registration. Inspect alternative consumers or inherited conditions that can change the answer.
+
+    Stop when the relevant paths answer the question; report a concrete gap rather than expanding unrelated branches.
+
+    ## Waves
+
+    Exploration runs in a few dependent waves. A wave is every read-only lookup whose inputs are already known — codegraph, LSP, `rg`/`ls`/`git log` through `tools.bash`, `read` — typically 3–8 calls. Run a wave as one `codemode` script with `Promise.allSettled` and print only the findings: file:line locations, errors, truncation notices.
+
+    Why a script and not the alternatives:
+    - A compound `bash` (`rg …; cat …; sed -n …`) runs its parts one after another, puts every raw output into the context, and cannot reach codegraph or LSP.
+    - Several direct calls in one block run concurrently but still return every raw output unfiltered.
+    - A script runs the calls concurrently, reaches every tool, and filters or aggregates before anything reaches the context: one round trip, a fraction of the tokens.
+
+    So the instruction to make independent calls together is met by a wave in `codemode`.
+
+    Direct calls remain the right tool for a single lookup whose output you need whole (one file, one search); for builds, tests, deploys, git writes and other commands with effects or long runtime; and for `edit`/`write`. Keep a script's output within its budget (10k tokens by default): filter in the script or split the wave by subject. Never run `start_lsp` or other workspace switches concurrently.
+
+    ```js
+    const [graph, refs, hits] = await Promise.allSettled([
+      tools.mcp__codegraph__codegraph_explore({ query: "Order OrderDTO createOrder", projectPath: "/abs/root" }),
+      tools.mcp__lsp__find_references({ file_path: "/abs/root/order.go", position_pattern: "type @@Order@@ struct" }),
+      tools.bash({ command: "rg -n 'OrderDTO' --type go" }),
+    ]);
+    ```
+
+    ## Tools
+
+    - **Tool schemas:** discover them inside `codemode` with `describeTool(exactName)`, `describeNamespace(server)` or `searchTools(query, { namespace })` — without activating tools. Reuse source already returned; fetch exact source only for missing details.
+    - **LSP:** initialize the correct root/language with `start_lsp` before semantic queries; use `find_references`, `go_to_implementation` and call/type hierarchy where supported; summary tools may omit usages.
+    - **Fallback:** use file listings, `rg` and `read` for structure, string keys, configuration, serialization, unsupported languages or missing graph links.
+    - **Refactoring:** check affected references/contracts and existing mechanisms before changes; use semantic previews where supported, obey mutation/approval rules, review the diff and run focused project-native checks. Diagnostics alone do not establish behavioral correctness.
+
 guidelines:
   # Keeps every file change on write/edit, so mutation gates, review and diffs apply.
   file_edit: >-
@@ -158,16 +204,6 @@ guidelines:
     the correction or wait for a new request unless the user explicitly asks you to stop, pause, or wait.
     The same comment may appear in both a tool result and a steered user message; treat these as one
     correction, not two separate requests. `Stop` and `Esc` remain explicit run-stopping controls.
-
-  # Data- and contract-led investigation, even when codegraph is unavailable.
-  code_exploration: >-
-    For nontrivial questions about existing code, behavior, architecture, debugging or refactoring, load
-    the explore-and-refactor skill. Navigate from project structure and relevant data types/fields through
-    domain/DAO models, DTO/messages and API contracts to their usages and execution paths. Adapt these
-    roles to the project. Run each wave of independent read-only lookups as one `codemode` script with
-    `Promise.allSettled`; use direct calls for a single lookup or commands with effects. Then fetch missing
-    details; follow relevant alternative consumers rather than stopping at the first feature. Stop when the relevant
-    paths answer the question, and state any remaining concrete gap.
 
   reply_language: >-
     Answer in the language the user started the conversation in.

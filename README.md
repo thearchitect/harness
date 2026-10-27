@@ -29,8 +29,8 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 ## Layout
 
 - `index.ts` — the extension: PLAN/BUILD modes, mutation gates, `/-`, prompt contributions, UI
-- `prompt.yaml` — every always-on prompt text: `sections` (`mode_policies`, `engineering_principles`), `guidelines` (bullets in `<rules>`, in order), `conditional_guidelines` (added while their tool is active)
-- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `explore-and-refactor`
+- `prompt.yaml` — every always-on prompt text: `sections` (`mode_policies`, `engineering_principles`, `code_exploration`), `guidelines` (bullets in `<rules>`, in order), `conditional_guidelines` (added while their tool is active)
+- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`
 - `install/SKILL.md` — the install/upgrade skill
 - `deps.ts` — MCP servers from the bundle manifest, `/deps`
 - `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition
