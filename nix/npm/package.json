@@ -4,7 +4,7 @@
   "private": true,
   "description": "npm-distributed parts of the harness bundle. Versions are bumped by nix/update.sh; package-lock.json is generated, never edited by hand.",
   "dependencies": {
-    "@cortexkit/pi-magic-context": "0.49.23",
+    "@cortexkit/pi-magic-context": "0.49.24",
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@playwright/mcp": "0.0.83",
     "chrome-devtools-mcp": "1.12.0",
