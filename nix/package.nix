@@ -47,6 +47,7 @@ let
         ../index.ts
         ../deps.ts
         ../workarounds.ts
+        ../prompt.ts
         ../prompt.yaml
         ../package.json
         ../skills

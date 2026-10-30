@@ -2,7 +2,7 @@
   "name": "harness",
   "version": "0.1.0",
   "private": true,
-  "description": "Personal pi workflow: PLAN/BUILD modes, mutation gates, prompt contributions, bundled MCP tools (/deps), code exploration rules, web-research skill; distributed as a Nix bundle",
+  "description": "Personal pi workflow: PLAN/BUILD modes, mutation gates, system prompt, bundled MCP tools (/deps), code exploration rules, web-research skill; distributed as a Nix bundle",
   "type": "module",
   "author": "The Architect",
   "license": "MIT",

@@ -28,16 +28,36 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 
 ## Layout
 
-- `index.ts` — the extension: PLAN/BUILD modes, mutation gates, `/-`, prompt contributions, UI
-- `prompt.yaml` — every always-on prompt text: `sections` (`mode_policies`, `engineering_principles`, `code_exploration`), `guidelines` (bullets in `<rules>`, in order), `conditional_guidelines` (added while their tool is active)
+- `index.ts` — the extension: PLAN/BUILD modes, mutation gates, `/-`, sequential `write`/`edit`/`bash` (a batch containing one runs in order, so dependent calls see its effect), system prompt per run, UI
+- `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt and codegraph's tool name
+- `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `guidelines` (bullets in `<rules>`, in order)
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`
 - `install/SKILL.md` — the install/upgrade skill
-- `deps.ts` — MCP servers from the bundle manifest, `/deps`
-- `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition
+- `deps.ts` — the bundle: manifest, bundled MCP servers, the `/deps` report, the double-load guard (registered by `index.ts`)
+- `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition (called by `index.ts` at `// WORKAROUND Wn`)
 - `nix/` — the bundle: `package.nix` (launchers, extension fileset, manifest), `npm/` (pi, pi packages and npm MCP servers from one lockfile), `sources.json`, `update.sh`, `smoke.sh`, CI tests
 
 Where a text goes: always in the system prompt → `prompt.yaml`; loaded on
 demand → `skills/`.
+
+## System prompt
+
+The harness owns the whole system prompt. It sets pi's `customPrompt` (the
+documented `SYSTEM.md` mechanism), so pi's built-in preamble, `<tools>`,
+`<rules>` and `<docs>` never appear; `prompt.ts` renders the preamble,
+`<tools>`, `<rules>` (guidelines of the declared tools, then `prompt.yaml`
+`guidelines`, then other extensions' `promptGuidelines`) and the `prompt.yaml`
+sections. pi still renders `<addendum>` (`APPEND_SYSTEM.md`),
+`<project_context>`, `<skills>` and `<cwd>`; other extensions add their own
+sections. A `SYSTEM.md` is appended after the harness preamble, with a notice.
+
+Limits of pi's extension API: `<tools>`/`<rules>` are rendered once per run (a
+tool activated mid-run is declared at once and listed from the next run), and
+`promptGuidelines` added by `before_agent_start` handlers that run after the
+harness are not rendered — the launcher loads the harness first, and today
+every other guideline comes from tool definitions. Every run checks the final
+prompt: if it does not open with the harness preamble or contains pi's
+built-in prompt, the harness reports an error once per session.
 
 ## Development
 

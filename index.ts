@@ -9,8 +9,8 @@
  * fed back to the running model without interrupting it. The "/-" command
  * aborts the bash call that is currently executing (its process tree only)
  * and steers the given message to the model without aborting the run.
- * System prompt: pi assembles it; the extension only contributes the
- * <mode_policies> section and guideline bullets (see Prompt contributions).
+ * System prompt: the harness owns all of it; prompt.ts assembles it from
+ * prompt.yaml, this file calls it per run and reports its problems.
  * Temporary workarounds for upstream gaps are isolated in workarounds.ts.
  * Static CONFIG block (top of file) drives all tunables: edit it, not the logic.
  *
@@ -51,9 +51,7 @@ import {
   type EditorTheme,
   type TUI,
 } from "@earendil-works/pi-tui";
-import { readFileSync } from "node:fs";
 import { realpath } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import {
   basename,
@@ -65,8 +63,9 @@ import {
   sep,
 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { installWorkarounds } from "./workarounds.ts";
-import { claimHarnessInstance, installDeps } from "./deps.ts";
+import { ensureThinkingBlocksVisible } from "./workarounds.ts";
+import { assembleSystemPrompt, codegraphToolProblem, systemPromptProblem } from "./prompt.ts";
+import { bundledMcpServers, claimHarnessInstance, depsReport, readManifest } from "./deps.ts";
 
 /* ============================================================================
  * ▄▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▄ ▀▀█▀▀ ▀▀█▀▀ ▄▀▀▀▀       ▄▀▀▀▀ ▄▀▀▀▄ █▄  █ █▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▀
@@ -126,136 +125,6 @@ function applyContextWindowOverrides(model: ExtensionContext["model"]): void {
     model.contextWindow = target;
   }
 }
-
-/* ============================================================================
- * ▄▀▀▀▀ █   █ ▄▀▀▀▀ ▀▀█▀▀ █▀▀▀▀ █▀▄▀█       █▀▀▀▄ █▀▀▀▄ ▄▀▀▀▄ █▀▄▀█ █▀▀▀▄ ▀▀█▀▀
- *  ▀▀▀▄ ▀▀▀▀█  ▀▀▀▄   █   █▀▀   █   █       █▀▀▀  █▀▀▀▄ █   █ █   █ █▀▀▀    █
- * ▀▀▀▀  ▀▀▀▀▀ ▀▀▀▀    ▀   ▀▀▀▀▀ ▀   ▀       ▀     ▀   ▀  ▀▀▀  ▀   ▀ ▀       ▀
- * ▄▀▀▀▄ ▄▀▀▀▀ ▄▀▀▀▀ █▀▀▀▀ █▀▄▀█ █▀▀▀▄ █     █   █
- * █▀▀▀█  ▀▀▀▄  ▀▀▀▄ █▀▀   █   █ █▀▀▀▄ █     ▀▀▀▀█
- * ▀   ▀ ▀▀▀▀  ▀▀▀▀  ▀▀▀▀▀ ▀   ▀ ▀▀▀▀  ▀▀▀▀▀ ▀▀▀▀▀
- * ----------------------------------------------------------------------------
- * Prompt contributions. pi owns the system prompt (its preamble, tools, rules,
- * docs, project context, skills, cwd); this extension only adds its own parts
- * through the structured systemPromptOptions in before_agent_start. Every
- * text lives in prompt.yaml: `sections` become <mode_policies>,
- * <engineering_principles> and <code_exploration>, `guidelines` become
- * promptGuidelines bullets,
- * `conditional_guidelines` are added while their tool is active. All are
- * mode-independent, so PLAN/BUILD switches never change the prompt (provider
- * prompt caching survives).
- * ----------------------------------------------------------------------------
- * ❤︎ → × ✻
- * ========================================================================== */
-const MODE_POLICIES_SECTION = "mode_policies";
-const ENGINEERING_PRINCIPLES_SECTION = "engineering_principles";
-const CODE_EXPLORATION_SECTION = "code_exploration";
-
-type PromptConfig = {
-  sections: Record<
-    | typeof MODE_POLICIES_SECTION
-    | typeof ENGINEERING_PRINCIPLES_SECTION
-    | typeof CODE_EXPLORATION_SECTION,
-    string
-  >;
-  guidelines: Record<string, string>;
-  conditional_guidelines: Record<"codegraph_explore", string>;
-};
-
-/**
- * pi's own `yaml` (it parses skill frontmatter with it): the extension ships no
- * node_modules and pi's loader aliases only the pi packages, so the module is
- * resolved from pi's CLI entry (process.argv[1]); a checkout with its own
- * node_modules resolves it from the extension directory instead.
- */
-function loadYamlParser(): (text: string) => unknown {
-  const anchors = [process.argv[1], import.meta.url].filter(
-    (anchor): anchor is string => typeof anchor === "string",
-  );
-  for (const anchor of anchors) {
-    try {
-      return (createRequire(anchor)("yaml") as typeof import("yaml")).parse;
-    } catch {
-      // not resolvable from this anchor: try the next one
-    }
-  }
-  throw new Error("harness: cannot resolve the `yaml` module from pi or the extension directory");
-}
-
-/**
- * Reads prompt.yaml next to this file and checks its shape: every expected
- * key present and non-empty. A malformed file fails extension load loudly
- * rather than producing a prompt with silently missing parts.
- */
-function loadPromptConfig(): PromptConfig {
-  const parseYaml = loadYamlParser();
-  const fail = (what: string): never => {
-    throw new Error(`harness: prompt.yaml: ${what}`);
-  };
-  /** A mapping of non-empty strings, in file order. */
-  const textMap = (value: unknown, key: string): Record<string, string> => {
-    if (typeof value !== "object" || value === null || Array.isArray(value)) {
-      return fail(`${key} must be a mapping`);
-    } else {
-      for (const [name, text] of Object.entries(value)) {
-        if (typeof text !== "string" || text.trim() === "") {
-          fail(`${key}.${name} must be a non-empty string`);
-        } else {
-          // a valid entry
-        }
-      }
-      return value as Record<string, string>;
-    }
-  };
-  const text = (map: Record<string, string>, key: string, name: string): string => {
-    if (name in map) {
-      return map[name].trim();
-    } else {
-      return fail(`${key}.${name} is missing`);
-    }
-  };
-
-  const raw: unknown = parseYaml(
-    readFileSync(fileURLToPath(new URL("./prompt.yaml", import.meta.url)), "utf8"),
-  );
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return fail("top level must be a mapping");
-  } else {
-    const top = raw as Record<string, unknown>;
-    const sections = textMap(top.sections, "sections");
-    const conditional = textMap(top.conditional_guidelines, "conditional_guidelines");
-    return {
-      sections: {
-        [MODE_POLICIES_SECTION]: text(sections, "sections", MODE_POLICIES_SECTION),
-        [ENGINEERING_PRINCIPLES_SECTION]: text(sections, "sections", ENGINEERING_PRINCIPLES_SECTION),
-        [CODE_EXPLORATION_SECTION]: text(sections, "sections", CODE_EXPLORATION_SECTION),
-      },
-      guidelines: textMap(top.guidelines, "guidelines"),
-      conditional_guidelines: {
-        codegraph_explore: text(conditional, "conditional_guidelines", "codegraph_explore"),
-      },
-    };
-  }
-}
-
-const PROMPT = loadPromptConfig();
-
-/** {{WORKSPACE_TMP}} is filled per session in before_agent_start. */
-const MODE_POLICIES_PROMPT = PROMPT.sections[MODE_POLICIES_SECTION];
-const ENGINEERING_PRINCIPLES = PROMPT.sections[ENGINEERING_PRINCIPLES_SECTION];
-const CODE_EXPLORATION = PROMPT.sections[CODE_EXPLORATION_SECTION];
-/** Guideline bullets contributed to pi's <rules>, in prompt.yaml order. */
-const HARNESS_GUIDELINES = Object.values(PROMPT.guidelines);
-
-/**
- * codegraph's tool: deps.ts registers the server as "codegraph", and pi names
- * MCP tools mcp__<server>__<tool>.
- */
-const CODEGRAPH_NAMESPACE = "mcp__codegraph";
-const CODEGRAPH_TOOL = `${CODEGRAPH_NAMESPACE}__codegraph_explore`;
-
-/** Added to <rules> only while CODEGRAPH_TOOL is active. */
-const CODEGRAPH_EXPLORE_RULE = PROMPT.conditional_guidelines.codegraph_explore;
 
 /* ============================================================================
  * █▀▀▀▄ █▀▀▀▀ █▀▀▀▄       █▀▄▀█ █▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▀ ▄▀▀▀▄ ▄▀▀▀▀ █▀▀▀▀
@@ -917,10 +786,18 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
 
   process.env.PI_ASK_USER_DISPLAY_MODE ??= "inline";
 
-  // Temporary workarounds for upstream gaps live in workarounds.ts.
-  installWorkarounds(pi);
-  // Bundled dependencies: MCP servers from the Nix bundle manifest + /deps (deps.ts).
-  installDeps(pi);
+  void ensureThinkingBlocksVisible(); // WORKAROUND W2
+
+  // Bundled dependencies (deps.ts): the MCP servers of the Nix bundle
+  // manifest; a missing manifest is shown in the status line, details in /deps.
+  const bundle = readManifest();
+  if ("manifest" in bundle) {
+    for (const [name, config] of Object.entries(bundledMcpServers(bundle.manifest.bin))) {
+      pi.registerMcpServer(name, config);
+    }
+  } else {
+    // pi was not started through the launcher: no bundled servers
+  }
 
   // Bundled skills: web-research (ollama web tools + lightpanda fallback).
   const extensionDir = dirname(fileURLToPath(import.meta.url));
@@ -932,6 +809,12 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   // Долгая кэш-ретенция промптов (читается при каждом запросе модели).
   process.env.PI_CACHE_RETENTION ??= "long";
 
+  // write, edit and bash are sequential (executionMode): a batch of tool calls
+  // that contains one of them runs in order, so a dependent call - a read of
+  // the edited file, a check, a formatter, a rename - sees the previous call's
+  // effect. Batches of read, codegraph, LSP and codemode calls stay parallel;
+  // inside codemode scripts only these three queue among themselves.
+
   // Keep write calls fully visible without expanding every tool row. Reuse
   // Pi's definition and renderer; only override the renderer's expansion input.
   // renderCall also appends the user's gate comment (approve-with-comment)
@@ -939,6 +822,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   const writeTool = createWriteToolDefinition(process.cwd());
   pi.registerTool({
     ...writeTool,
+    executionMode: "sequential",
     renderCall: (args, theme, context) => {
       const base = writeTool.renderCall!(args, theme, { ...context, expanded: true });
       const comment = pendingGateComments.get(context.toolCallId);
@@ -951,6 +835,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   const editTool = createEditToolDefinition(process.cwd());
   pi.registerTool({
     ...editTool,
+    executionMode: "sequential",
     renderCall: (args, theme, context) => {
       const base = editTool.renderCall!(args, theme, context);
       const comment = pendingGateComments.get(context.toolCallId);
@@ -963,7 +848,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   // controller, so aborting the controller kills this command's process tree
   // (the tool then reports "Command aborted") without aborting the run.
   // Everything else - spawn, timeout, truncation, renderers, snippet - comes
-  // from pi's definition unchanged.
+  // from pi's definition unchanged; executionMode is set as for write/edit.
   // Each call runs a definition built for the session cwd with the shell
   // settings pi applies to its own bash tool (shellPath, shellCommandPrefix
   // from global + trusted project settings), resolved through the public
@@ -971,6 +856,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   const bashTool = createBashToolDefinition(process.cwd());
   pi.registerTool({
     ...bashTool,
+    executionMode: "sequential",
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       const interrupt: BashInterrupt = { controller: new AbortController() };
       bashInterrupts.set(toolCallId, interrupt);
@@ -1018,7 +904,10 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   let cycleStartTime: number | undefined;
   let baselineCost = 0;
   let systemPromptEntryShown = false;
-  let codegraphNameErrorShown = false;
+  // Prompt problems already reported this session: each is reported once.
+  let foreignCustomPromptReported = false;
+  let codegraphProblemReported = false;
+  let systemPromptProblemReported = false;
   const blockedToolCalls = new Set<string>();
   // toolCallId -> comment for write/edit calls approved with a comment: the
   // comment is appended to the real tool result once the tool completes.
@@ -1117,6 +1006,29 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       "info",
     );
   }
+
+  async function showDeps(ctx: ExtensionContext): Promise<void> {
+    if ("problem" in bundle) {
+      ctx.ui.notify(`harness: ${bundle.problem}`, "error");
+    } else {
+      const report = await depsReport(bundle.manifest);
+      ctx.ui.notify(report.text, report.level);
+    }
+  }
+
+  pi.registerCommand("deps", {
+    description: "Bundled dependency versions, herdr integration state, how to update",
+    handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+      await showDeps(ctx);
+    },
+  });
+
+  pi.registerShortcut("alt+u", {
+    description: "Bundled dependencies (/deps)",
+    handler: (ctx: ExtensionContext): void => {
+      void showDeps(ctx);
+    },
+  });
 
   pi.registerCommand("madness", {
     description: "Toggle full write/edit permission bypass",
@@ -1317,12 +1229,20 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       cycleStartTime = undefined;
       baselineCost = 0;
       systemPromptEntryShown = false;
-      codegraphNameErrorShown = false;
+      foreignCustomPromptReported = false;
+      codegraphProblemReported = false;
+      systemPromptProblemReported = false;
       blockedToolCalls.clear();
       pendingGateComments.clear();
       bashInterrupts.clear();
       applyContextWindowOverrides(ctx.model);
       updateStatusWidget(ctx);
+      void ensureThinkingBlocksVisible(); // WORKAROUND W2
+      if ("problem" in bundle) {
+        ctx.ui.setStatus("harness-deps", `harness: ${bundle.problem}`);
+      } else {
+        // the bundle manifest is in place: nothing to show
+      }
       if (ctx.mode !== "tui") return;
       ctx.ui.setEditorComponent(
         (
@@ -1417,31 +1337,15 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       : { action: "transform", text };
   });
 
-  /**
-   * Adds CODEGRAPH_EXPLORE_RULE while CODEGRAPH_TOOL is active and removes it
-   * otherwise. No codegraph tools at all means the server is not connected
-   * (yet): no rule, checked again next prompt. Codegraph tools without
-   * CODEGRAPH_TOOL means the assumed name is wrong: reported once.
-   */
-  function applyCodegraphRule(guidelines: string[], ctx: ExtensionContext): void {
-    const index = guidelines.indexOf(CODEGRAPH_EXPLORE_RULE);
-    if (index !== -1) guidelines.splice(index, 1);
-    const active = new Set(pi.getActiveTools());
-    if (active.has(CODEGRAPH_TOOL)) {
-      guidelines.push(CODEGRAPH_EXPLORE_RULE);
-      return;
-    }
-    if (codegraphNameErrorShown) return;
-    const codegraphTools = pi
-      .getAllTools()
-      .filter((tool) => tool.namespace?.name === CODEGRAPH_NAMESPACE)
-      .map((tool) => tool.name);
-    // Registered but deactivated on purpose (setActiveTools) is not an error.
-    if (codegraphTools.length === 0 || codegraphTools.includes(CODEGRAPH_TOOL)) return;
-    codegraphNameErrorShown = true;
-    const message = `[harness] codegraph is connected but ${CODEGRAPH_TOOL} is not registered (found: ${codegraphTools.join(", ")}); codegraph rule not added.`;
+  /** A system prompt problem: logged, and shown in the UI when there is one. */
+  function reportPromptProblem(ctx: ExtensionContext, problem: string): void {
+    const message = `[harness] ${problem}`;
     console.error(message);
-    if (ctx.hasUI) ctx.ui.notify(message, "error");
+    if (ctx.hasUI) {
+      ctx.ui.notify(message, "error");
+    } else {
+      // headless: the log line is the report
+    }
   }
 
   // ------------------------------------------------------------------
@@ -1459,25 +1363,37 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       applyModeWorkingMessage(ctx, activeMode);
       cycleStartTime = Date.now();
       baselineCost = totalSessionCost(ctx.sessionManager.getEntries());
-      // Prompt contributions go into the structured options; pi renders the
-      // prompt (never return systemPrompt: it would discard every later
-      // handler's section changes).
-      const workspaceRoot =
-        (await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager)) ??
-        resolve(ctx.cwd, ".agent-workspace-tmp");
-      const options = event.systemPromptOptions;
-      options.sections[MODE_POLICIES_SECTION] = MODE_POLICIES_PROMPT.replaceAll(
-        "{{WORKSPACE_TMP}}",
-        workspaceRoot,
-      );
-      options.sections[ENGINEERING_PRINCIPLES_SECTION] = ENGINEERING_PRINCIPLES;
-      options.sections[CODE_EXPLORATION_SECTION] = CODE_EXPLORATION;
-      for (const guideline of HARNESS_GUIDELINES) {
-        if (!options.promptGuidelines.includes(guideline)) {
-          options.promptGuidelines.push(guideline);
+      // The prompt goes into the structured options and pi renders it (never
+      // return systemPrompt: it would discard every later handler's section
+      // changes).
+      {
+        const workspaceRoot =
+          (await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager)) ??
+          resolve(ctx.cwd, ".agent-workspace-tmp");
+        const { foreignCustomPrompt } = assembleSystemPrompt(event.systemPromptOptions, {
+          activeTools: pi.getActiveTools(),
+          workspaceRoot,
+        });
+        if (foreignCustomPrompt && !foreignCustomPromptReported) {
+          foreignCustomPromptReported = true;
+          if (ctx.hasUI) {
+            ctx.ui.notify("[harness] SYSTEM.md (or another extension's customPrompt) appended after the harness preamble.", "info");
+          } else {
+            // headless: nothing to show it on
+          }
+        } else {
+          // no foreign customPrompt, or already reported this session
         }
       }
-      applyCodegraphRule(options.promptGuidelines, ctx);
+      {
+        const problem = codegraphToolProblem(pi.getAllTools());
+        if (problem !== undefined && !codegraphProblemReported) {
+          codegraphProblemReported = true;
+          reportPromptProblem(ctx, problem);
+        } else {
+          // codegraph is fine or not connected (yet), or already reported
+        }
+      }
       return {
         message: {
           customType: MODE_SELECTOR_MESSAGE_TYPE,
@@ -1489,13 +1405,24 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     },
   );
 
-  // First run of the session: surface the final prompt - after every
-  // before_agent_start handler, including other extensions - as a
-  // collapsible transcript entry (display only, never sent to the model).
-  // Reset on session_start, so a /reload shows it again.
+  // Every run: the final prompt - after every before_agent_start handler,
+  // including other extensions - must be the harness prompt; a problem is
+  // reported once per session.
+  // First run of the session: surface that prompt as a collapsible transcript
+  // entry (display only, never sent to the model). Reset on session_start, so
+  // a /reload shows it again.
   pi.on(
     "agent_start",
     (_event: EventOf<"agent_start">, ctx: ExtensionContext): void => {
+      {
+        const problem = systemPromptProblem(ctx.getSystemPrompt());
+        if (problem !== undefined && !systemPromptProblemReported) {
+          systemPromptProblemReported = true;
+          reportPromptProblem(ctx, problem);
+        } else {
+          // the harness prompt, or already reported this session
+        }
+      }
       if (
         CONFIG.showSystemPromptOnFirstRun === false ||
         systemPromptEntryShown

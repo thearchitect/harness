@@ -4,21 +4,23 @@
  * harness is distributed only as a Nix bundle (flake.nix, nix/package.nix):
  * its `pi` launcher loads this extension and the bundled pi packages and
  * points $HARNESS_MANIFEST at a JSON file with the absolute store paths and
- * versions of every pinned tool. This module:
+ * versions of every pinned tool. This module describes the bundle and
+ * registers nothing; index.ts wires it:
  *
- * - registers the bundled MCP servers from the manifest (an mcp.json entry
- *   with the same name takes precedence, as for any extension-registered
- *   server);
- * - reports a missing manifest (pi not started through the launcher) in the
- *   status line;
- * - provides /deps (alt+u): bundled versions, herdr integration state and how
- *   to update.
+ * - readManifest: the manifest, or why it is unusable (pi not started through
+ *   the launcher);
+ * - bundledMcpServers: the bundled MCP servers and their exposure policy (an
+ *   mcp.json entry with the same name takes precedence, as for any
+ *   extension-registered server);
+ * - depsReport: the /deps text - bundled versions, herdr integration state and
+ *   how to update;
+ * - claimHarnessInstance: the double-load guard.
  *
  * Updates are not done here: `nix profile upgrade harness` (or the user's
  * NixOS / home-manager flake update) replaces the whole bundle atomically.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { McpServerConfig } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -26,8 +28,6 @@ import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
-const STATUS_KEY = "harness-deps";
-const SHORTCUT = "alt+u";
 const UPDATE_HINT = "Update: `nix profile upgrade harness` (or update the harness flake input of your NixOS / home-manager config).";
 
 type BinId =
@@ -41,14 +41,14 @@ type BinId =
   | "chrome-devtools-mcp"
   | "herdr";
 
-type Manifest = {
+export type Manifest = {
   harness: string;
   versions: Record<string, string>;
   bin: Record<BinId, string>;
 };
 
 /** The manifest the launcher points at, or the reason it is unusable. */
-function readManifest(): { manifest: Manifest } | { problem: string } {
+export function readManifest(): { manifest: Manifest } | { problem: string } {
   const path = process.env.HARNESS_MANIFEST;
   if (!path) return { problem: "pi was not started through the harness launcher (HARNESS_MANIFEST is unset)" };
   try {
@@ -88,106 +88,108 @@ export function claimHarnessInstance(): boolean {
  * and batches them (fan-out over many symbols in one script); tools that write
  * files are direct, so every write is a visible call in the transcript.
  */
-function registerServers(pi: ExtensionAPI, bin: Manifest["bin"]): void {
-  pi.registerMcpServer("codegraph", {
-    description: "Code knowledge graph of the indexed project: symbols, call paths, callers/callees, impact",
-    command: bin.codegraph,
-    args: ["serve", "--mcp"],
-    env: {
-      DO_NOT_TRACK: "1",
-      CODEGRAPH_NO_UPDATE_CHECK: "1",
-      // codegraph lists only `explore` by default; the narrower tools are
-      // re-enabled for codemode fan-out (impact/callers over many symbols).
-      CODEGRAPH_MCP_TOOLS: "explore,node,search,callers,callees,impact",
-    },
-    exposure: "codemode",
-    toolExposure: { codegraph_explore: "direct" },
-  });
-
-  pi.registerMcpServer("lsp", {
-    description:
-      "Language servers (gopls, typescript-language-server) via agent-lsp: type-resolved references, implementations, call/type hierarchy, diagnostics, rename, simulated edits",
-    command: bin["agent-lsp"],
-    args: [`go:${bin.gopls}`, `typescript:${bin["typescript-language-server"]},--stdio`],
-    timeout: 120,
-    exposure: "codemode",
-    toolExposure: {
-      apply_edit: "direct",
-      safe_apply_edit: "direct",
-      safe_edit: "direct",
-      replace_symbol_body: "direct",
-      insert_after_symbol: "direct",
-      insert_before_symbol: "direct",
-      safe_delete_symbol: "direct",
-      commit_session: "direct",
-      execute_command: "direct",
-      // Builds and tests go through the project's own entry points (make, ...);
-      // agent-lsp's skill tools belong to its own agent integrations.
-      run_build: "hidden",
-      run_tests: "hidden",
-      activate_skill: "hidden",
-      deactivate_skill: "hidden",
-      get_skill_phase: "hidden",
-      export_cache: "hidden",
-      import_cache: "hidden",
-      set_log_level: "hidden",
-    },
-  });
-
-  pi.registerMcpServer("ts-refactor", {
-    description:
-      "TypeScript refactoring through tsserver: move/rename files with import updates, move declarations, extract, organize imports",
-    command: bin["mcp-refactor-typescript"],
-    timeout: 120,
-    // Every tool of this server writes files.
-    exposure: "direct",
-  });
-
-  pi.registerMcpServer("lightpanda", {
-    description:
-      "Headless JS-capable browser: open pages, render to markdown, links, clicks, forms, fallback web search",
-    command: bin.lightpanda,
-    args: ["mcp"],
-    env: { LIGHTPANDA_DISABLE_TELEMETRY: "true" },
-    timeout: 60,
-    toolExposure: { goto: "direct", markdown: "direct" },
-  });
-
+export function bundledMcpServers(bin: Manifest["bin"]): Record<string, McpServerConfig> {
   // The user's own browser. HARNESS_BROWSER (executable) and
   // HARNESS_BROWSER_USER_DATA_DIR (profile) are host settings; without them
   // the servers use their defaults (Chrome's standard locations).
   const browser = process.env.HARNESS_BROWSER;
   const userDataDir = process.env.HARNESS_BROWSER_USER_DATA_DIR;
 
-  pi.registerMcpServer("playwright", {
-    description:
-      "Control selected tabs in the user's running browser through the Playwright extension: snapshots, clicks, forms, screenshots, console and network",
-    command: bin["playwright-mcp"],
-    args: ["--extension"],
-    env: browser ? { PLAYWRIGHT_MCP_EXECUTABLE_PATH: browser } : {},
-    timeout: 180,
-    exposure: "codemode",
-  });
+  return {
+    codegraph: {
+      description: "Code knowledge graph of the indexed project: symbols, call paths, callers/callees, impact",
+      command: bin.codegraph,
+      args: ["serve", "--mcp"],
+      env: {
+        DO_NOT_TRACK: "1",
+        CODEGRAPH_NO_UPDATE_CHECK: "1",
+        // codegraph lists only `explore` by default; the narrower tools are
+        // re-enabled for codemode fan-out (impact/callers over many symbols).
+        CODEGRAPH_MCP_TOOLS: "explore,node,search,callers,callees,impact",
+      },
+      exposure: "codemode",
+      toolExposure: { codegraph_explore: "direct" },
+    },
 
-  pi.registerMcpServer("chromium-devtools", {
-    description:
-      "Control and inspect the user's running browser via DevTools: pages, DOM, console, network, screenshots",
-    command: bin["chrome-devtools-mcp"],
-    args: [
-      "--autoConnect",
-      ...(userDataDir ? ["--userDataDir", userDataDir.replace(/^~(?=\/|$)/, homedir())] : []),
-      "--no-usage-statistics",
-      "--no-performance-crux",
-      "--redact-network-headers",
-      "--screenshotFormat=webp",
-      "--screenshotQuality=80",
-      "--screenshotMaxWidth=1920",
-      "--screenshotMaxHeight=1200",
-    ],
-    env: { CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: "1" },
-    timeout: 180,
-    exposure: "codemode",
-  });
+    lsp: {
+      description:
+        "Language servers (gopls, typescript-language-server) via agent-lsp: type-resolved references, implementations, call/type hierarchy, diagnostics, rename, simulated edits",
+      command: bin["agent-lsp"],
+      args: [`go:${bin.gopls}`, `typescript:${bin["typescript-language-server"]},--stdio`],
+      timeout: 120,
+      exposure: "codemode",
+      toolExposure: {
+        apply_edit: "direct",
+        safe_apply_edit: "direct",
+        safe_edit: "direct",
+        replace_symbol_body: "direct",
+        insert_after_symbol: "direct",
+        insert_before_symbol: "direct",
+        safe_delete_symbol: "direct",
+        commit_session: "direct",
+        execute_command: "direct",
+        // Builds and tests go through the project's own entry points (make, ...);
+        // agent-lsp's skill tools belong to its own agent integrations.
+        run_build: "hidden",
+        run_tests: "hidden",
+        activate_skill: "hidden",
+        deactivate_skill: "hidden",
+        get_skill_phase: "hidden",
+        export_cache: "hidden",
+        import_cache: "hidden",
+        set_log_level: "hidden",
+      },
+    },
+
+    "ts-refactor": {
+      description:
+        "TypeScript refactoring through tsserver: move/rename files with import updates, move declarations, extract, organize imports",
+      command: bin["mcp-refactor-typescript"],
+      timeout: 120,
+      // Every tool of this server writes files.
+      exposure: "direct",
+    },
+
+    lightpanda: {
+      description:
+        "Headless JS-capable browser: open pages, render to markdown, links, clicks, forms, fallback web search",
+      command: bin.lightpanda,
+      args: ["mcp"],
+      env: { LIGHTPANDA_DISABLE_TELEMETRY: "true" },
+      timeout: 60,
+      toolExposure: { goto: "direct", markdown: "direct" },
+    },
+
+    playwright: {
+      description:
+        "Control selected tabs in the user's running browser through the Playwright extension: snapshots, clicks, forms, screenshots, console and network",
+      command: bin["playwright-mcp"],
+      args: ["--extension"],
+      env: browser ? { PLAYWRIGHT_MCP_EXECUTABLE_PATH: browser } : {},
+      timeout: 180,
+      exposure: "codemode",
+    },
+
+    "chromium-devtools": {
+      description:
+        "Control and inspect the user's running browser via DevTools: pages, DOM, console, network, screenshots",
+      command: bin["chrome-devtools-mcp"],
+      args: [
+        "--autoConnect",
+        ...(userDataDir ? ["--userDataDir", userDataDir.replace(/^~(?=\/|$)/, homedir())] : []),
+        "--no-usage-statistics",
+        "--no-performance-crux",
+        "--redact-network-headers",
+        "--screenshotFormat=webp",
+        "--screenshotQuality=80",
+        "--screenshotMaxWidth=1920",
+        "--screenshotMaxHeight=1200",
+      ],
+      env: { CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS: "1" },
+      timeout: 180,
+      exposure: "codemode",
+    },
+  };
 }
 
 /* ----------------------------------------------------------------------------
@@ -207,13 +209,7 @@ function herdrIntegration(herdr: string): Promise<string> {
   });
 }
 
-async function showDeps(ctx: ExtensionContext): Promise<void> {
-  const result = readManifest();
-  if ("problem" in result) {
-    ctx.ui.notify(`harness: ${result.problem}`, "error");
-    return;
-  }
-  const { manifest } = result;
+export async function depsReport(manifest: Manifest): Promise<{ text: string; level: "info" | "warning" }> {
   const width = Math.max(...Object.keys(manifest.versions).map((id) => id.length));
   const herdr = await herdrIntegration(manifest.bin.herdr);
   const lines = [
@@ -224,25 +220,5 @@ async function showDeps(ctx: ExtensionContext): Promise<void> {
     `herdr pi integration: ${herdr}${herdr.startsWith("current") ? "" : " - run `herdr integration install pi`"}`,
     UPDATE_HINT,
   ];
-  ctx.ui.notify(lines.join("\n"), herdr.startsWith("current") ? "info" : "warning");
-}
-
-export function installDeps(pi: ExtensionAPI): void {
-  const result = readManifest();
-  if ("manifest" in result) registerServers(pi, result.manifest.bin);
-
-  pi.on("session_start", (_event, ctx) => {
-    if ("problem" in result) ctx.ui.setStatus(STATUS_KEY, `harness: ${result.problem}`);
-  });
-
-  pi.registerCommand("deps", {
-    description: "Bundled dependency versions, herdr integration state, how to update",
-    handler: async (_args, ctx) => showDeps(ctx),
-  });
-  pi.registerShortcut(SHORTCUT, {
-    description: "Bundled dependencies (/deps)",
-    handler: (ctx) => {
-      void showDeps(ctx);
-    },
-  });
+  return { text: lines.join("\n"), level: herdr.startsWith("current") ? "info" : "warning" };
 }
