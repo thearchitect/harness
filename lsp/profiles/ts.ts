@@ -34,6 +34,12 @@ const LANGUAGE_IDS: Record<string, string> = {
   ".cjs": "javascript",
   ".jsx": "javascriptreact",
 };
+/**
+ * The server's js/ts settings. A rename renames everywhere: with aliases (the
+ * editor default) a re-export would become `export { newName as oldName }`
+ * and keep the old name alive for its importers.
+ */
+const JS_TS_SETTINGS = { preferences: { useAliasesForRenames: false } };
 const ROOT_CONFIG_NAMES = new Set(["tsconfig.json", "jsconfig.json"]);
 const CONFIG_PATTERN = /^(?:tsconfig|jsconfig)[^/]*\.json$/;
 const LOCKFILES = new Set(["package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "yarn.lock", "bun.lock", "bun.lockb"]);
@@ -104,9 +110,13 @@ class TypeScriptDriver implements LanguageDriver {
     return {};
   }
 
-  configuration(): unknown {
-    // the server's defaults
-    return null;
+  configuration(section: string | undefined): unknown {
+    if (section === "js/ts") {
+      return JS_TS_SETTINGS;
+    } else {
+      // typescript, javascript, editor: the server's defaults
+      return null;
+    }
   }
 
   async initialized(server: ServerLink): Promise<void> {
@@ -116,7 +126,7 @@ class TypeScriptDriver implements LanguageDriver {
     this.api = await module.API.fromLSPConnection({ pipe });
   }
 
-  async sync(_server: ServerLink, files: readonly string[], diff: SnapshotDiff, first: boolean): Promise<SyncOutcome> {
+  async sync(server: ServerLink, files: readonly string[], diff: SnapshotDiff, first: boolean): Promise<SyncOutcome> {
     const api = this.api;
     if (api === undefined) {
       throw new Error("the TypeScript API session is not attached");
@@ -136,6 +146,15 @@ class TypeScriptDriver implements LanguageDriver {
           closeFiles: missing(previous?.looseFiles ?? [], next.looseFiles),
         });
         await snapshot.dispose();
+        if (previous === undefined) {
+          // TypeScript 7.0.2 asks for the settings at initialization, and again
+          // takes a configuration change sent before the projects are loaded,
+          // without applying either to renames (verified: they keep the alias);
+          // a change after the first snapshot applies.
+          server.notify("workspace/didChangeConfiguration", { settings: { "js/ts": JS_TS_SETTINGS } });
+        } else {
+          // configured with the first snapshot of this server
+        }
         this.model = next;
         return "current";
       }

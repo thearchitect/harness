@@ -11,12 +11,13 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { appendFile, cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { promisify } from "node:util";
 import { lspToolchain, type Manifest } from "../../deps.ts";
-import { commitChanges, type LockPaths } from "../edits.ts";
+import type { LockPaths } from "../edits.ts";
 import { Facade, type Place } from "../facade.ts";
+import { readPlan, runRefactor, writePlan, type Operation } from "../refactor.ts";
 import type { Toolchain } from "../profile.ts";
 import { Workspace } from "../workspace.ts";
 
@@ -52,6 +53,8 @@ async function fixture(name: string): Promise<{ root: string; facade: Facade; cl
     },
   };
 }
+
+const run = (facade: Facade, operations: readonly Operation[]) => runRefactor(facade, operations, { lock: noLock, signal: undefined, onProgress: () => {} });
 
 const files = (places: readonly Place[]): string[] => [...new Set(places.map((place) => place.path))].sort();
 
@@ -105,22 +108,56 @@ describe("TypeScript", { skip }, () => {
     assert.equal(places.filter((place) => place.path === "packages/app/src/main.ts").length, 3);
   });
 
-  test("rename changes every package", async () => {
-    const set = await env.facade.rename({ file: "packages/core/src/index.ts", line: 3, name: "greet" }, "salute");
-    await commitChanges(set, noLock);
-    for (const path of ["packages/app/src/main.ts", "packages/web/src/view.ts", "packages/web/ssr/render.ts", "packages/web/src/extra.ts"]) {
-      const text = await readFile(join(env.root, path), "utf8");
-      assert.ok(text.includes("salute(") && !text.includes("greet("), `${path}: ${text}`);
+  test("a plan runs in order, stops at a failure, and resumes from the cut plan", async () => {
+    const plan = join(env.root, "..", `${basename(env.root)}-plan.json`);
+    const operations: Operation[] = [
+      { rename: { file: "packages/core/src/index.ts", line: 3, name: "greet", newName: "salute" } },
+      { move: { from: "packages/core/src/util.ts", to: "packages/core/src/lib/util.ts" } },
+      // addresses the state the move left
+      { rename: { file: "packages/core/src/lib/util.ts", line: 1, name: "helper", newName: "assist" } },
+      { edit: { file: "packages/web/src/view.ts", oldText: 'salute("web")', newText: 'salute("site")' } },
+      // an unused import for the code action to remove
+      { edit: { file: "packages/app/src/main.ts", oldText: 'import { salute } from "@core";', newText: 'import { salute } from "@core";\nimport { rendered } from "../../web/ssr/render";' } },
+      { rename: { file: "packages/web/src/view.ts", line: 3, name: "missing", newName: "x" } },
+      { codeAction: { file: "packages/app/src/main.ts", title: "Organize Imports" } },
+    ];
+    await writePlan(plan, operations);
+    try {
+      const first = await run(env.facade, await readPlan(plan));
+      assert.equal(first.applied, 5);
+      assert.equal(first.failure?.index, 5);
+      assert.match(first.failure!.reason, /missing does not occur/);
+      await writePlan(plan, operations.slice(first.failure!.index));
+
+      const main = await readFile(join(env.root, "packages/app/src/main.ts"), "utf8");
+      assert.match(main, /import \{ salute \} from "@core";\nimport \{ rendered \} from "\.\.\/\.\.\/web\/ssr\/render";\nimport \{ assist \} from "\.\.\/\.\.\/core\/src\/lib\/util";/);
+      assert.match(await readFile(join(env.root, "packages/core/src/index.ts"), "utf8"), /export \{ assist \} from "\.\/lib\/util";/);
+      assert.match(await readFile(join(env.root, "packages/web/src/view.ts"), "utf8"), /salute\("site"\)/);
+      for (const path of ["packages/web/ssr/render.ts", "packages/web/src/extra.ts"]) {
+        assert.match(await readFile(join(env.root, path), "utf8"), /salute\(/, path);
+      }
+      assert.deepEqual(first.net.moves.map((move) => basename(move.to)), ["util.ts"]);
+
+      // fix the failed entry in place and run the same plan again
+      const rest = await readPlan(plan);
+      assert.equal(rest.length, 2);
+      rest[0] = { rename: { file: "packages/web/src/view.ts", line: 3, name: "view", newName: "render" } };
+      await writePlan(plan, rest);
+      const second = await run(env.facade, await readPlan(plan));
+      assert.equal(second.failure, undefined);
+      assert.equal(second.applied, 2);
+      assert.match(await readFile(join(env.root, "packages/web/src/view.ts"), "utf8"), /export function render\(\)/);
+      // organize imports removed the unused import
+      assert.match(await readFile(join(env.root, "packages/app/src/main.ts"), "utf8"), /^import \{ salute \} from "@core";\nimport \{ assist \} from "\.\.\/\.\.\/core\/src\/lib\/util";\n/);
+    } finally {
+      await rm(plan, { force: true });
     }
   });
 
-  test("move_file updates imports in other packages and inside the moved file", async () => {
-    const set = await env.facade.moveFiles([{ from: "packages/core/src/util.ts", to: "packages/core/src/lib/util.ts" }]);
-    await commitChanges(set, noLock);
-    assert.match(await readFile(join(env.root, "packages/app/src/main.ts"), "utf8"), /from "\.\.\/\.\.\/core\/src\/lib\/util"/);
-    assert.match(await readFile(join(env.root, "packages/core/src/index.ts"), "utf8"), /from "\.\/lib\/util"/);
-    const places = await env.facade.references({ file: "packages/core/src/lib/util.ts", line: 1, name: "helper" }, true);
-    assert.ok(files(places).includes("packages/app/src/main.ts"));
+  test("a change outside the repository is refused", async () => {
+    await assert.rejects(run(env.facade, [{ edit: { file: "../outside.ts", oldText: "a", newText: "b" } }]).then((outcome) => {
+      throw new Error(outcome.failure?.reason ?? "applied");
+    }), /outside the workspace/);
   });
 
   test("a broken tsconfig is an error, not a partial answer", async () => {
@@ -177,14 +214,24 @@ describe("Go", { skip }, () => {
   });
 
   test("rename crosses modules", async () => {
-    await commitChanges(await env.facade.rename({ file: "lib/lib.go", line: 4, name: "Hello" }, "Greet"), noLock);
+    const outcome = await run(env.facade, [{ rename: { file: "lib/lib.go", line: 4, name: "Hello", newName: "Greet" } }]);
+    assert.equal(outcome.failure, undefined);
+    assert.deepEqual(outcome.warnings, []);
     assert.match(await readFile(join(env.root, "svc/main.go"), "utf8"), /lib\.Greet\(\)/);
     assert.match(await readFile(join(env.root, "svc/tagged.go"), "utf8"), /lib\.Greet\(\)/);
   });
 
+  test("renaming a generated symbol warns to change its source", async () => {
+    const outcome = await run(env.facade, [{ rename: { file: "svc/main.go", line: 6, name: "Generated", newName: "Produced" } }]);
+    assert.equal(outcome.failure, undefined);
+    assert.equal(outcome.warnings.length, 1);
+    assert.match(outcome.warnings[0], /lib\/gen\.go, which looks generated \(its header says "\/\/ Code generated by the fixture\. DO NOT EDIT\."\)/);
+  });
+
   test("files move within their package only", async () => {
-    await commitChanges(await env.facade.moveFiles([{ from: "svc/tagged.go", to: "svc/tagged_integration.go" }]), noLock);
-    await assert.rejects(env.facade.moveFiles([{ from: "svc/main.go", to: "lib/main.go" }]), /only within their directory/);
+    assert.equal((await run(env.facade, [{ move: { from: "svc/tagged.go", to: "svc/tagged_integration.go" } }])).failure, undefined);
+    const across = await run(env.facade, [{ move: { from: "svc/main.go", to: "lib/main.go" } }]);
+    assert.match(across.failure?.reason ?? "", /only within their directory/);
   });
 });
 
@@ -209,7 +256,7 @@ describe("Rust", { skip }, () => {
   });
 
   test("moving a module file updates its mod declaration", async () => {
-    await commitChanges(await env.facade.moveFiles([{ from: "ws/core/src/util.rs", to: "ws/core/src/helpers.rs" }]), noLock);
+    assert.equal((await run(env.facade, [{ move: { from: "ws/core/src/util.rs", to: "ws/core/src/helpers.rs" } }])).failure, undefined);
     const lib = await readFile(join(env.root, "ws/core/src/lib.rs"), "utf8");
     assert.match(lib, /mod helpers;/);
     assert.match(lib, /helpers::double/);

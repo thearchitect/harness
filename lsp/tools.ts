@@ -2,20 +2,35 @@
  * The facade's tools for the model, and their registration with pi.
  *
  * Read-only tools are callable from codemode (namespace `lsp`), where the
- * model batches them over many symbols; tools that change files are direct
- * and pass the harness change review once per whole change set.
+ * model batches them over many symbols; lsp_refactor, the one tool that
+ * changes files, is called by the model directly and passes the harness
+ * change review once per list of operations.
  */
 
 import { withFileMutationQueue, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { resolve } from "node:path";
 import { Type, type Static, type TSchema } from "typebox";
-import { commitChanges, unifiedDiff, type ChangeSet, type LockPaths } from "./edits.ts";
-import { Facade, type DiagnosticEntry, type HierarchyEntry, type Place, type SymbolEntry, type SymbolRef } from "./facade.ts";
+import { unifiedDiff, type ChangeSet, type LockPaths } from "./edits.ts";
+import { Facade, type DiagnosticEntry, type HierarchyEntry, type Place, type SymbolEntry } from "./facade.ts";
 import { severityName } from "./protocol.ts";
+import {
+  describeOperation,
+  operationKind,
+  parseOperation,
+  readPlan,
+  runRefactor,
+  writePlan,
+  type Operation,
+  type OperationKind,
+  type RefactorOutcome,
+} from "./refactor.ts";
 
 export type ChangeRequest = { tool: string; toolCallId: string; paths: string[]; lines: string[] };
 export type ChangeAuthorization = { kind: "allowed" } | { kind: "blocked"; reason: string; terminate: boolean };
 /** The harness change review (index.ts): mode policy, madness, the approval dialog. */
 export type Authorize = (ctx: ExtensionContext, request: ChangeRequest) => Promise<ChangeAuthorization>;
+/** Whether a path is scratch space: the session workspace or the temp directory (index.ts). */
+export type IsScratch = (ctx: ExtensionContext, path: string) => Promise<boolean>;
 
 const MAX_PLACES = 500;
 const MAX_DIFF_LINES = 600;
@@ -29,7 +44,7 @@ const NAMESPACE = {
     "A symbol is addressed by { file, line, name }: the 1-based line and the identifier on it; pass occurrence (1-based) when the name occurs more than once on the line.",
     "Every workspace-wide answer covers the whole repository: all tsconfig projects and files outside them, every Go module (go.work plus every go.mod) with all build tags, every Cargo workspace with all features. lsp_workspace reports exactly what is covered and what is excluded.",
     "Each call first synchronizes the servers with the files on disk, so results reflect edits made just before. A failure is reported as an error, never as a partial result.",
-    "Paths in results are relative to the repository root. The changing tools (lsp_rename, move_file, lsp_apply_code_action) are called directly by the model, never from scripts.",
+    "Paths in results are relative to the repository root. lsp_refactor, which changes files, is called directly by the model, never from scripts.",
   ].join("\n"),
 };
 
@@ -39,6 +54,26 @@ const symbolRefShape = {
   name: Type.String({ description: "The identifier on that line" }),
   occurrence: Type.Optional(Type.Integer({ minimum: 1, description: "Which occurrence of the identifier on the line (1-based), when it occurs more than once" })),
 };
+
+const operationSchema = Type.Union([
+  Type.Object({ rename: Type.Object({ ...symbolRefShape, newName: Type.String({ description: "The new identifier" }) }) }, { additionalProperties: false }),
+  Type.Object({ move: Type.Object({ from: Type.String(), to: Type.String() }) }, { additionalProperties: false }),
+  Type.Object(
+    {
+      codeAction: Type.Object({
+        file: Type.String(),
+        title: Type.String({ description: "Exact title from lsp_code_actions" }),
+        startLine: Type.Optional(Type.Integer({ minimum: 1, description: "Default: the whole file" })),
+        endLine: Type.Optional(Type.Integer({ minimum: 1, description: "Default: startLine" })),
+      }),
+    },
+    { additionalProperties: false },
+  ),
+  Type.Object(
+    { edit: Type.Object({ file: Type.String(), oldText: Type.String({ description: "Exact text, occurring once in the file" }), newText: Type.String() }) },
+    { additionalProperties: false },
+  ),
+]);
 
 const placeSchema = Type.Object({ path: Type.String(), line: Type.Integer(), column: Type.Integer(), text: Type.String() });
 const placesOutput = Type.Object({ count: Type.Integer(), truncated: Type.Boolean(), places: Type.Array(placeSchema) });
@@ -75,7 +110,12 @@ const lockPaths: LockPaths = async <T>(paths: readonly string[], fn: () => Promi
   }
 };
 
-export function registerLspTools(pi: ExtensionAPI, facadeFor: (ctx: ExtensionContext) => Promise<Facade>, authorize: Authorize): void {
+export function registerLspTools(
+  pi: ExtensionAPI,
+  facadeFor: (ctx: ExtensionContext) => Promise<Facade>,
+  authorize: Authorize,
+  isScratch: IsScratch,
+): void {
   const readTool = <P extends TSchema, O extends TSchema>(definition: {
     name: string;
     label: string;
@@ -210,7 +250,7 @@ export function registerLspTools(pi: ExtensionAPI, facadeFor: (ctx: ExtensionCon
   readTool({
     name: "lsp_code_actions",
     label: "Code actions",
-    description: "Code actions (quick fixes, organize imports, source actions) the server offers for a line range; apply one with lsp_apply_code_action.",
+    description: "Code actions (quick fixes, organize imports, source actions) the server offers for a line range; apply one as a codeAction operation of lsp_refactor.",
     parameters: Type.Object({
       file: Type.String(),
       startLine: Type.Integer({ minimum: 1 }),
@@ -246,106 +286,70 @@ export function registerLspTools(pi: ExtensionAPI, facadeFor: (ctx: ExtensionCon
   });
 
   /* ------------------------------------------------------------------------
-   * Changing tools
+   * The changing tool
    * --------------------------------------------------------------------- */
 
-  const review = async (
-    ctx: ExtensionContext,
-    toolCallId: string,
-    tool: string,
-    facade: Facade,
-    headline: string,
-    set: ChangeSet,
-  ): Promise<{ applied: true; text: string } | { applied: false; reason: string; terminate: boolean }> => {
-    if (set.changes.length === 0) {
-      return { applied: true, text: `${headline}: nothing to change.` };
-    } else {
-      const summary = changeSummary(facade, set);
-      const decision = await authorize(ctx, { tool, toolCallId, paths: set.changes.map((change) => change.path), lines: [headline, ...summary] });
-      switch (decision.kind) {
-        case "blocked":
-          return { applied: false, reason: decision.reason, terminate: decision.terminate };
-        case "allowed": {
-          await commitChanges(set, lockPaths);
-          return { applied: true, text: [headline, ...summary, "", diffText(facade, set)].join("\n") };
-        }
-        default:
-          return assertNeverDecision(decision);
-      }
-    }
-  };
-
   pi.registerTool({
-    name: "lsp_rename",
-    label: "Rename symbol",
-    description:
-      "Rename the symbol at { file, line, name } everywhere in the repository (all packages, modules and crates; renaming a module can move its file). The whole change set is reviewed once and written atomically; the result shows the diff.",
-    promptSnippet: "Rename a symbol across the whole repository (TypeScript/JavaScript, Go, Rust)",
-    parameters: Type.Object({ ...symbolRefShape, newName: Type.String({ description: "The new identifier" }) }),
+    name: "lsp_refactor",
+    label: "Refactor",
+    description: [
+      "Apply refactoring operations in order, each on the state the previous ones left: rename a symbol everywhere in the repository (all packages, modules, crates), move a file updating imports and module paths (Go files move only within their directory), apply a code action listed by lsp_code_actions (organize imports, quick fix; without lines: the whole file), or replace exact text (edit semantics: oldText must occur exactly once).",
+      "Pass the operations inline, or `plan`: the path of a JSON file with the same array in the session workspace. The whole list is approved once; each operation is then computed by the language servers and written atomically.",
+      "A failing operation stops the run: the operations before it stay applied, and a plan file is cut down to the failed operation and the rest, so fix its first entry and run the same plan again. The result shows the diff of what was applied.",
+    ].join(" "),
+    promptSnippet: "Rename symbols, move files, apply code actions and exact text edits across the repository (TypeScript/JavaScript, Go, Rust), one operation or a plan file of hundreds",
+    parameters: Type.Object({
+      operations: Type.Optional(Type.Array(operationSchema, { minItems: 1, description: "Operations, applied in order" })),
+      plan: Type.Optional(Type.String({ description: "Path of a JSON file holding the operations array (session workspace)" })),
+    }),
     // declared to the model, never callable from scripts: every change and its diff stay visible
     exposure: "model-only",
     executionMode: "sequential",
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
+    async execute(toolCallId, params, signal, onUpdate, ctx) {
       const facade = await facadeFor(ctx);
-      const ref: SymbolRef = params;
-      const outcome = await review(ctx, toolCallId, "lsp_rename", facade, `rename ${params.name} → ${params.newName}`, await facade.rename(ref, params.newName));
-      return toolResult(outcome);
-    },
-  });
-
-  pi.registerTool({
-    name: "move_file",
-    label: "Move files",
-    description:
-      "Move or rename files and update everything that refers to them across the repository: TypeScript/JavaScript imports in every package, Rust `mod` paths. Go files move only within their directory (package). One language per call; a directory is moved as the list of its files. Reviewed once, written atomically.",
-    promptSnippet: "Move or rename source files, updating imports and module paths across the repository",
-    parameters: Type.Object({
-      moves: Type.Array(Type.Object({ from: Type.String(), to: Type.String() }), { minItems: 1, description: "Files to move: { from, to } paths" }),
-    }),
-    exposure: "model-only",
-    executionMode: "sequential",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-      const facade = await facadeFor(ctx);
-      const headline = `move ${params.moves.length === 1 ? `${params.moves[0].from} → ${params.moves[0].to}` : `${params.moves.length} files`}`;
-      const outcome = await review(ctx, toolCallId, "move_file", facade, headline, await facade.moveFiles(params.moves));
-      return toolResult(outcome);
-    },
-  });
-
-  pi.registerTool({
-    name: "lsp_apply_code_action",
-    label: "Apply code action",
-    description: "Apply the code action with the given title (as listed by lsp_code_actions for the same lines). Its edits are reviewed and written atomically.",
-    promptSnippet: "Apply a language server code action (quick fix, organize imports) listed by lsp_code_actions",
-    parameters: Type.Object({
-      file: Type.String(),
-      startLine: Type.Integer({ minimum: 1 }),
-      endLine: Type.Optional(Type.Integer({ minimum: 1, description: "Default: startLine" })),
-      title: Type.String({ description: "Exact title from lsp_code_actions" }),
-    }),
-    exposure: "model-only",
-    executionMode: "sequential",
-    annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
-    async execute(toolCallId, params, _signal, _onUpdate, ctx) {
-      const facade = await facadeFor(ctx);
-      const texts: string[] = [];
-      let blocked: { reason: string; terminate: boolean } | undefined;
-      const result = await facade.applyCodeAction(params.file, params.startLine, params.endLine ?? params.startLine, params.title, async (set) => {
-        const outcome = await review(ctx, toolCallId, "lsp_apply_code_action", facade, params.title, set);
-        if (outcome.applied) {
-          texts.push(outcome.text);
-          return { applied: true };
+      let operations: Operation[];
+      let planPath: string | undefined;
+      if (params.plan !== undefined && params.operations === undefined) {
+        planPath = resolve(ctx.cwd, params.plan);
+        if (await isScratch(ctx, planPath)) {
+          operations = await readPlan(planPath);
         } else {
-          blocked = { reason: outcome.reason, terminate: outcome.terminate };
-          return { applied: false, reason: outcome.reason };
+          throw new Error(`plan files live in the session workspace or the temp directory; ${planPath} is outside them`);
         }
-      });
-      if (blocked !== undefined) {
-        return toolResult({ applied: false, ...blocked });
+      } else if (params.operations !== undefined && params.plan === undefined) {
+        operations = params.operations.map((entry, index) => parseOperation(entry, `operations[${index}]`));
       } else {
-        return toolResult({ applied: true, text: texts.length > 0 ? texts.join("\n\n") : result });
+        throw new Error("pass either operations or plan");
+      }
+      if (operations.length === 0) {
+        return { content: [{ type: "text", text: "The plan holds no operations." }], details: undefined };
+      } else {
+        const decision = await authorize(ctx, {
+          tool: "lsp_refactor",
+          toolCallId,
+          paths: operations.flatMap((operation) => operationPaths(facade, operation)),
+          lines: [`refactor: ${countByKind(operations)}${planPath !== undefined ? ` from ${facade.workspace.display(planPath)}` : ""}`, ...operations.map(describeOperation)],
+        });
+        switch (decision.kind) {
+          case "blocked":
+            return { content: [{ type: "text", text: decision.reason }], details: undefined, isError: true, terminate: decision.terminate };
+          case "allowed": {
+            const outcome = await runRefactor(facade, operations, {
+              lock: lockPaths,
+              signal,
+              onProgress: (done, total, current) => onUpdate?.({ content: [{ type: "text", text: `${done}/${total} ${current}` }], details: undefined }),
+            });
+            if (outcome.failure !== undefined && planPath !== undefined) {
+              await writePlan(planPath, operations.slice(outcome.failure.index));
+            } else {
+              // complete, or inline operations: the remaining ones are listed in the result
+            }
+            return refactorResult(facade, operations, outcome, planPath);
+          }
+          default:
+            return assertNeverDecision(decision);
+        }
       }
     },
   });
@@ -451,11 +455,59 @@ function diffText(facade: Facade, set: ChangeSet): string {
   }
 }
 
-function toolResult(outcome: { applied: true; text: string } | { applied: false; reason: string; terminate: boolean }) {
-  if (outcome.applied) {
-    return { content: [{ type: "text" as const, text: outcome.text }], details: undefined };
+const KIND_ORDER: readonly OperationKind[] = ["rename", "move", "codeAction", "edit"];
+
+/** "287 operations (280 rename, 5 move, 2 codeAction)" */
+function countByKind(operations: readonly Operation[]): string {
+  const counts = new Map<OperationKind, number>();
+  for (const operation of operations) {
+    const kind = operationKind(operation);
+    counts.set(kind, (counts.get(kind) ?? 0) + 1);
+  }
+  const parts = KIND_ORDER.filter((kind) => counts.has(kind)).map((kind) => `${counts.get(kind)} ${kind}`);
+  return `${operations.length} operation${operations.length === 1 ? "" : "s"} (${parts.join(", ")})`;
+}
+
+/** The files an operation names, absolute; for the review's scratch-space check. */
+function operationPaths(facade: Facade, operation: Operation): string[] {
+  if ("rename" in operation) {
+    return [facade.workspace.resolvePath(operation.rename.file)];
+  } else if ("move" in operation) {
+    return [facade.workspace.resolvePath(operation.move.from), facade.workspace.resolvePath(operation.move.to)];
+  } else if ("codeAction" in operation) {
+    return [facade.workspace.resolvePath(operation.codeAction.file)];
+  } else if ("edit" in operation) {
+    return [facade.workspace.resolvePath(operation.edit.file)];
   } else {
-    return { content: [{ type: "text" as const, text: outcome.reason }], details: undefined, isError: true, terminate: outcome.terminate };
+    throw new Error(`unknown operation: ${JSON.stringify(operation satisfies never)}`);
+  }
+}
+
+function refactorResult(facade: Facade, operations: readonly Operation[], outcome: RefactorOutcome, planPath: string | undefined) {
+  const applied = outcome.net.changes.length > 0 ? ["", ...changeSummary(facade, outcome.net), "", diffText(facade, outcome.net)] : [];
+  const warnings = outcome.warnings.length > 0 ? ["", "Generated code:", ...outcome.warnings.map((warning) => `- ${warning}`)] : [];
+  if (outcome.failure === undefined) {
+    return {
+      content: [{ type: "text" as const, text: [`Applied ${countByKind(operations)}.`, ...warnings, ...applied].join("\n") }],
+      details: undefined,
+    };
+  } else {
+    const { index, reason } = outcome.failure;
+    const remaining = operations.slice(index);
+    const retry =
+      planPath !== undefined
+        ? `The plan ${facade.workspace.display(planPath)} now holds the ${remaining.length} remaining operations, the failed one first: fix it and run lsp_refactor({ plan }) again.`
+        : `Remaining operations, the failed one first:\n${JSON.stringify(remaining)}`;
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: [`Applied ${outcome.applied} of ${operations.length} operations. Operation ${index + 1} failed: ${describeOperation(operations[index])}`, `Reason: ${reason}`, retry, ...warnings, ...applied].join("\n"),
+        },
+      ],
+      details: undefined,
+      isError: true,
+    };
   }
 }
 

@@ -11,8 +11,8 @@
  * and steers the given message to the model without aborting the run.
  * System prompt: the harness owns all of it; prompt.ts assembles it from
  * prompt.yaml, this file calls it per run and reports its problems.
- * Code intelligence (language servers behind the lsp_* and move_file tools)
- * lives in lsp/; its file changes pass the same review as write/edit.
+ * Code intelligence (language servers behind the lsp_* tools) lives in lsp/;
+ * lsp_refactor's file changes pass the same review as write/edit.
  * Temporary workarounds for upstream gaps are isolated in workarounds.ts.
  * Static CONFIG block (top of file) drives all tunables: edit it, not the logic.
  *
@@ -810,11 +810,13 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   }
 
   // Code intelligence (lsp/): the bundle's language servers behind the lsp_*
-  // and move_file tools; their changes pass the same review as write/edit.
+  // tools; lsp_refactor's changes pass the same review as write/edit, and its
+  // plan files live in scratch space.
   registerLsp(
     pi,
     "manifest" in bundle ? lspToolchain(bundle.manifest) : { problem: bundle.problem },
     authorizeChange,
+    (ctx, path) => isScratchPath(ctx, path),
   );
 
   // Bundled skills: web-research (ollama web tools + lightpanda fallback).
@@ -1561,9 +1563,27 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   );
 
   /**
-   * The change review shared by write/edit and the code-intelligence tools
-   * (lsp_rename, move_file, lsp_apply_code_action), one decision per change
-   * set: madness lets everything through; paths inside /tmp or the session
+   * The session workspace, with the same fallback as the system-prompt
+   * substitution so the gate and the prompt never disagree about where it is.
+   */
+  async function scratchWorkspaceRoot(ctx: ExtensionContext): Promise<string> {
+    return (
+      (await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager)) ??
+      (await canonicalizeProspectivePath(resolve(ctx.cwd, ".agent-workspace-tmp")))
+    );
+  }
+
+  /** Scratch space: /tmp or the session workspace, free to write in every mode. */
+  async function isScratchPath(ctx: ExtensionContext, path: string, workspaceRoot?: string): Promise<boolean> {
+    return (
+      (await isInsideTemp(path, ctx.cwd, tempRoot)) ||
+      (await isInsideTemp(path, ctx.cwd, workspaceRoot ?? (await scratchWorkspaceRoot(ctx))))
+    );
+  }
+
+  /**
+   * The change review shared by write/edit and lsp_refactor, one decision per
+   * change (a lsp_refactor call is one change however many operations it holds): madness lets everything through; paths inside /tmp or the session
    * workspace need no review in any mode; otherwise PLAN refuses and BUILD
    * asks Yes / No (why?) / Stop. An approval's comment is attached to the
    * tool result (pendingGateComments) and steered to the model; a
@@ -1579,15 +1599,11 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     let workspaceRoot: string | undefined;
     let reviewed: string[];
     try {
-      // Same fallback as the system-prompt substitution so the gate and the
-      // prompt never disagree about where the workspace is.
-      const root =
-        (await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager)) ??
-        (await canonicalizeProspectivePath(resolve(ctx.cwd, ".agent-workspace-tmp")));
+      const root = await scratchWorkspaceRoot(ctx);
       workspaceRoot = root;
       reviewed = [];
       for (const path of request.paths) {
-        if ((await isInsideTemp(path, ctx.cwd, tempRoot)) || (await isInsideTemp(path, ctx.cwd, root))) {
+        if (await isScratchPath(ctx, path, root)) {
           // scratch space: free in every mode
         } else {
           reviewed.push(path);
@@ -1659,8 +1675,8 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   }
 
   // ------------------------------------------------------------------
-  // Approved-with-comment changes (write/edit, lsp_rename, move_file,
-  // lsp_apply_code_action): the comment opens the tool's
+  // Approved-with-comment changes (write/edit, lsp_refactor): the comment
+  // opens the tool's
   // result content (so the model always sees it attached to the executed
   // change) and stays in pendingGateComments for the row renderer to draw it
   // under the call content. Blocked calls never reach this hook — their

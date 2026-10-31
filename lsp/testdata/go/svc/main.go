@@ -3,5 +3,5 @@ package main
 import "example.com/lib"
 
 func main() {
-	println(lib.Hello())
+	println(lib.Hello(), lib.Generated())
 }

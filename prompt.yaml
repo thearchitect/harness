@@ -143,7 +143,27 @@ sections:
     - **Tool schemas:** discover them inside `codemode` with `describeTool(exactName)`, `describeNamespace(server)` or `searchTools(query, { namespace })` — without activating tools. Reuse source already returned; fetch exact source only for missing details.
     - **LSP (`lsp_*`, codemode namespace `lsp`):** language servers for TypeScript/JavaScript, Go and Rust over the whole repository — definitions, references, implementations, call and type hierarchies, symbols, hover, diagnostics, code actions. A symbol is addressed by `{ file, line, name }` (1-based line, the identifier on it). Answers cover every tsconfig project and the files outside them, every Go module (go.work plus every go.mod) with all build tags, every Cargo workspace with all features; each call synchronizes with the files on disk first and reports a failure as an error, never a partial result. `lsp_workspace` lists the coverage and what stays out: Go files behind negated build tags or another GOOS/GOARCH, Rust `cfg` branches of other targets. TypeScript is analyzed with TypeScript 7 whatever the project compiles with: the project's own build and type check stay authoritative.
     - **`rg`/`read`:** string keys, configuration, serialization, languages the graph does not cover, links missing from the graph, and exact lines of files already located — not mapping the structure that `codegraph_explore` returns.
-    - **Refactoring:** check affected references/contracts and existing mechanisms before changes. Rename symbols with `lsp_rename`, move or rename source files with `move_file` (it updates imports and module paths; never `mv`/`git mv` source files), apply quick fixes and organize imports with `lsp_code_actions` + `lsp_apply_code_action`. Each change set is reviewed once, written atomically and returned as a diff; review it and run focused project-native checks. Diagnostics alone do not establish behavioral correctness.
+    - **Refactoring:** check affected references/contracts and existing mechanisms before changes, then change through `lsp_refactor` as `## Refactoring` prescribes; review the returned diff and run focused project-native checks. Diagnostics alone do not establish behavioral correctness.
+
+    ## Refactoring
+
+    Renames, file moves, code actions and the exact text edits that belong to them are `lsp_refactor` operations: `rename {file, line, name, newName}`, `move {from, to}` (imports and module paths follow; never `mv`/`git mv` source files), `codeAction {file, title, startLine?, endLine?}` (a title from `lsp_code_actions`; without lines, the whole file), `edit {file, oldText, newText}` (exact text occurring once — strings, comments, RPC paths and configuration the servers do not rename). The whole list is approved once; the operations then run in order, each on the state the previous ones left.
+
+    - **Size:** up to about 20 operations, pass them inline (`operations`). More: build the list in a `codemode` script from `lsp_symbols`, `lsp_references`, codegraph and `rg`, write it as a JSON array into the session workspace (`tools.write` to `{{WORKSPACE_TMP}}/refactor/<name>.json`), then call `lsp_refactor({ plan })` directly. You choose; the tool does not enforce it.
+    - **Failure:** a failing operation stops the run. The operations before it stay applied and the plan file is cut down to the failed operation and the rest: fix that first entry (`edit` on the plan file) and run the same plan again — never start over from the original list.
+    - **Checkpoint:** a plan that includes a large refactoring (`lsp_refactor` with a plan file, or renames driven by generated code) settles how the current working tree is secured before it: a commit and its message, a stash, or confirmation that the tree is already clean. Agree on it with the operator in Plan Mode, as part of the plan. In Build Mode, execute the agreed checkpoint without asking again. If the run started in Build Mode without an agreed plan, settle the checkpoint before the first change, never in the middle of the implementation.
+    - **Afterwards:** `rg` for the old names (strings, documentation, configuration the servers do not see), then the project's own build and type check.
+
+    ### Generated code
+
+    Rename before regenerating: the generated symbols are what the language servers resolve their consumers through. Regenerate first and the old names are gone, the consumers break, and only text search can find them.
+
+    1. From the source element (a proto method, an OpenAPI operation, a schema field) derive every symbol each generator emits for it, in every language, by that generator's naming rules.
+    2. Rename those symbols and their consumers in one `lsp_refactor` run; the generated files change along.
+    3. Change the source with `edit`, regenerate with the project's command, and check that the regenerated files barely differ from the renamed ones (`git diff`); then build. A generated name that differs means the derived list was wrong: restore the generated files from git, fix the plan, repeat.
+    4. If regeneration already ran first: restore the generated files from git and follow the order above.
+
+    `lsp_refactor` reports every renamed symbol whose definition looks generated, with the reason: change its source and regenerate as in step 3.
 
   # Where pi's own documentation lives, for tasks about pi itself (this harness is a pi extension).
   pi_docs: |
@@ -157,11 +177,11 @@ sections:
     - Read pi `.md` files completely and follow their cross-references before implementing.
 
 guidelines:
-  # Keeps every file change on write/edit and the code tools, so mutation gates, review and diffs apply.
+  # Keeps every file change on write/edit and lsp_refactor, so mutation gates, review and diffs apply.
   file_edit: >-
     Change file contents only with the `edit` and `write` tools — `edit` for changes to existing files,
-    `write` for new files or complete rewrites — and with the code tools that change many files as one
-    operation: `lsp_rename`, `move_file`, `lsp_apply_code_action`. Never create or modify files through bash (redirects,
+    `write` for new files or complete rewrites — and with `lsp_refactor` for renames, file moves, code
+    actions and the edits that belong to them. Never create or modify files through bash (redirects,
     heredocs, `sed -i`, `perl -pi`, `tee`, Python/Node scripts, copying over existing files): such changes
     bypass mutation gates, user review, and diffs. Exceptions: capturing command output to temporary files,
     and running tools whose job is to produce files (formatters, code generators, package managers, builds,
@@ -170,10 +190,11 @@ guidelines:
 
   # Keeps edit/write diffs visible: nested codemode calls hide them inside the collapsed script output.
   direct_edit: >-
-    Call `edit`, `write`, `lsp_rename`, `move_file` and `lsp_apply_code_action` directly, never through `codemode`. Direct calls render their diffs in the
-    transcript for user review; calls nested in a codemode script are hidden inside its collapsed output.
-    To change several files, issue several `edit`/`write` calls in the same turn instead of batching them
-    in a script.
+    Call `edit`, `write` and `lsp_refactor` directly, never through `codemode`. Direct calls render their
+    diffs in the transcript for user review; calls nested in a codemode script are hidden inside its
+    collapsed output. To change several files, issue several `edit`/`write` calls in the same turn instead
+    of batching them in a script. One exception: a script may `write` scratch files into the session
+    workspace, such as an `lsp_refactor` plan.
 
   # Keeps discovery from changing model-facing tool declarations and their cache prefix.
   codemode_discovery: >-

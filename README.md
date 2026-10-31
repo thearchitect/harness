@@ -69,8 +69,8 @@ gives the model one set of tools over them: `lsp_definition`,
 `lsp_type_definition`, `lsp_implementations`, `lsp_references`, `lsp_hover`,
 `lsp_symbols`, `lsp_call_hierarchy`, `lsp_type_hierarchy`, `lsp_diagnostics`,
 `lsp_code_actions`, `lsp_workspace` (read-only, codemode namespace `lsp`) and
-`lsp_rename`, `move_file`, `lsp_apply_code_action` (change files, called
-directly). A symbol is addressed by `{ file, line, name }`.
+`lsp_refactor` (changes files, called directly). A symbol is addressed by
+`{ file, line, name }`.
 
 - **Whole repository.** The workspace is the git repository of the session
   (the superproject of a submodule). TypeScript: every `tsconfig.json`/
@@ -86,10 +86,18 @@ directly). A symbol is addressed by `{ file, line, name }`.
   git file list, not watchers), the workspace model is updated, and the server
   must be ready (rust-analyzer: quiescent). Anything that fails is an error,
   never a partial answer.
-- **Changes all or nothing.** A server's edit is replayed on a virtual file
-  system, reviewed once (PLAN refuses, BUILD asks, `/madness` passes), checked
-  against the files the server saw, written atomically with rollback, and
-  returned as a diff.
+- **Refactoring.** `lsp_refactor` takes a list of operations — `rename`,
+  `move`, `codeAction`, `edit` (exact text) — inline or as a plan file (a JSON
+  array in the session workspace, typically written by a codemode script). The
+  list is reviewed once (PLAN refuses, BUILD asks, `/madness` passes); the
+  operations then run in order, each on the state the previous ones left. Each
+  one's edit is replayed on a virtual file system, checked against the files
+  the server saw, kept inside the repository and written atomically. A failing
+  operation stops the run: the ones before it stay applied and the plan file is
+  cut down to the failed one and the rest, to fix and rerun. Renamed symbols
+  defined in files that look generated (`linguist-generated`, `Code generated …
+  DO NOT EDIT.`, header comments, generator file names) are reported: change
+  the source and regenerate afterwards.
 - **Lifecycle.** A server starts on first use and stops with the session
   (`session_shutdown`: reload, `/new`, `/resume`, exit), or is killed with its
   process group if pi dies; a crashed server restarts on the next request (three

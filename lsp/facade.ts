@@ -10,7 +10,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { pathToFileURL } from "node:url";
-import { addMoves, planEdit, type ChangeSet } from "./edits.ts";
+import { addMoves, planEdit, planReplacement, type ChangeSet } from "./edits.ts";
 import type { LanguageProfile } from "./profile.ts";
 import {
   symbolKindName,
@@ -239,7 +239,8 @@ export class Facade {
    * Edits: computed under one synchronization, applied through `apply`
    * --------------------------------------------------------------------- */
 
-  async rename(ref: SymbolRef, newName: string): Promise<ChangeSet> {
+  /** The rename's change set, and the files that define the symbol (for the generated-code check). */
+  async rename(ref: SymbolRef, newName: string): Promise<{ set: ChangeSet; definitions: string[] }> {
     const at = await this.locate(ref);
     return await at.session.run((scope) =>
       scope.withDocument(at.file, async (uri) => {
@@ -254,11 +255,14 @@ export class Facade {
         } else {
           // the server validates in rename itself
         }
+        const definitions = toLocations(
+          await scope.link.request<Location | Location[] | LocationLink[] | null>("textDocument/definition", { textDocument: { uri }, position: at.position }),
+        ).map((location) => uriToPath(location.uri));
         const edit = await scope.link.request<WorkspaceEdit | null>("textDocument/rename", { textDocument: { uri }, position: at.position, newName }, TIMEOUTS.edit);
         if (edit === null) {
           throw new Error(`the server found nothing to rename for ${ref.name}`);
         } else {
-          return await planEdit(edit, scope.basis);
+          return { set: this.inside(await planEdit(edit, scope.basis)), definitions: [...new Set(definitions)] };
         }
       }),
     );
@@ -292,7 +296,7 @@ export class Facade {
                 { files: resolved.map((move) => ({ oldUri: pathToFileURL(move.from).href, newUri: pathToFileURL(move.to).href })) },
                 TIMEOUTS.edit,
               );
-              return await addMoves(await planEdit(edit ?? {}, scope.basis), resolved);
+              return this.inside(await addMoves(await planEdit(edit ?? {}, scope.basis), resolved));
             });
           }
           case "same-directory": {
@@ -344,7 +348,7 @@ export class Facade {
             }
             const outcomes: string[] = [];
             if (action.edit !== undefined) {
-              const result = await apply(await planEdit(action.edit, scope.basis));
+              const result = await apply(this.inside(await planEdit(action.edit, scope.basis)));
               if (!result.applied) {
                 return result.reason;
               } else {
@@ -363,6 +367,11 @@ export class Facade {
         }
       }),
     );
+  }
+
+  /** An exact text replacement (`edit` semantics) in a workspace file. */
+  async replaceText(path: string, oldText: string, newText: string): Promise<ChangeSet> {
+    return await planReplacement(this.workspace.resolvePath(path), oldText, newText);
   }
 
   /** Coverage of every language present in the workspace; starts and synchronizes their servers. */
@@ -387,10 +396,20 @@ export class Facade {
    * Helpers
    * --------------------------------------------------------------------- */
 
+  /** A server's change set, refused when it touches anything outside the repository. */
+  private inside(set: ChangeSet): ChangeSet {
+    const outside = set.changes.find((change) => this.workspace.display(change.path) === change.path);
+    if (outside !== undefined) {
+      throw new Error(`the change touches ${outside.path}, outside the repository ${this.workspace.root}; nothing of this operation was written`);
+    } else {
+      return set;
+    }
+  }
+
   private async runCommand(session: LanguageSession, scope: RequestScope, command: Command, apply: ApplyChanges): Promise<string> {
     const outcomes: string[] = [];
     session.applyEditHandler = async (edit) => {
-      const result = await apply(await planEdit(edit, new Map()));
+      const result = await apply(this.inside(await planEdit(edit, new Map())));
       if (result.applied) {
         outcomes.push("edit applied");
         return { applied: true };

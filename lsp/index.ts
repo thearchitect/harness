@@ -2,7 +2,9 @@
  * harness - code intelligence: a facade over the language servers of the
  * bundle (TypeScript 7, gopls, rust-analyzer).
  *
- *   tools.ts      the model's tools (lsp_*, move_file) and their formatting
+ *   tools.ts      the model's tools (lsp_*) and their formatting
+ *   refactor.ts   lsp_refactor's operations, run in order; plan files
+ *   generated.ts  whether a file looks generated, and why
  *   facade.ts     language-independent operations, positions by { file, line, name }
  *   workspace.ts  the session's repository and its language sessions
  *   session.ts    one server's life: start, sync with disk, requests, crashes, stop
@@ -18,13 +20,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Facade } from "./facade.ts";
 import type { Toolchain } from "./profile.ts";
-import { registerLspTools, type Authorize } from "./tools.ts";
+import { registerLspTools, type Authorize, type IsScratch } from "./tools.ts";
 import { Workspace } from "./workspace.ts";
 
-export type { Authorize, ChangeAuthorization, ChangeRequest } from "./tools.ts";
+export type { Authorize, ChangeAuthorization, ChangeRequest, IsScratch } from "./tools.ts";
 export type { Toolchain } from "./profile.ts";
 
-export function registerLsp(pi: ExtensionAPI, bundle: { toolchain: Toolchain } | { problem: string }, authorize: Authorize): void {
+export function registerLsp(
+  pi: ExtensionAPI,
+  bundle: { toolchain: Toolchain } | { problem: string },
+  authorize: Authorize,
+  isScratch: IsScratch,
+): void {
   let workspace: Promise<Workspace> | undefined;
 
   const openWorkspace = (ctx: ExtensionContext): Promise<Workspace> => {
@@ -46,7 +53,7 @@ export function registerLsp(pi: ExtensionAPI, bundle: { toolchain: Toolchain } |
     }
   };
 
-  registerLspTools(pi, async (ctx) => new Facade(await openWorkspace(ctx)), authorize);
+  registerLspTools(pi, async (ctx) => new Facade(await openWorkspace(ctx)), authorize, isScratch);
 
   pi.on("session_shutdown", async () => {
     const closing = workspace;

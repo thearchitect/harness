@@ -172,6 +172,32 @@ export async function planEdit(edit: WorkspaceEdit, basis: Snapshot): Promise<Ch
   return { changes, moves, stamps };
 }
 
+/**
+ * An exact text replacement with the semantics of the `edit` tool: `oldText`
+ * must occur exactly once in the file.
+ */
+export async function planReplacement(path: string, oldText: string, newText: string): Promise<ChangeSet> {
+  if (oldText === "") {
+    throw new EditError("oldText is empty");
+  } else {
+    const info = await stat(path, { bigint: true });
+    const before = await readFile(path, "utf8");
+    const first = before.indexOf(oldText);
+    if (first < 0) {
+      throw new EditError(`oldText does not occur in ${path}`);
+    } else if (before.indexOf(oldText, first + 1) >= 0) {
+      throw new EditError(`oldText occurs more than once in ${path}; include more context to make it unique`);
+    } else {
+      const after = before.slice(0, first) + newText + before.slice(first + oldText.length);
+      return {
+        changes: before === after ? [] : [{ path, before, after, mode: Number(info.mode) & 0o7777 }],
+        moves: [],
+        stamps: new Map([[path, `${info.mtimeNs}:${info.size}`]]),
+      };
+    }
+  }
+}
+
 /** Adds plain file moves (no content change) to a change set, refusing to overwrite. */
 export async function addMoves(set: ChangeSet, moves: readonly { from: string; to: string }[]): Promise<ChangeSet> {
   const byPath = new Map(set.changes.map((change) => [change.path, change]));
