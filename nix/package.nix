@@ -18,7 +18,7 @@
   codegraph,
   herdr,
   gopls,
-  typescript-language-server,
+  rust-analyzer,
   pnpm,
   ripgrep,
   fd,
@@ -46,6 +46,7 @@ let
       fileset = lib.fileset.unions [
         ../index.ts
         ../deps.ts
+        ../lsp
         ../workarounds.ts
         ../prompt.ts
         ../prompt.yaml
@@ -145,18 +146,16 @@ let
     '';
   };
 
-  agent-lsp = stdenvNoCC.mkDerivation {
-    pname = "agent-lsp";
-    inherit (sources.agent-lsp) version;
-    src = fetchurl { inherit (asset "agent-lsp") url hash; };
-    sourceRoot = ".";
-    dontBuild = true;
-    installPhase = ''
-      runHook preInstall
-      install -Dm755 agent-lsp $out/bin/agent-lsp
-      runHook postInstall
-    '';
-  };
+  # The native TypeScript 7 language server: the platform package npm installs
+  # next to `typescript` (whose API lsp/ loads from the same version).
+  tsgoPlatform =
+    {
+      x86_64-linux = "linux-x64";
+      aarch64-linux = "linux-arm64";
+      aarch64-darwin = "darwin-arm64";
+    }
+    .${system} or (throw "typescript: no native build for ${system}");
+  tsgo = "${nodeModules}/@typescript/typescript-${tsgoPlatform}/lib/tsc";
 
   # Bundled pi packages, loaded with `-e` in this order.
   piPackages = [
@@ -174,28 +173,28 @@ let
         pi = npmVersion "@earendil-works/pi-coding-agent";
         codegraph = codegraph.version;
         lightpanda = lightpanda.version;
-        agent-lsp = agent-lsp.version;
+        typescript = npmVersion "typescript";
         gopls = gopls.version;
-        typescript-language-server = typescript-language-server.version;
-        mcp-refactor-typescript = npmVersion "mcp-refactor-typescript";
+        rust-analyzer = rust-analyzer.version;
         playwright-mcp = npmVersion "@playwright/mcp";
         chrome-devtools-mcp = npmVersion "chrome-devtools-mcp";
         herdr = herdr.version;
         pnpm = pnpm.version;
       }
       // lib.genAttrs piPackages npmVersion;
-      # Package directories (pi itself and the bundled pi packages).
+      # Package directories: pi itself, the bundled pi packages, and typescript
+      # (the API of the TypeScript language server, loaded by lsp/).
       packages = {
         pi = "${nodeModules}/@earendil-works/pi-coding-agent";
+        typescript = "${nodeModules}/typescript";
       }
       // lib.genAttrs piPackages (p: "${nodeModules}/${p}");
       bin = {
         codegraph = lib.getExe codegraphPkg;
         lightpanda = "${lightpanda}/bin/lightpanda";
-        agent-lsp = "${agent-lsp}/bin/agent-lsp";
+        inherit tsgo;
         gopls = lib.getExe gopls;
-        typescript-language-server = lib.getExe typescript-language-server;
-        mcp-refactor-typescript = "${nodeModules}/.bin/mcp-refactor-typescript";
+        rust-analyzer = lib.getExe rust-analyzer;
         playwright-mcp = "${nodeModules}/.bin/playwright-mcp";
         chrome-devtools-mcp = "${nodeModules}/.bin/chrome-devtools-mcp";
         herdr = lib.getExe herdr;
@@ -273,7 +272,6 @@ stdenvNoCC.mkDerivation {
       extension
       npmTools
       lightpanda
-      agent-lsp
       manifest
       dev
       ;

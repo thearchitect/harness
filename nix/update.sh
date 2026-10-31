@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Bumps every pinned component of the bundle to its latest release:
-#   - nix/npm/package.json + package-lock.json (pi, pi packages, npm MCP servers)
-#   - nix/sources.json (prebuilt release binaries: lightpanda, agent-lsp)
-#   - flake.lock (nixpkgs: codegraph, herdr, gopls, typescript-language-server, pnpm, nodejs)
+#   - nix/npm/package.json + package-lock.json (pi, pi packages, npm MCP servers, typescript)
+#   - nix/sources.json (prebuilt release binaries: lightpanda)
+#   - flake.lock (nixpkgs: codegraph, herdr, gopls, rust-analyzer, pnpm, nodejs)
 #
 #   nix/update.sh            update everything
 #   nix/update.sh --no-flake skip `nix flake update`
@@ -67,20 +67,10 @@ asset_lightpanda() {
     aarch64-darwin) echo lightpanda-aarch64-macos ;;
   esac
 }
-asset_agent_lsp() {
-  case "$1" in
-    x86_64-linux) echo agent-lsp_linux_amd64.tar.gz ;;
-    aarch64-linux) echo agent-lsp_linux_arm64.tar.gz ;;
-    aarch64-darwin) echo agent-lsp_darwin_arm64.tar.gz ;;
-  esac
-}
 
 latest_lightpanda() {
   gh_api "repos/lightpanda-io/browser/releases?per_page=30" |
     jq -r '[.[] | select(.prerelease | not) | select(.tag_name | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))][0].tag_name'
-}
-latest_agent_lsp() {
-  gh_api "repos/blackwell-systems/agent-lsp/releases/latest" | jq -r '.tag_name | ltrimstr("v")'
 }
 
 # update_release <id> <repo> <tag-prefix> <latest-fn> <asset-fn>
@@ -108,7 +98,6 @@ update_release() {
 [[ -f "$SOURCES" ]] || echo '{}' >"$SOURCES"
 update_npm
 update_release lightpanda lightpanda-io/browser "" latest_lightpanda asset_lightpanda
-update_release agent-lsp blackwell-systems/agent-lsp "v" latest_agent_lsp asset_agent_lsp
 
 if ((UPDATE_FLAKE)); then
   old="$(jq -r '.nodes.nixpkgs.locked.rev // "none"' "$ROOT/flake.lock" 2>/dev/null || echo none)"

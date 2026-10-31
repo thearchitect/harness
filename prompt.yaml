@@ -102,37 +102,37 @@ sections:
 
     Applies to every task that depends on existing code — questions, bugs, incidents, features, UI changes, refactoring — from the first lookup on.
 
-    The first code lookup of every such task is `mcp__codegraph__codegraph_explore` with `projectPath` set to the project root. It returns the source of the relevant symbols and the call paths among them in one call, and it reports when a project is not indexed — only then continue that project with ordinary tools. Graph results are selective and heuristic, not exhaustive: expand them with LSP, and use `rg`/`read` for what the graph does not link.
+    The first code lookup of every such task is `mcp__codegraph__codegraph_explore` with `projectPath` set to the project root. It returns the source of the relevant symbols and the call paths among them in one call, and it reports when a project is not indexed — only then continue that project with ordinary tools. Graph results are selective and heuristic, not exhaustive: expand them with the `lsp_*` tools, and use `rg`/`read` for what the graph does not link.
 
     Navigate by project structure and shared data/contracts, not broad feature-keyword searches. DAO, DTO and API are roles: find their equivalents in each project.
 
     1. **Map the structure:** with `codegraph_explore`, identify modules, workspace/build roots, data definitions, contracts, API entry points and composition/registration sites.
     2. **Find the data anchors:** translate the question into domain entities, persisted structures, types and specific fields; inspect their definitions and related types.
     3. **Connect the contracts:** find corresponding DTO/messages, converters and API methods; follow both sides of transport boundaries, including generated code back to its source contract.
-    4. **Expand usages:** use LSP references/implementations on the relevant types, fields and methods to find readers, writers, validation, authorization and consumers across modules — not just the first matching feature.
+    4. **Expand usages:** use `lsp_references`/`lsp_implementations` on the relevant types, fields and methods to find readers, writers, validation, authorization and consumers across modules — not just the first matching feature.
     5. **Trace the relevant flows:** use codegraph callers/callees/impact and source to connect those usages to entry points, effects and actual registration. Inspect alternative consumers or inherited conditions that can change the answer.
 
     Stop when the relevant paths answer the question; report a concrete gap rather than expanding unrelated branches.
 
     ## Waves
 
-    Exploration runs in a few dependent waves. A wave is every read-only lookup whose inputs are already known — codegraph, LSP, `rg`/`git log` through `tools.bash`, `read` — typically 3–8 calls. The first wave of a task contains `codegraph_explore`. Run a wave as one `codemode` script with `Promise.allSettled` and print only the findings: file:line locations, errors, truncation notices.
+    Exploration runs in a few dependent waves. A wave is every read-only lookup whose inputs are already known — codegraph, `lsp_*`, `rg`/`git log` through `tools.bash`, `read` — typically 3–8 calls. The first wave of a task contains `codegraph_explore`. Run a wave as one `codemode` script with `Promise.allSettled` and print only the findings: file:line locations, errors, truncation notices.
 
     Why a script and not the alternatives:
-    - A compound `bash` (`rg …; cat …; sed -n …`) runs its parts one after another, puts every raw output into the context, and cannot reach codegraph or LSP.
+    - A compound `bash` (`rg …; cat …; sed -n …`) runs its parts one after another, puts every raw output into the context, and cannot reach codegraph or the `lsp_*` tools.
     - Several direct calls in one block run concurrently but still return every raw output unfiltered.
     - A script runs the calls concurrently, reaches every tool, and filters or aggregates before anything reaches the context: one round trip, a fraction of the tokens.
 
     So the instruction to make independent calls together is met by a wave in `codemode`.
 
-    Direct calls remain the right tool for a single lookup whose output you need whole (one file, one search); for builds, tests, deploys, git writes and other commands with effects or long runtime; and for `edit`/`write`. Keep a script's output within its budget (10k tokens by default): filter in the script or split the wave by subject. Never run `start_lsp` or other workspace switches concurrently.
+    Direct calls remain the right tool for a single lookup whose output you need whole (one file, one search); for builds, tests, deploys, git writes and other commands with effects or long runtime; and for `edit`/`write`. Keep a script's output within its budget (10k tokens by default): filter in the script or split the wave by subject.
 
     ```js
     const [graph, refs, hits] = await Promise.allSettled([
       // structure, source and call paths
       tools.mcp__codegraph__codegraph_explore({ query: "Order OrderDTO createOrder", projectPath: "/abs/root" }),
       // type-resolved usages of a data anchor
-      tools.mcp__lsp__find_references({ file_path: "/abs/root/order.go", position_pattern: "type @@Order@@ struct" }),
+      tools.lsp_references({ file: "internal/order/order.go", line: 12, name: "Order" }),
       // a string key the graph does not link
       tools.bash({ command: "rg -n '\"order_id\"' --type go" }),
     ]);
@@ -141,9 +141,9 @@ sections:
     ## Tools
 
     - **Tool schemas:** discover them inside `codemode` with `describeTool(exactName)`, `describeNamespace(server)` or `searchTools(query, { namespace })` — without activating tools. Reuse source already returned; fetch exact source only for missing details.
-    - **LSP:** initialize the correct root/language with `start_lsp` before semantic queries; use `find_references`, `go_to_implementation` and call/type hierarchy where supported; summary tools may omit usages.
+    - **LSP (`lsp_*`, codemode namespace `lsp`):** language servers for TypeScript/JavaScript, Go and Rust over the whole repository — definitions, references, implementations, call and type hierarchies, symbols, hover, diagnostics, code actions. A symbol is addressed by `{ file, line, name }` (1-based line, the identifier on it). Answers cover every tsconfig project and the files outside them, every Go module (go.work plus every go.mod) with all build tags, every Cargo workspace with all features; each call synchronizes with the files on disk first and reports a failure as an error, never a partial result. `lsp_workspace` lists the coverage and what stays out: Go files behind negated build tags or another GOOS/GOARCH, Rust `cfg` branches of other targets. TypeScript is analyzed with TypeScript 7 whatever the project compiles with: the project's own build and type check stay authoritative.
     - **`rg`/`read`:** string keys, configuration, serialization, languages the graph does not cover, links missing from the graph, and exact lines of files already located — not mapping the structure that `codegraph_explore` returns.
-    - **Refactoring:** check affected references/contracts and existing mechanisms before changes; use semantic previews where supported, obey mutation/approval rules, review the diff and run focused project-native checks. Diagnostics alone do not establish behavioral correctness.
+    - **Refactoring:** check affected references/contracts and existing mechanisms before changes. Rename symbols with `lsp_rename`, move or rename source files with `move_file` (it updates imports and module paths; never `mv`/`git mv` source files), apply quick fixes and organize imports with `lsp_code_actions` + `lsp_apply_code_action`. Each change set is reviewed once, written atomically and returned as a diff; review it and run focused project-native checks. Diagnostics alone do not establish behavioral correctness.
 
   # Where pi's own documentation lives, for tasks about pi itself (this harness is a pi extension).
   pi_docs: |
@@ -157,10 +157,11 @@ sections:
     - Read pi `.md` files completely and follow their cross-references before implementing.
 
 guidelines:
-  # Keeps every file change on write/edit, so mutation gates, review and diffs apply.
+  # Keeps every file change on write/edit and the code tools, so mutation gates, review and diffs apply.
   file_edit: >-
-    Change file contents only with the `edit` and `write` tools: `edit` for changes to existing files,
-    `write` for new files or complete rewrites. Never create or modify files through bash (redirects,
+    Change file contents only with the `edit` and `write` tools — `edit` for changes to existing files,
+    `write` for new files or complete rewrites — and with the code tools that change many files as one
+    operation: `lsp_rename`, `move_file`, `lsp_apply_code_action`. Never create or modify files through bash (redirects,
     heredocs, `sed -i`, `perl -pi`, `tee`, Python/Node scripts, copying over existing files): such changes
     bypass mutation gates, user review, and diffs. Exceptions: capturing command output to temporary files,
     and running tools whose job is to produce files (formatters, code generators, package managers, builds,
@@ -169,7 +170,7 @@ guidelines:
 
   # Keeps edit/write diffs visible: nested codemode calls hide them inside the collapsed script output.
   direct_edit: >-
-    Call `edit` and `write` directly, never through `codemode`. Direct calls render their diffs in the
+    Call `edit`, `write`, `lsp_rename`, `move_file` and `lsp_apply_code_action` directly, never through `codemode`. Direct calls render their diffs in the
     transcript for user review; calls nested in a codemode script are hidden inside its collapsed output.
     To change several files, issue several `edit`/`write` calls in the same turn instead of batching them
     in a script.

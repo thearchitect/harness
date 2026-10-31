@@ -1,0 +1,12 @@
+{
+  // a package that reaches core through a path alias, not project references
+  "compilerOptions": {
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2022",
+    "strict": true,
+    "noEmit": true,
+    "paths": { "@core": ["../core/src/index.ts"] },
+  },
+  "include": ["src"],
+}

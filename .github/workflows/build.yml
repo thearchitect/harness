@@ -64,6 +64,9 @@ jobs:
         if: steps.plan.outputs.action == 'build'
         # coreutils supplies timeout on macOS too.
         run: nix shell nixpkgs#jq nixpkgs#coreutils --command nix/smoke.sh result
+      - name: Language server tests
+        if: steps.plan.outputs.action == 'build'
+        run: nix shell nixpkgs#nodejs nixpkgs#git nixpkgs#go nixpkgs#cargo nixpkgs#rustc --command nix/lsp-test.sh result
       - name: Export binary cache
         if: inputs.publish-cache && steps.plan.outputs.action == 'build'
         env:

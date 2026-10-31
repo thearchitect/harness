@@ -11,6 +11,8 @@
  * and steers the given message to the model without aborting the run.
  * System prompt: the harness owns all of it; prompt.ts assembles it from
  * prompt.yaml, this file calls it per run and reports its problems.
+ * Code intelligence (language servers behind the lsp_* and move_file tools)
+ * lives in lsp/; its file changes pass the same review as write/edit.
  * Temporary workarounds for upstream gaps are isolated in workarounds.ts.
  * Static CONFIG block (top of file) drives all tunables: edit it, not the logic.
  *
@@ -65,7 +67,8 @@ import {
 import { fileURLToPath } from "node:url";
 import { ensureThinkingBlocksVisible } from "./workarounds.ts";
 import { assembleSystemPrompt, codegraphToolProblem, systemPromptProblem } from "./prompt.ts";
-import { bundledMcpServers, claimHarnessInstance, depsReport, readManifest } from "./deps.ts";
+import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest } from "./deps.ts";
+import { registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
 
 /* ============================================================================
  * ▄▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▄ ▀▀█▀▀ ▀▀█▀▀ ▄▀▀▀▀       ▄▀▀▀▀ ▄▀▀▀▄ █▄  █ █▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▀
@@ -394,7 +397,7 @@ class GateDialog implements Component {
   private readonly theme: Theme;
   private readonly keybindings: KeybindingsManager;
   private readonly onDone: (result: GateDecision | null) => void;
-  private readonly detail: string;
+  private readonly detail: readonly string[];
 
   private selectedIndex = 0; // Yes
   private zone: "options" | "comment" = "options";
@@ -405,15 +408,14 @@ class GateDialog implements Component {
     tui: TUI,
     theme: Theme,
     keybindings: KeybindingsManager,
-    tool: string,
-    path: string,
+    detail: readonly string[],
     onDone: (result: GateDecision | null) => void,
   ) {
     this.tui = tui;
     this.theme = theme;
     this.keybindings = keybindings;
     this.onDone = onDone;
-    this.detail = `${tool}: ${path}`;
+    this.detail = detail;
     // Enter must insert a newline in the comment field; submission happens via
     // Ctrl+Enter or from the options zone. disableSubmit makes the editor
     // swallow plain Enter instead of invoking onSubmit. The border color
@@ -555,12 +557,14 @@ class GateDialog implements Component {
     const theme = this.theme;
     const lines: string[] = [];
     lines.push(gateTopBorder(theme, width, "Allow file change?"));
-    lines.push(
-      padLineToWidth(
-        truncateToWidth(theme.fg("muted", this.detail), width - 2, "", false),
-        width,
-      ),
-    );
+    for (const detailLine of this.detail) {
+      lines.push(
+        padLineToWidth(
+          truncateToWidth(theme.fg("muted", detailLine), width - 2, "", false),
+          width,
+        ),
+      );
+    }
     lines.push("");
 
     // The comment field takes everything left over after the option list.
@@ -645,11 +649,17 @@ class GateCommentRow implements Component {
  * TUI uses the rich GateDialog component; other dialog-capable modes fall
  * back to a select + input chain.
  */
+/** Lines of the change shown in the dialog: the first names the tool and subject, the rest list files. */
+const GATE_DETAIL_LINES = 14;
+
 async function askGateDecision(
   ctx: ExtensionContext,
-  tool: string,
-  path: string,
+  detailLines: readonly string[],
 ): Promise<GateDecision | null> {
+  const detail =
+    detailLines.length > GATE_DETAIL_LINES
+      ? [...detailLines.slice(0, GATE_DETAIL_LINES - 1), `… ${detailLines.length - GATE_DETAIL_LINES + 1} more`]
+      : detailLines;
   if (ctx.mode === "tui") {
     try {
       return await ctx.ui.custom<GateDecision | null>(
@@ -663,7 +673,7 @@ async function askGateDecision(
           };
           const onAbort = (): void => close(null);
           ctx.signal?.addEventListener("abort", onAbort, { once: true });
-          return new GateDialog(tui, theme, keybindings, tool, path, close);
+          return new GateDialog(tui, theme, keybindings, detail, close);
         },
       );
     } catch {
@@ -671,7 +681,7 @@ async function askGateDecision(
     }
   }
 
-  const prompt = `Allow file change?\n${tool}: ${path}`;
+  const prompt = `Allow file change?\n${detail.join("\n")}`;
   const choice = await ctx.ui.select(prompt, [
     "Yes",
     "No — reject (comment required)",
@@ -798,6 +808,14 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   } else {
     // pi was not started through the launcher: no bundled servers
   }
+
+  // Code intelligence (lsp/): the bundle's language servers behind the lsp_*
+  // and move_file tools; their changes pass the same review as write/edit.
+  registerLsp(
+    pi,
+    "manifest" in bundle ? lspToolchain(bundle.manifest) : { problem: bundle.problem },
+    authorizeChange,
+  );
 
   // Bundled skills: web-research (ollama web tools + lightpanda fallback).
   const extensionDir = dirname(fileURLToPath(import.meta.url));
@@ -1474,8 +1492,9 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   // Tool-call interception:
   //  - ask_user: always offer the optional-comment row and the custom
   //    (freeform) answer row in the dialog, whatever the model passed.
-  //  - write/edit gate: plan blocks outside /tmp + session workspace,
-  //    build asks the Yes/No(why?)/Stop dialog (TUI or RPC), madness bypasses
+  //  - write/edit gate (authorizeChange, shared with the lsp changing tools):
+  //    plan blocks outside /tmp + session workspace, build asks the
+  //    Yes/No(why?)/Stop dialog (TUI or RPC), madness bypasses
   // ------------------------------------------------------------------
   pi.on(
     "tool_call",
@@ -1505,8 +1524,6 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
         return;
       }
 
-      const mode = activeMode;
-
       let tool: "write" | "edit";
       let path: string;
       if (isToolCallEventType("write", event)) {
@@ -1526,82 +1543,124 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
         };
       }
 
-      if (madnessEnabled) return;
+      const decision = await authorizeChange(ctx, {
+        tool,
+        toolCallId: event.toolCallId,
+        paths: [path],
+        lines: [`${tool}: ${path}`],
+      });
+      switch (decision.kind) {
+        case "allowed":
+          return;
+        case "blocked":
+          return { block: true, terminate: decision.terminate, reason: decision.reason };
+        default:
+          throw new Error(`unknown change decision: ${JSON.stringify(decision satisfies never)}`);
+      }
+    },
+  );
 
-      let workspaceRoot: string | undefined;
-      try {
-        if (await isInsideTemp(path, ctx.cwd, tempRoot)) return;
-        // Same fallback as the system-prompt substitution so the gate and the
-        // prompt never disagree about where the workspace is.
-        workspaceRoot =
-          (await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager)) ??
-          (await canonicalizeProspectivePath(resolve(ctx.cwd, ".agent-workspace-tmp")));
-        if (await isInsideTemp(path, ctx.cwd, workspaceRoot)) return;
-      } catch (error) {
-        if (mode === "plan") {
-          return {
-            block: true,
-            reason: `PLAN could not safely resolve ${path}: ${error instanceof Error ? error.message : String(error)}`,
-          };
+  /**
+   * The change review shared by write/edit and the code-intelligence tools
+   * (lsp_rename, move_file, lsp_apply_code_action), one decision per change
+   * set: madness lets everything through; paths inside /tmp or the session
+   * workspace need no review in any mode; otherwise PLAN refuses and BUILD
+   * asks Yes / No (why?) / Stop. An approval's comment is attached to the
+   * tool result (pendingGateComments) and steered to the model; a
+   * rejection's comment is steered too.
+   */
+  async function authorizeChange(ctx: ExtensionContext, request: ChangeRequest): Promise<ChangeAuthorization> {
+    if (madnessEnabled) {
+      return { kind: "allowed" };
+    } else {
+      // reviewed below
+    }
+    const mode = activeMode;
+    let workspaceRoot: string | undefined;
+    let reviewed: string[];
+    try {
+      // Same fallback as the system-prompt substitution so the gate and the
+      // prompt never disagree about where the workspace is.
+      const root =
+        (await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager)) ??
+        (await canonicalizeProspectivePath(resolve(ctx.cwd, ".agent-workspace-tmp")));
+      workspaceRoot = root;
+      reviewed = [];
+      for (const path of request.paths) {
+        if ((await isInsideTemp(path, ctx.cwd, tempRoot)) || (await isInsideTemp(path, ctx.cwd, root))) {
+          // scratch space: free in every mode
+        } else {
+          reviewed.push(path);
         }
       }
-
+    } catch (error) {
       if (mode === "plan") {
         return {
-          block: true,
-          reason: `PLAN allows ${tool} only inside ${tempRoot} or your session workspace (${workspaceRoot ?? "unavailable"}). Use a disposable copy there.`,
+          kind: "blocked",
+          terminate: false,
+          reason: `PLAN could not safely resolve ${request.paths.join(", ")}: ${error instanceof Error ? error.message : String(error)}`,
         };
+      } else {
+        // BUILD reviews every path it cannot classify
+        reviewed = request.paths;
       }
+    }
 
-      if (!ctx.hasUI) {
-        return {
-          block: true,
-          reason: `Change to ${path} blocked: confirmation requires dialog-capable UI (TUI or RPC).`,
-        };
-      }
-
-      reportBlocked(true, `${tool} approval`);
+    if (reviewed.length === 0) {
+      return { kind: "allowed" };
+    } else if (mode === "plan") {
+      return {
+        kind: "blocked",
+        terminate: false,
+        reason: `PLAN allows ${request.tool} only inside ${tempRoot} or your session workspace (${workspaceRoot ?? "unavailable"}). Use a disposable copy there.`,
+      };
+    } else if (!ctx.hasUI) {
+      return {
+        kind: "blocked",
+        terminate: false,
+        reason: `Change to ${reviewed.join(", ")} blocked: confirmation requires dialog-capable UI (TUI or RPC).`,
+      };
+    } else {
+      reportBlocked(true, `${request.tool} approval`);
       try {
-        const decision = await askGateDecision(ctx, tool, path);
+        const decision = await askGateDecision(ctx, request.lines);
         if (!decision || decision.action === "stop") {
           // Esc or Stop: reject and end the run (tool result only, no steer —
           // the agent stops after this batch, so there is nowhere to steer to).
           const comment = decision?.comment;
           return {
-            block: true,
+            kind: "blocked",
             terminate: true,
-            reason: comment
-              ? `File change stopped by user — ${comment}`
-              : "File change stopped by user",
+            reason: comment ? `File change stopped by user — ${comment}` : "File change stopped by user",
           };
-        }
-        if (decision.action === "reject") {
+        } else if (decision.action === "reject") {
           // No (why?): reject this call and let the model correct course — the
           // comment reaches it both as the error result and as a steer message.
           const comment = decision.comment ?? "";
           if (comment) sendGateSteer(comment);
           return {
-            block: true,
-            reason: comment
-              ? `File change rejected by user — ${comment}`
-              : "Rejected by user",
+            kind: "blocked",
+            terminate: false,
+            reason: comment ? `File change rejected by user — ${comment}` : "Rejected by user",
           };
+        } else {
+          // Yes: allow the change; an optional comment is appended to the tool
+          // result after execution and also steered to the model.
+          if (decision.comment) {
+            rememberGateComment(request.toolCallId, decision.comment);
+            sendGateSteer(decision.comment);
+          }
+          return { kind: "allowed" };
         }
-        // Yes: allow the change; an optional comment is appended to the tool
-        // result after execution and also steered to the model.
-        if (decision.comment) {
-          rememberGateComment(event.toolCallId, decision.comment);
-          sendGateSteer(decision.comment);
-        }
-        return;
       } finally {
-        reportBlocked(false, `${tool} approval`);
+        reportBlocked(false, `${request.tool} approval`);
       }
-    },
-  );
+    }
+  }
 
   // ------------------------------------------------------------------
-  // Approved-with-comment write/edit calls: the comment opens the tool's
+  // Approved-with-comment changes (write/edit, lsp_rename, move_file,
+  // lsp_apply_code_action): the comment opens the tool's
   // result content (so the model always sees it attached to the executed
   // change) and stays in pendingGateComments for the row renderer to draw it
   // under the call content. Blocked calls never reach this hook — their

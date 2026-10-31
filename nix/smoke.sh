@@ -63,14 +63,14 @@ if "$PI" mcp list >"$WORK/mcp-list.log" 2>&1; then pass "pi mcp list"; else fail
 CODEGRAPH_MCP_TOOLS=explore,node,search,callers,callees,impact DO_NOT_TRACK=1 CODEGRAPH_NO_UPDATE_CHECK=1 \
   check_mcp codegraph codegraph_impact "$(bin codegraph)" serve --mcp
 LIGHTPANDA_DISABLE_TELEMETRY=true check_mcp lightpanda goto "$(bin lightpanda)" mcp
-check_mcp lsp rename_symbol "$(bin agent-lsp)" "go:$(bin gopls)" "typescript:$(bin typescript-language-server),--stdio"
-check_mcp ts-refactor file_operations "$(bin mcp-refactor-typescript)"
 check_mcp playwright browser_snapshot "$(bin playwright-mcp)" --extension
 check_mcp chromium-devtools take_snapshot "$(bin chrome-devtools-mcp)" --no-usage-statistics
 
-# Language servers run
+# Language servers run (their behavior: nix/lsp-test.sh)
+if "$(bin tsgo)" --version >"$WORK/tsgo.log" 2>&1; then pass "tsgo --version"; else fail "tsgo --version" "$WORK/tsgo.log"; fi
+if [[ -f "$(jq -r '.packages.typescript' "$MANIFEST")/package.json" ]]; then pass "typescript package"; else fail "typescript package"; fi
 if "$(bin gopls)" version >"$WORK/gopls.log" 2>&1; then pass "gopls version"; else fail "gopls version" "$WORK/gopls.log"; fi
-if "$(bin typescript-language-server)" --version >"$WORK/tsls.log" 2>&1; then pass "typescript-language-server --version"; else fail "typescript-language-server --version" "$WORK/tsls.log"; fi
+if "$(bin rust-analyzer)" --version >"$WORK/rust-analyzer.log" 2>&1; then pass "rust-analyzer --version"; else fail "rust-analyzer --version" "$WORK/rust-analyzer.log"; fi
 if "$BUNDLE/bin/pnpm" --version >"$WORK/pnpm.log" 2>&1; then pass "pnpm --version"; else fail "pnpm --version" "$WORK/pnpm.log"; fi
 if "$BUNDLE/bin/herdr" --version >"$WORK/herdr.log" 2>&1; then pass "herdr --version"; else fail "herdr --version" "$WORK/herdr.log"; fi
 

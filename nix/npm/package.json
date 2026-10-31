@@ -8,9 +8,9 @@
     "@earendil-works/pi-coding-agent": "1.4.0",
     "@playwright/mcp": "0.0.83",
     "chrome-devtools-mcp": "1.12.0",
-    "mcp-refactor-typescript": "3.1.0",
     "pi-ask-user": "0.17.1",
     "pi-deepseek-search": "1.2.2",
-    "pi-ollama-cloud": "0.13.1"
+    "pi-ollama-cloud": "0.13.1",
+    "typescript": "7.0.2"
   }
 }

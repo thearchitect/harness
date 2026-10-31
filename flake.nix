@@ -23,7 +23,7 @@
         {
           default = bundle;
           harness = bundle;
-          inherit (bundle.passthru) npmTools lightpanda agent-lsp;
+          inherit (bundle.passthru) npmTools lightpanda;
         }
       );
 

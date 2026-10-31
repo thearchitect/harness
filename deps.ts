@@ -12,6 +12,7 @@
  * - bundledMcpServers: the bundled MCP servers and their exposure policy (an
  *   mcp.json entry with the same name takes precedence, as for any
  *   extension-registered server);
+ * - lspToolchain: the language servers lsp/ drives;
  * - depsReport: the /deps text - bundled versions, herdr integration state and
  *   how to update;
  * - claimHarnessInstance: the double-load guard.
@@ -21,6 +22,7 @@
  */
 
 import type { McpServerConfig } from "@earendil-works/pi-coding-agent";
+import type { Toolchain } from "./lsp/index.ts";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
@@ -33,10 +35,9 @@ const UPDATE_HINT = "Update: `nix profile upgrade harness` (or update the harnes
 type BinId =
   | "codegraph"
   | "lightpanda"
-  | "agent-lsp"
+  | "tsgo"
   | "gopls"
-  | "typescript-language-server"
-  | "mcp-refactor-typescript"
+  | "rust-analyzer"
   | "playwright-mcp"
   | "chrome-devtools-mcp"
   | "herdr";
@@ -45,6 +46,8 @@ export type Manifest = {
   harness: string;
   versions: Record<string, string>;
   bin: Record<BinId, string>;
+  /** Package directories: pi, the bundled pi packages, and typescript (the API lsp/ loads). */
+  packages: Record<string, string>;
 };
 
 /** The manifest the launcher points at, or the reason it is unusable. */
@@ -80,6 +83,35 @@ export function claimHarnessInstance(): boolean {
 }
 
 /* ----------------------------------------------------------------------------
+ * Language servers
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The language servers of code intelligence (lsp/): the native TypeScript 7
+ * server and its API package, gopls and rust-analyzer. The projects'
+ * toolchains (go, cargo) come from the user's PATH.
+ */
+export function lspToolchain(manifest: Manifest): { toolchain: Toolchain } | { problem: string } {
+  const typescriptPackage = manifest.packages?.typescript;
+  const missing = [
+    ...(["tsgo", "gopls", "rust-analyzer"] as const).filter((id) => manifest.bin[id] === undefined),
+    ...(typescriptPackage === undefined ? ["typescript package"] : []),
+  ];
+  if (missing.length > 0 || typescriptPackage === undefined) {
+    return { problem: `the harness manifest lacks ${missing.join(", ")}` };
+  } else {
+    return {
+      toolchain: {
+        tsgo: manifest.bin.tsgo,
+        typescriptPackage,
+        gopls: manifest.bin.gopls,
+        rustAnalyzer: manifest.bin["rust-analyzer"],
+      },
+    };
+  }
+}
+
+/* ----------------------------------------------------------------------------
  * MCP servers
  * ------------------------------------------------------------------------- */
 
@@ -109,45 +141,6 @@ export function bundledMcpServers(bin: Manifest["bin"]): Record<string, McpServe
       },
       exposure: "codemode",
       toolExposure: { codegraph_explore: "direct" },
-    },
-
-    lsp: {
-      description:
-        "Language servers (gopls, typescript-language-server) via agent-lsp: type-resolved references, implementations, call/type hierarchy, diagnostics, rename, simulated edits",
-      command: bin["agent-lsp"],
-      args: [`go:${bin.gopls}`, `typescript:${bin["typescript-language-server"]},--stdio`],
-      timeout: 120,
-      exposure: "codemode",
-      toolExposure: {
-        apply_edit: "direct",
-        safe_apply_edit: "direct",
-        safe_edit: "direct",
-        replace_symbol_body: "direct",
-        insert_after_symbol: "direct",
-        insert_before_symbol: "direct",
-        safe_delete_symbol: "direct",
-        commit_session: "direct",
-        execute_command: "direct",
-        // Builds and tests go through the project's own entry points (make, ...);
-        // agent-lsp's skill tools belong to its own agent integrations.
-        run_build: "hidden",
-        run_tests: "hidden",
-        activate_skill: "hidden",
-        deactivate_skill: "hidden",
-        get_skill_phase: "hidden",
-        export_cache: "hidden",
-        import_cache: "hidden",
-        set_log_level: "hidden",
-      },
-    },
-
-    "ts-refactor": {
-      description:
-        "TypeScript refactoring through tsserver: move/rename files with import updates, move declarations, extract, organize imports",
-      command: bin["mcp-refactor-typescript"],
-      timeout: 120,
-      // Every tool of this server writes files.
-      exposure: "direct",
     },
 
     lightpanda: {
