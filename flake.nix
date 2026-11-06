@@ -6,7 +6,7 @@
   outputs =
     { self, nixpkgs }:
     let
-      # Intel macOS is not supported: codegraph ships no x86_64-darwin build.
+      # The systems CI builds and tests (nix/ci.py); Intel macOS is not one of them.
       systems = [
         "x86_64-linux"
         "aarch64-linux"

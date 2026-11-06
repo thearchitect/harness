@@ -11,11 +11,9 @@
   importNpmLock,
   nodejs,
   autoPatchelfHook,
-  makeWrapper,
   libxcb,
   writeText,
   writeShellScriptBin,
-  codegraph,
   herdr,
   gopls,
   rust-analyzer,
@@ -111,32 +109,6 @@ let
   };
   nodeModules = "${npmTools}/node_modules";
 
-  # codegraph's release bundle ships its own node binary; nixpkgs' codegraph
-  # patchelfs it, and the patched binary segfaults (even on --version). Run the
-  # bundle's JS on our nodejs instead (it needs node:sqlite and an N-API
-  # kernel addon; engines: node >=20 <25), reusing nixpkgs' pinned sources.
-  codegraphPkg = stdenv.mkDerivation {
-    pname = "codegraph";
-    inherit (codegraph) version src sourceRoot;
-    nativeBuildInputs = [
-      makeWrapper
-    ]
-    ++ lib.optionals stdenv.hostPlatform.isLinux [ autoPatchelfHook ];
-    buildInputs = lib.optionals stdenv.hostPlatform.isLinux [ stdenv.cc.cc.lib ];
-    dontConfigure = true;
-    dontBuild = true;
-    installPhase = ''
-      runHook preInstall
-      mkdir -p $out/lib/codegraph
-      cp -r lib $out/lib/codegraph/lib
-      # Same node flags as the bundle's bin/codegraph launcher.
-      makeWrapper ${lib.getExe nodejs} $out/bin/codegraph \
-        --add-flags "--liftoff-only --disable-warning=ExperimentalWarning $out/lib/codegraph/lib/dist/bin/codegraph.js"
-      runHook postInstall
-    '';
-    meta.mainProgram = "codegraph";
-  };
-
   lightpanda = stdenv.mkDerivation {
     pname = "lightpanda";
     inherit (sources.lightpanda) version;
@@ -175,7 +147,6 @@ let
       harness = harnessVersion;
       versions = {
         pi = npmVersion "@earendil-works/pi-coding-agent";
-        codegraph = codegraph.version;
         lightpanda = lightpanda.version;
         typescript = npmVersion "typescript";
         gopls = gopls.version;
@@ -194,7 +165,6 @@ let
       }
       // lib.genAttrs piPackages (p: "${nodeModules}/${p}");
       bin = {
-        codegraph = lib.getExe codegraphPkg;
         lightpanda = "${lightpanda}/bin/lightpanda";
         inherit tsgo;
         gopls = lib.getExe gopls;

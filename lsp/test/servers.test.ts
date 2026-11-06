@@ -39,11 +39,12 @@ const toolchain: Toolchain | undefined = await (async () => {
 })();
 const skip = toolchain === undefined ? "HARNESS_MANIFEST is not set (nix/test.sh sets it)" : false;
 
-async function fixture(name: string): Promise<{ root: string; facade: Facade; close: () => Promise<void> }> {
+/** A copy of a fixture as a git repository; the session's cwd is `cwd` inside it (default: its root). */
+async function fixture(name: string, cwd = "."): Promise<{ root: string; facade: Facade; close: () => Promise<void> }> {
   const root = await mkdtemp(join(tmpdir(), `harness-lsp-${name}-`));
   await cp(new URL(`../testdata/${name}`, import.meta.url), root, { recursive: true });
   await execFileAsync("git", ["init", "-q"], { cwd: root });
-  const workspace = await Workspace.open(root, toolchain!);
+  const workspace = await Workspace.open(join(root, cwd), toolchain!);
   return {
     root,
     facade: new Facade(workspace),
@@ -260,5 +261,30 @@ describe("Rust", { skip }, () => {
     const lib = await readFile(join(env.root, "ws/core/src/lib.rs"), "utf8");
     assert.match(lib, /mod helpers;/);
     assert.match(lib, /helpers::double/);
+  });
+});
+
+describe("Paths relative to the cwd", { skip }, () => {
+  let env: Awaited<ReturnType<typeof fixture>>;
+  before(async () => {
+    // the session runs in a subdirectory of the repository, as in a submodule of a superproject
+    env = await fixture("ts", "packages/app");
+  });
+  after(async () => {
+    await env?.close();
+  });
+
+  test("arguments and results are relative to the cwd; the whole repository stays covered", async () => {
+    const places = await env.facade.references({ file: "../core/src/index.ts", line: 3, name: "greet" }, true);
+    assert.deepEqual(files(places), ["../core/src/index.ts", "../web/src/view.ts", "../web/ssr/render.ts", "src/main.ts"]);
+  });
+
+  test("a file no language server handles is moved as is, with a follow-up note", async () => {
+    await writeFile(join(env.root, "packages/app/notes.sh"), "echo notes\n");
+    const outcome = await run(env.facade, [{ move: { from: "notes.sh", to: "scripts/notes.sh" } }]);
+    assert.equal(outcome.failure, undefined);
+    assert.equal(await readFile(join(env.root, "packages/app/scripts/notes.sh"), "utf8"), "echo notes\n");
+    assert.equal(outcome.warnings.length, 1);
+    assert.match(outcome.warnings[0]!, /notes\.sh → scripts\/notes\.sh: no language server handles this file/);
   });
 });

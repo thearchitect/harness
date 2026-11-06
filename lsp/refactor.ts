@@ -28,7 +28,7 @@ export type RefactorOutcome = {
   applied: number;
   /** The net change of the applied operations. */
   net: ChangeSet;
-  /** Symbols renamed in files that look generated: change their source and regenerate. */
+  /** What the language servers could not take care of: renames in generated files, moves of files no server handles. */
   warnings: string[];
   failure: { index: number; reason: string } | undefined;
 };
@@ -181,6 +181,13 @@ async function apply(facade: Facade, operation: Operation, commit: (set: ChangeS
     }
   } else if ("move" in operation) {
     await commit(await facade.moveFiles([operation.move]));
+    if (facade.workspace.profileOf(operation.move.from) === undefined) {
+      warnings.push(
+        `${operation.move.from} → ${operation.move.to}: no language server handles this file, so references to it were not updated; find them with rg`,
+      );
+    } else {
+      // the language server updated the references
+    }
   } else if ("codeAction" in operation) {
     const { file, title, startLine, endLine } = operation.codeAction;
     const first = startLine ?? 1;

@@ -273,44 +273,49 @@ export class Facade {
       throw new Error("no files to move");
     } else {
       const resolved = moves.map((move) => ({ from: this.workspace.resolvePath(move.from), to: this.workspace.resolvePath(move.to) }));
-      const profiles = [...new Set(resolved.map((move) => this.workspace.profileFor(move.from)))];
+      const profiles = [...new Set(resolved.map((move) => this.workspace.profileOf(move.from)))];
       if (profiles.length !== 1) {
-        throw new Error(`move files of one language per call; got ${profiles.map((profile) => profile.name).join(", ")}`);
+        throw new Error(`move files of one language per call; got ${profiles.map((profile) => profile?.name ?? "files no language server handles").join(", ")}`);
       } else {
         const profile = profiles[0];
         for (const move of resolved) {
           if (!(await isFile(move.from))) {
             throw new Error(`${this.workspace.display(move.from)} is not a file`);
-          } else if (this.workspace.profileFor(move.to) !== profile) {
+          } else if (this.workspace.profileOf(move.to) !== profile) {
             throw new Error(`${this.workspace.display(move.to)} would change the language of ${this.workspace.display(move.from)}`);
           } else {
             // a valid move
           }
         }
-        switch (profile.moves) {
-          case "lsp": {
-            const session = this.workspace.session(profile);
-            return await session.run(async (scope) => {
-              const edit = await scope.link.request<WorkspaceEdit | null>(
-                "workspace/willRenameFiles",
-                { files: resolved.map((move) => ({ oldUri: pathToFileURL(move.from).href, newUri: pathToFileURL(move.to).href })) },
-                TIMEOUTS.edit,
-              );
-              return this.inside(await addMoves(await planEdit(edit ?? {}, scope.basis), resolved));
-            });
-          }
-          case "same-directory": {
-            const across = resolved.find((move) => dirname(move.from) !== dirname(move.to));
-            if (across !== undefined) {
-              throw new Error(
-                `${profile.name} files move only within their directory (package): moving ${this.workspace.display(across.from)} to another directory moves its declarations to another package; do that with edits and lsp_references`,
-              );
-            } else {
-              return await addMoves(await planEdit({}, new Map()), resolved);
+        if (profile === undefined) {
+          // no language server handles these files: a plain move, references stay as they are
+          return await addMoves(await planEdit({}, new Map()), resolved);
+        } else {
+          switch (profile.moves) {
+            case "lsp": {
+              const session = this.workspace.session(profile);
+              return await session.run(async (scope) => {
+                const edit = await scope.link.request<WorkspaceEdit | null>(
+                  "workspace/willRenameFiles",
+                  { files: resolved.map((move) => ({ oldUri: pathToFileURL(move.from).href, newUri: pathToFileURL(move.to).href })) },
+                  TIMEOUTS.edit,
+                );
+                return this.inside(await addMoves(await planEdit(edit ?? {}, scope.basis), resolved));
+              });
             }
+            case "same-directory": {
+              const across = resolved.find((move) => dirname(move.from) !== dirname(move.to));
+              if (across !== undefined) {
+                throw new Error(
+                  `${profile.name} files move only within their directory (package): moving ${this.workspace.display(across.from)} to another directory moves its declarations to another package; do that with edits and lsp_references`,
+                );
+              } else {
+                return await addMoves(await planEdit({}, new Map()), resolved);
+              }
+            }
+            default:
+              return assertNeverMoves(profile.moves);
           }
-          default:
-            return assertNeverMoves(profile.moves);
         }
       }
     }
@@ -398,7 +403,7 @@ export class Facade {
 
   /** A server's change set, refused when it touches anything outside the repository. */
   private inside(set: ChangeSet): ChangeSet {
-    const outside = set.changes.find((change) => this.workspace.display(change.path) === change.path);
+    const outside = set.changes.find((change) => !this.workspace.contains(change.path));
     if (outside !== undefined) {
       throw new Error(`the change touches ${outside.path}, outside the repository ${this.workspace.root}; nothing of this operation was written`);
     } else {

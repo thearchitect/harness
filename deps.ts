@@ -33,7 +33,6 @@ const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 const UPDATE_HINT = "Update: `nix profile upgrade harness` (or update the harness flake input of your NixOS / home-manager config).";
 
 type BinId =
-  | "codegraph"
   | "lightpanda"
   | "tsgo"
   | "gopls"
@@ -128,21 +127,6 @@ export function bundledMcpServers(bin: Manifest["bin"]): Record<string, McpServe
   const userDataDir = process.env.HARNESS_BROWSER_USER_DATA_DIR;
 
   return {
-    codegraph: {
-      description: "Code knowledge graph of the indexed project: symbols, call paths, callers/callees, impact",
-      command: bin.codegraph,
-      args: ["serve", "--mcp"],
-      env: {
-        DO_NOT_TRACK: "1",
-        CODEGRAPH_NO_UPDATE_CHECK: "1",
-        // codegraph lists only `explore` by default; the narrower tools are
-        // re-enabled for codemode fan-out (impact/callers over many symbols).
-        CODEGRAPH_MCP_TOOLS: "explore,node,search,callers,callees,impact",
-      },
-      exposure: "codemode",
-      toolExposure: { codegraph_explore: "direct" },
-    },
-
     lightpanda: {
       description:
         "Headless JS-capable browser: open pages, render to markdown, links, clicks, forms, fallback web search",

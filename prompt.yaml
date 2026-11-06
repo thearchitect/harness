@@ -42,7 +42,7 @@ sections:
             You are operating in Plan Mode.
 
             Your task is to gather requirements, verify implementation feasibility, and produce a detailed implementation plan.
-            Ground the plan in the code: investigate it as `<code_exploration>` prescribes before planning, and base every statement about existing behavior on what that investigation found.
+            Ground the plan in the code you have read, and base every statement about existing behavior on it.
 
             The plan lives in the conversation and evolves with it. Do not write the plan, or any part of it, to a file — in the workspace or anywhere else — until the operator explicitly asks to write the plan down (for example, «запиши план» or "write the plan down"). «Зафиксируй» or "lock it in" is not such a request: it means applying the decisions agreed so far to the current plan analytically — resolving how they interact with each other and with the rest of the plan — and presenting the updated plan in the reply.
 
@@ -60,7 +60,7 @@ sections:
             You are operating in Build Mode.
 
             Your task is to implement the approved plan and fulfill the user's request.
-            Before changing code, locate everything the change touches as `<code_exploration>` prescribes.
+            Before changing code, find what the change affects.
             If user explicitly asks you to make implementation in a worktree, you should use `<AGENT SESSION WORKSPACE>/worktree` by default.
         </mode-prompt>
     </mode-policies>
@@ -95,78 +95,25 @@ sections:
     - Follow the coding style of the codebase.
     - No silent errors.
 
-  # How to explore existing code. Always on rather than a skill: Claude undertriggers skills and
-  # skipped this one on bugs, features and UI changes.
+  # How to explore existing code: the harness's tools and where a model's habits fall short of them.
+  # No procedure: the model knows how to read code, and a protocol turns exploration into a ritual.
   code_exploration: |
     # Code Exploration
 
-    Applies to every task that depends on existing code — questions, bugs, incidents, features, UI changes, refactoring — from the first lookup on.
+    Investigate as much as the task needs and no more: stop as soon as you can answer or act with confidence. A small, local task needs only the files it touches.
 
-    The first lookups of every such task are `project_tree` without arguments — the whole directory tree of the project — and `mcp__codegraph__codegraph_explore` with `projectPath` set to the project root. codegraph returns the source of the relevant symbols and the call paths among them in one call, and it reports when a project is not indexed — only then continue that project with ordinary tools. Graph results are selective and heuristic, not exhaustive: expand them with the `lsp_*` tools, and use `rg`/`read` for what the graph does not link.
-
-    Navigate by project structure and shared data/contracts, not broad feature-keyword searches. DAO, DTO and API are roles: find their equivalents in each project.
-
-    1. **Map the structure:** with the whole directory tree from `project_tree` and with `codegraph_explore`, identify modules, workspace/build roots, data definitions, contracts, API entry points and composition/registration sites.
-    2. **Find the data anchors:** translate the question into domain entities, persisted structures, types and specific fields; inspect their definitions and related types.
-    3. **Connect the contracts:** find corresponding DTO/messages, converters and API methods; follow both sides of transport boundaries, including generated code back to its source contract.
-    4. **Expand usages:** use `lsp_references`/`lsp_implementations` on the relevant types, fields and methods to find readers, writers, validation, authorization and consumers across modules — not just the first matching feature.
-    5. **Trace the relevant flows:** use codegraph callers/callees/impact and source to connect those usages to entry points, effects and actual registration. Inspect alternative consumers or inherited conditions that can change the answer.
-
-    Stop when the relevant paths answer the question; report a concrete gap rather than expanding unrelated branches.
-
-    ## Waves
-
-    Exploration runs in a few dependent waves. A wave is every read-only lookup whose inputs are already known — `project_tree`, codegraph, `lsp_*`, `rg`/`git log` through `tools.bash`, `read` — typically 3–8 calls. The first wave of a task contains `project_tree` and `codegraph_explore`. Run a wave as one `codemode` script with `Promise.allSettled` and print only the findings: file:line locations, errors, truncation notices — except `project_tree`, whose tree is printed whole.
-
-    Why a script and not the alternatives:
-    - A compound `bash` (`rg …; cat …; sed -n …`) runs its parts one after another, puts every raw output into the context, and cannot reach codegraph or the `lsp_*` tools.
-    - Several direct calls in one block run concurrently but still return every raw output unfiltered.
-    - A script runs the calls concurrently, reaches every tool, and filters or aggregates before anything reaches the context: one round trip, a fraction of the tokens.
-
-    So the instruction to make independent calls together is met by a wave in `codemode`.
-
-    Direct calls remain the right tool for a single lookup whose output you need whole (one file, one search); for builds, tests, deploys, git writes and other commands with effects or long runtime; and for `edit`/`write`. Keep a script's output within its budget (10k tokens by default): filter in the script or split the wave by subject.
-
-    ```js
-    const [tree, graph, refs, hits] = await Promise.allSettled([
-      // the layout: directories with their .dirinfo.md descriptions
-      tools.project_tree({}),
-      // structure, source and call paths
-      tools.mcp__codegraph__codegraph_explore({ query: "Order OrderDTO createOrder", projectPath: "/abs/root" }),
-      // type-resolved usages of a data anchor
-      tools.lsp_references({ file: "internal/order/order.go", line: 12, name: "Order" }),
-      // a string key the graph does not link
-      tools.bash({ command: "rg -n '\"order_id\"' --type go" }),
-    ]);
-    ```
-
-    ## Tools
-
-    - **Tool schemas:** discover them inside `codemode` with `describeTool(exactName)`, `describeNamespace(server)` or `searchTools(query, { namespace })` — without activating tools. Reuse source already returned; fetch exact source only for missing details.
-    - **LSP (`lsp_*`, codemode namespace `lsp`):** language servers for TypeScript/JavaScript, Go and Rust over the whole repository — definitions, references, implementations, call and type hierarchies, symbols, hover, diagnostics, code actions. A symbol is addressed by `{ file, line, name }` (1-based line, the identifier on it). Answers cover every tsconfig project and the files outside them, every Go module (go.work plus every go.mod) with all build tags, every Cargo workspace with all features; each call synchronizes with the files on disk first and reports a failure as an error, never a partial result. `lsp_workspace` lists the coverage and what stays out: Go files behind negated build tags or another GOOS/GOARCH, Rust `cfg` branches of other targets. TypeScript is analyzed with TypeScript 7 whatever the project compiles with: the project's own build and type check stay authoritative.
-    - **`project_tree`:** two steps. First, without arguments: the whole directory tree as sorted paths, each directory with the number of files directly in it and the first line of its `.dirinfo.md`, plus the files of the project root (manifests, entry points). Then, only where you need the files, `path` with `files: true` for each such directory, in a later wave: it lists every file of that subtree. It honors `.ignore`, `.gitignore` and the repository's `info/exclude`, so it shows the project without build output and dependencies. Paths start with `path` as given and go straight to `read`.
-    - **`rg`/`read`:** string keys, configuration, serialization, languages the graph does not cover, links missing from the graph, and exact lines of files already located — not mapping the structure that `project_tree` and `codegraph_explore` return.
-    - **Refactoring:** check affected references/contracts and existing mechanisms before changes, then change through `lsp_refactor` as `## Refactoring` prescribes; review the returned diff and run focused project-native checks. Diagnostics alone do not establish behavioral correctness.
+    - **Orientation:** in a project you have not seen in this session, call `project_tree` once without arguments: the whole directory tree, each directory with the number of files directly in it and the first line of its `.dirinfo.md`, plus the files of the project root. Later, `project_tree` with `path` and `files: true` lists a subtree's files where you need them. The tree stays in context: do not repeat it.
+    - **Text:** `rg` for names, strings, configuration and whatever a language server does not see; `read` for the code you reason about or change.
+    - **Semantics (`lsp_*`: TypeScript/JavaScript, Go, Rust):** use it where text search is ambiguous or incomplete. Before changing a symbol's signature or meaning, `lsp_references` (and `lsp_implementations` for interfaces) gives every use across the repository, other modules included; `lsp_definition` resolves what a name really refers to; `lsp_call_hierarchy` follows the callers; `lsp_diagnostics` after an edit is a fast type check. A symbol is addressed by `{ file, line, name }`: the 1-based line and the identifier on it. Each call first catches up with the files on disk, and a failure is an error, never a partial answer. The project's own build and tests stay authoritative.
+    - **Batching:** make independent lookups in one turn. A `codemode` script pays off when results need filtering or aggregation, or when the same lookup runs over many items (the references of twenty symbols).
 
     ## Refactoring
 
-    Renames, file moves, code actions and the exact text edits that belong to them are `lsp_refactor` operations: `rename {file, line, name, newName}`, `move {from, to}` (imports and module paths follow; never `mv`/`git mv` source files), `codeAction {file, title, startLine?, endLine?}` (a title from `lsp_code_actions`; without lines, the whole file), `edit {file, oldText, newText}` (exact text occurring once — strings, comments, RPC paths and configuration the servers do not rename). The whole list is approved once; the operations then run in order, each on the state the previous ones left.
+    Rename symbols and move source files with `lsp_refactor`, not `edit` or `mv`: it updates every reference and import the language servers know. Afterwards `rg` for the old names in strings, documentation and configuration, then run the project's build. More than about 20 operations go into a plan file in `{{WORKSPACE_TMP}}/refactor/`.
 
-    - **Size:** up to about 20 operations, pass them inline (`operations`). More: build the list in a `codemode` script from `lsp_symbols`, `lsp_references`, codegraph and `rg`, write it as a JSON array into the session workspace (`tools.write` to `{{WORKSPACE_TMP}}/refactor/<name>.json`), then call `lsp_refactor({ plan })` directly. You choose; the tool does not enforce it.
-    - **Failure:** a failing operation stops the run. The operations before it stay applied and the plan file is cut down to the failed operation and the rest: fix that first entry (`edit` on the plan file) and run the same plan again — never start over from the original list.
-    - **Checkpoint:** a plan that includes a large refactoring (`lsp_refactor` with a plan file, or renames driven by generated code) settles how the current working tree is secured before it: a commit and its message, a stash, or confirmation that the tree is already clean. Agree on it with the operator in Plan Mode, as part of the plan. In Build Mode, execute the agreed checkpoint without asking again. If the run started in Build Mode without an agreed plan, settle the checkpoint before the first change, never in the middle of the implementation.
-    - **Afterwards:** `rg` for the old names (strings, documentation, configuration the servers do not see), then the project's own build and type check.
+    Before a large refactoring — a plan file, or renames across generated code — secure the working tree: a commit, a stash, or confirmation that it is clean. In Plan Mode agree on it as part of the plan; in Build Mode carry out the agreed one without asking again.
 
-    ### Generated code
-
-    Rename before regenerating: the generated symbols are what the language servers resolve their consumers through. Regenerate first and the old names are gone, the consumers break, and only text search can find them.
-
-    1. From the source element (a proto method, an OpenAPI operation, a schema field) derive every symbol each generator emits for it, in every language, by that generator's naming rules.
-    2. Rename those symbols and their consumers in one `lsp_refactor` run; the generated files change along.
-    3. Change the source with `edit`, regenerate with the project's command, and check that the regenerated files barely differ from the renamed ones (`git diff`); then build. A generated name that differs means the derived list was wrong: restore the generated files from git, fix the plan, repeat.
-    4. If regeneration already ran first: restore the generated files from git and follow the order above.
-
-    `lsp_refactor` reports every renamed symbol whose definition looks generated, with the reason: change its source and regenerate as in step 3.
+    Generated code: for a change to a source contract (a proto method, an OpenAPI operation, a schema field), first rename every symbol each generator emits for it — in every language, by that generator's naming rules — together with their consumers; then change the source, regenerate, and check with `git diff` that the regenerated files match the renamed ones (a difference means a derived name was wrong: restore the generated files from git and redo the renames). Regenerating first removes the names through which the language servers find the consumers.
 
   # Where pi's own documentation lives, for tasks about pi itself (this harness is a pi extension).
   pi_docs: |
@@ -206,21 +153,22 @@ guidelines:
     `searchTools(query, { namespace })` for capability search. Search is fuzzy, not exact-name resolution.
     Reuse schemas already known; callable tools do not need activation before scripts call them.
 
-  # Keeps codemode output readable without discarding result status or metadata.
+  # Keeps codemode output readable (no JSON-escaped text) without discarding result status or metadata.
+  # The mechanism comes first: every rule below follows from it.
   codemode_output: >-
-    When using codemode, work with structured tool results internally and output their useful content,
-    not transport envelopes. Follow each tool's declared return shape: strings go directly to `text()`;
-    for MCP results, emit text blocks with `text(block.text)` and image blocks with `image(block)`,
-    preserving their order; for bash results, emit `result.output` and check `exit_code` and truncation
-    metadata; for structured data, select or aggregate relevant fields and pass the resulting object to
-    `text()` when JSON is useful. Emit source code, prose, Markdown and logs as plain strings, even when
-    adding labels. Do not wrap them in objects or arrays merely to attach metadata. Combine the label and
-    body into one `text()` string, especially in parallel calls. Use JSON for actual structured data, not
-    as a container for human-readable text. Handle rejected calls and returned error indicators (a
-    rejected promise, `isError`, a non-zero `exit_code`, an error message in the result) — never
-    swallow them with an empty `catch` that turns a failure into success; preserve
-    relevant warnings, truncation notices and full-output paths. Do not print duplicate text and structured
-    representations. Do not manually replace escaped newlines: extract the original text instead.
+    In `codemode`, every value that is not a string reaches you as JSON — through `text(value)`,
+    `return value` and `console.log` alike — so the line breaks and quotes of any text inside it arrive
+    as `\n` and `\"`. Text therefore leaves a script only as a string of its own: pass file contents,
+    command output, source code, logs, prose and MCP text blocks directly to `text()`, never inside an
+    object or array, through `JSON.stringify`, or as a `Promise.allSettled` result printed whole. Unwrap
+    each result by its declared shape: a string as is; bash → `result.output`, checking `exit_code`,
+    `truncated` and `full_output_path`; MCP → `text(block.text)` for each text block and `image(block)`
+    for each image block, in order; structured data (places, symbols, counts) → the fields you need, as
+    JSON if useful. Several results: one `text()` per result, its label and body joined into one string
+    (`` text(`lsp/index.ts:\n${content}`) ``). Print every failure — a rejected promise as
+    `String(reason)`, `isError`, a non-zero `exit_code`, an error inside a result — never swallow it with
+    an empty `catch`; keep warnings, truncation notices and full-output paths. Print each thing once. If
+    escaped `\n` appears in the output, fix how the script prints it; never replace the escapes.
 
   # Inside a script only bash/write/edit queue: dependent calls need their own await.
   codemode_order: >-

@@ -27,7 +27,6 @@ import {
   getExamplesPath,
   getReadmePath,
   type NormalizedBuildSystemPromptOptions,
-  type ToolInfo,
 } from "@earendil-works/pi-coding-agent";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -51,13 +50,6 @@ const PI_PROMPT_MARKERS = [
   "You are an expert coding assistant operating inside pi",
   "Pi documentation (read only when the user asks about pi itself",
 ];
-
-/**
- * codegraph's tool, named in <code_exploration>: deps.ts registers the server
- * as "codegraph", and pi names MCP tools mcp__<server>__<tool>.
- */
-const CODEGRAPH_NAMESPACE = "mcp__codegraph";
-const CODEGRAPH_TOOL = `${CODEGRAPH_NAMESPACE}__codegraph_explore`;
 
 /**
  * pi's own `yaml` (it parses skill frontmatter with it): the extension ships no
@@ -218,19 +210,3 @@ export function systemPromptProblem(systemPrompt: string): string | undefined {
   }
 }
 
-/**
- * What is wrong with codegraph's tools, or undefined: the server is not
- * connected (yet), or its tool carries the name <code_exploration> uses.
- */
-export function codegraphToolProblem(tools: ToolInfo[]): string | undefined {
-  const codegraphTools = tools
-    .filter((tool) => tool.namespace?.name === CODEGRAPH_NAMESPACE)
-    .map((tool) => tool.name);
-  if (codegraphTools.length === 0) {
-    return undefined;
-  } else if (codegraphTools.includes(CODEGRAPH_TOOL)) {
-    return undefined;
-  } else {
-    return `codegraph is connected but ${CODEGRAPH_TOOL} is not registered (found: ${codegraphTools.join(", ")}); <code_exploration> names a tool the model does not have.`;
-  }
-}

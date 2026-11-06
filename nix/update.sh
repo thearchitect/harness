@@ -2,7 +2,7 @@
 # Bumps every pinned component of the bundle to its latest release:
 #   - nix/npm/package.json + package-lock.json (pi, pi packages, npm MCP servers, typescript)
 #   - nix/sources.json (prebuilt release binaries: lightpanda)
-#   - flake.lock (nixpkgs: codegraph, herdr, gopls, rust-analyzer, pnpm, nodejs)
+#   - flake.lock (nixpkgs: herdr, gopls, rust-analyzer, pnpm, nodejs)
 #
 #   nix/update.sh            update everything
 #   nix/update.sh --no-flake skip `nix flake update`

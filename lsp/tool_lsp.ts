@@ -44,12 +44,12 @@ const NAMESPACE = {
     "A symbol is addressed by { file, line, name }: the 1-based line and the identifier on it; pass occurrence (1-based) when the name occurs more than once on the line.",
     "Every workspace-wide answer covers the whole repository: all tsconfig projects and files outside them, every Go module (go.work plus every go.mod) with all build tags, every Cargo workspace with all features. lsp_workspace reports exactly what is covered and what is excluded.",
     "Each call first synchronizes the servers with the files on disk, so results reflect edits made just before. A failure is reported as an error, never as a partial result.",
-    "Paths in results are relative to the repository root. lsp_refactor, which changes files, is called directly by the model, never from scripts.",
+    "Paths are relative to the cwd (absolute paths work too), in arguments and in results. lsp_refactor, which changes files, is called directly by the model, never from scripts.",
   ].join("\n"),
 };
 
 const symbolRefShape = {
-  file: Type.String({ description: "File path, relative to the repository root or absolute" }),
+  file: Type.String({ description: "File path, relative to the cwd or absolute" }),
   line: Type.Integer({ minimum: 1, description: "1-based line of the identifier" }),
   name: Type.String({ description: "The identifier on that line" }),
   occurrence: Type.Optional(Type.Integer({ minimum: 1, description: "Which occurrence of the identifier on the line (1-based), when it occurs more than once" })),
@@ -120,6 +120,8 @@ export function registerLspTools(
     name: string;
     label: string;
     description: string;
+    /** The tool's line in the system prompt's <tools>. */
+    snippet: string;
     parameters: P;
     outputSchema: O;
     run: (facade: Facade, params: Static<P>) => Promise<{ text: string; data: Static<O> }>;
@@ -128,9 +130,12 @@ export function registerLspTools(
       name: definition.name,
       label: definition.label,
       description: definition.description,
+      promptSnippet: definition.snippet,
       parameters: definition.parameters,
       outputSchema: definition.outputSchema,
-      exposure: "codemode",
+      // declared to the model, so it weighs them next to read and rg; callable from scripts too
+      exposure: "direct",
+      executionMode: "parallel",
       namespace: NAMESPACE,
       annotations: { readOnlyHint: true, openWorldHint: false },
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
@@ -140,22 +145,45 @@ export function registerLspTools(
     });
   };
 
-  const placesTool = (name: string, label: string, description: string, method: "textDocument/definition" | "textDocument/typeDefinition" | "textDocument/implementation", noun: string): void =>
+  const placesTool = (
+    name: string,
+    label: string,
+    description: string,
+    snippet: string,
+    method: "textDocument/definition" | "textDocument/typeDefinition" | "textDocument/implementation",
+    noun: string,
+  ): void =>
     readTool({
       name,
       label,
       description,
+      snippet,
       parameters: Type.Object(symbolRefShape),
       outputSchema: placesOutput,
       run: async (facade, params) => placesResult(await facade.locations(params, method), noun),
     });
 
-  placesTool("lsp_definition", "Definition", "Where the symbol at { file, line, name } is defined.", "textDocument/definition", "definitions");
-  placesTool("lsp_type_definition", "Type definition", "Where the type of the symbol at { file, line, name } is defined.", "textDocument/typeDefinition", "type definitions");
+  placesTool(
+    "lsp_definition",
+    "Definition",
+    "Where the symbol at { file, line, name } is defined.",
+    "Where a symbol is really defined (TypeScript/JavaScript, Go, Rust)",
+    "textDocument/definition",
+    "definitions",
+  );
+  placesTool(
+    "lsp_type_definition",
+    "Type definition",
+    "Where the type of the symbol at { file, line, name } is defined.",
+    "Where the type of a symbol is defined",
+    "textDocument/typeDefinition",
+    "type definitions",
+  );
   placesTool(
     "lsp_implementations",
     "Implementations",
     "Every implementation of the interface, abstract member or method at { file, line, name }, across the whole repository.",
+    "Every implementation of an interface, abstract member or method across the repository",
     "textDocument/implementation",
     "implementations",
   );
@@ -164,6 +192,7 @@ export function registerLspTools(
     name: "lsp_references",
     label: "References",
     description: "Every reference to the symbol at { file, line, name } across the whole repository (all packages, modules and crates).",
+    snippet: "Every reference to a symbol across the repository, including other modules: who reads, writes or calls it",
     parameters: Type.Object({
       ...symbolRefShape,
       includeDeclaration: Type.Optional(Type.Boolean({ description: "Include the declaration itself (default true)" })),
@@ -176,6 +205,7 @@ export function registerLspTools(
     name: "lsp_hover",
     label: "Hover",
     description: "Type, signature and documentation of the symbol at { file, line, name }.",
+    snippet: "Type, signature and documentation of a symbol",
     parameters: Type.Object(symbolRefShape),
     outputSchema: Type.Object({ text: Type.Union([Type.String(), Type.Null()]) }),
     run: async (facade, params) => {
@@ -188,8 +218,9 @@ export function registerLspTools(
     name: "lsp_symbols",
     label: "Symbols",
     description: "Symbols of one file (pass file), or symbols matching a query across the whole repository (pass query, optionally language).",
+    snippet: "Symbols of a file as a tree, or symbols matching a name across the repository",
     parameters: Type.Object({
-      file: Type.Optional(Type.String({ description: "List this file's symbols as a tree" })),
+      file: Type.Optional(Type.String({ description: "List this file's symbols as a tree (relative to the cwd or absolute)" })),
       query: Type.Optional(Type.String({ description: "Search symbols by name across the repository" })),
       language: Type.Optional(Type.Union(LANGUAGES.map((id) => Type.Literal(id)), { description: "Limit a query to one language" })),
     }),
@@ -211,6 +242,7 @@ export function registerLspTools(
     name: "lsp_call_hierarchy",
     label: "Call hierarchy",
     description: "Callers (incoming, across the whole repository) or callees (outgoing) of the function or method at { file, line, name }, with the call sites.",
+    snippet: "Callers or callees of a function or method, with the call sites",
     parameters: Type.Object({ ...symbolRefShape, direction: Type.Union([Type.Literal("incoming"), Type.Literal("outgoing")]) }),
     outputSchema: hierarchyOutput,
     run: async (facade, params) => {
@@ -223,6 +255,7 @@ export function registerLspTools(
     name: "lsp_type_hierarchy",
     label: "Type hierarchy",
     description: "Supertypes or subtypes (across the whole repository) of the type at { file, line, name }.",
+    snippet: "Supertypes or subtypes of a type",
     parameters: Type.Object({ ...symbolRefShape, direction: Type.Union([Type.Literal("supertypes"), Type.Literal("subtypes")]) }),
     outputSchema: hierarchyOutput,
     run: async (facade, params) => {
@@ -236,7 +269,8 @@ export function registerLspTools(
     label: "Diagnostics",
     description:
       "Errors and warnings the language server reports for the given files. The project's own build and type check stay authoritative (TypeScript is analyzed with TypeScript 7 whatever the project compiles with).",
-    parameters: Type.Object({ files: Type.Array(Type.String(), { minItems: 1, description: "File paths" }) }),
+    snippet: "Errors and warnings of files from the language server: a fast type check after an edit",
+    parameters: Type.Object({ files: Type.Array(Type.String(), { minItems: 1, description: "File paths, relative to the cwd or absolute" }) }),
     outputSchema: diagnosticsOutput,
     run: async (facade, params) => {
       const files = await facade.diagnostics(params.files);
@@ -251,8 +285,9 @@ export function registerLspTools(
     name: "lsp_code_actions",
     label: "Code actions",
     description: "Code actions (quick fixes, organize imports, source actions) the server offers for a line range; apply one as a codeAction operation of lsp_refactor.",
+    snippet: "Quick fixes and source actions for a line range, applied through lsp_refactor",
     parameters: Type.Object({
-      file: Type.String(),
+      file: Type.String({ description: "File path, relative to the cwd or absolute" }),
       startLine: Type.Integer({ minimum: 1 }),
       endLine: Type.Optional(Type.Integer({ minimum: 1, description: "Default: startLine" })),
       kinds: Type.Optional(Type.Array(Type.String(), { description: 'Only these kinds, e.g. "quickfix", "source.organizeImports"' })),
@@ -274,6 +309,7 @@ export function registerLspTools(
     name: "lsp_workspace",
     label: "Workspace coverage",
     description: "What the language servers cover: the repository root and, per language present, its projects/modules/crates, exclusions with reasons, build tags and features.",
+    snippet: "What the language servers cover: projects, modules, crates and what stays out",
     parameters: Type.Object({}),
     outputSchema: workspaceOutput,
     run: async (facade) => {
@@ -293,8 +329,8 @@ export function registerLspTools(
     name: "lsp_refactor",
     label: "Refactor",
     description: [
-      "Apply refactoring operations in order, each on the state the previous ones left: rename a symbol everywhere in the repository (all packages, modules, crates), move a file updating imports and module paths (Go files move only within their directory), apply a code action listed by lsp_code_actions (organize imports, quick fix; without lines: the whole file), or replace exact text (edit semantics: oldText must occur exactly once).",
-      "Pass the operations inline, or `plan`: the path of a JSON file with the same array in the session workspace. The whole list is approved once; each operation is then computed by the language servers and written atomically.",
+      "Apply refactoring operations in order, each on the state the previous ones left: rename a symbol everywhere in the repository (all packages, modules, crates), move a file updating imports and module paths (Go files move only within their directory; a file no language server handles is moved as is), apply a code action listed by lsp_code_actions (organize imports, quick fix; without lines: the whole file), or replace exact text (edit semantics: oldText must occur exactly once).",
+      "Paths are relative to the cwd or absolute. Pass the operations inline, or `plan`: the path of a JSON file with the same array in the session workspace. The whole list is approved once; each operation is then computed by the language servers and written atomically.",
       "A failing operation stops the run: the operations before it stay applied, and a plan file is cut down to the failed operation and the rest, so fix its first entry and run the same plan again. The result shows the diff of what was applied.",
     ].join(" "),
     promptSnippet: "Rename symbols, move files, apply code actions and exact text edits across the repository (TypeScript/JavaScript, Go, Rust), one operation or a plan file of hundreds",
@@ -485,7 +521,7 @@ function operationPaths(facade: Facade, operation: Operation): string[] {
 
 function refactorResult(facade: Facade, operations: readonly Operation[], outcome: RefactorOutcome, planPath: string | undefined) {
   const applied = outcome.net.changes.length > 0 ? ["", ...changeSummary(facade, outcome.net), "", diffText(facade, outcome.net)] : [];
-  const warnings = outcome.warnings.length > 0 ? ["", "Generated code:", ...outcome.warnings.map((warning) => `- ${warning}`)] : [];
+  const warnings = outcome.warnings.length > 0 ? ["", "Follow-up:", ...outcome.warnings.map((warning) => `- ${warning}`)] : [];
   if (outcome.failure === undefined) {
     return {
       content: [{ type: "text" as const, text: [`Applied ${countByKind(operations)}.`, ...warnings, ...applied].join("\n") }],

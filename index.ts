@@ -66,7 +66,7 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureThinkingBlocksVisible } from "./workarounds.ts";
-import { assembleSystemPrompt, codegraphToolProblem, systemPromptProblem } from "./prompt.ts";
+import { assembleSystemPrompt, systemPromptProblem } from "./prompt.ts";
 import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest } from "./deps.ts";
 import { AGENT_WORKSPACE_DIR, registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
 import { registerProjectTree } from "./tool_project_tree.ts";
@@ -836,7 +836,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   // write, edit and bash are sequential (executionMode): a batch of tool calls
   // that contains one of them runs in order, so a dependent call - a read of
   // the edited file, a check, a formatter, a rename - sees the previous call's
-  // effect. Batches of read, codegraph, LSP and codemode calls stay parallel;
+  // effect. Batches of read, project_tree, LSP and codemode calls stay parallel;
   // inside codemode scripts only these three queue among themselves.
 
   // Keep write calls fully visible without expanding every tool row. Reuse
@@ -930,7 +930,6 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   let systemPromptEntryShown = false;
   // Prompt problems already reported this session: each is reported once.
   let foreignCustomPromptReported = false;
-  let codegraphProblemReported = false;
   let systemPromptProblemReported = false;
   const blockedToolCalls = new Set<string>();
   // toolCallId -> comment for write/edit calls approved with a comment: the
@@ -1254,7 +1253,6 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       baselineCost = 0;
       systemPromptEntryShown = false;
       foreignCustomPromptReported = false;
-      codegraphProblemReported = false;
       systemPromptProblemReported = false;
       blockedToolCalls.clear();
       pendingGateComments.clear();
@@ -1407,15 +1405,6 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
           }
         } else {
           // no foreign customPrompt, or already reported this session
-        }
-      }
-      {
-        const problem = codegraphToolProblem(pi.getAllTools());
-        if (problem !== undefined && !codegraphProblemReported) {
-          codegraphProblemReported = true;
-          reportPromptProblem(ctx, problem);
-        } else {
-          // codegraph is fine or not connected (yet), or already reported
         }
       }
       return {

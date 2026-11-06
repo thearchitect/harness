@@ -16,15 +16,19 @@ export const PROFILES: readonly LanguageProfile[] = [typescriptProfile, goProfil
 const PROFILE_BY_EXTENSION = new Map(PROFILES.flatMap((profile) => profile.extensions.map((ext) => [ext, profile] as const)));
 
 export class Workspace {
+  /** The coverage boundary: the repository root (the superproject of a submodule), or the cwd outside git. */
   readonly root: string;
   readonly inGit: boolean;
+  /** The session's cwd: tool paths are relative to it, as for every other tool. */
+  readonly cwd: string;
   private readonly toolchain: Toolchain;
   private readonly sessions = new Map<string, LanguageSession>();
   private closed = false;
 
-  private constructor(root: string, inGit: boolean, toolchain: Toolchain) {
+  private constructor(root: string, inGit: boolean, cwd: string, toolchain: Toolchain) {
     this.root = root;
     this.inGit = inGit;
+    this.cwd = cwd;
     this.toolchain = toolchain;
   }
 
@@ -32,35 +36,44 @@ export class Workspace {
   static async open(cwd: string, toolchain: Toolchain): Promise<Workspace> {
     const root = await repositoryRoot(cwd);
     if (root !== undefined) {
-      return new Workspace(root, true, toolchain);
+      return new Workspace(root, true, resolve(cwd), toolchain);
     } else {
-      return new Workspace(resolve(cwd), false, toolchain);
+      return new Workspace(resolve(cwd), false, resolve(cwd), toolchain);
     }
   }
 
-  /** Absolute path of a tool argument, which must lie inside the workspace. */
-  resolvePath(path: string): string {
-    const absolute = isAbsolute(path) ? resolve(path) : resolve(this.root, path);
-    const inside = relative(this.root, absolute);
-    if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) {
-      throw new Error(`${path} is outside the workspace ${this.root}`);
-    } else {
-      return absolute;
-    }
-  }
-
-  /** Path for display: relative inside the workspace, absolute outside it. */
-  display(path: string): string {
+  /** Whether an absolute path lies inside the workspace (the root itself excluded). */
+  contains(path: string): boolean {
     const inside = relative(this.root, path);
-    if (inside.startsWith("..") || isAbsolute(inside)) {
-      return path;
+    return inside !== "" && !inside.startsWith("..") && !isAbsolute(inside);
+  }
+
+  /** Absolute path of a tool argument (relative to the cwd, or absolute), which must lie inside the workspace. */
+  resolvePath(path: string): string {
+    const absolute = resolve(this.cwd, path);
+    if (this.contains(absolute)) {
+      return absolute;
     } else {
-      return inside;
+      throw new Error(`${path} is outside the workspace ${this.root}`);
     }
+  }
+
+  /** Path for display: relative to the cwd inside the workspace, absolute outside it. */
+  display(path: string): string {
+    if (this.contains(path)) {
+      return relative(this.cwd, path) || ".";
+    } else {
+      return path;
+    }
+  }
+
+  /** The language of a file; undefined when no language server handles it. */
+  profileOf(file: string): LanguageProfile | undefined {
+    return PROFILE_BY_EXTENSION.get(extname(file));
   }
 
   profileFor(file: string): LanguageProfile {
-    const profile = PROFILE_BY_EXTENSION.get(extname(file));
+    const profile = this.profileOf(file);
     if (profile !== undefined) {
       return profile;
     } else {

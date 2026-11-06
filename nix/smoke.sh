@@ -60,8 +60,6 @@ if "$PI" list >"$WORK/list.log" 2>&1; then pass "pi list"; else fail "pi list" "
 if "$PI" mcp list >"$WORK/mcp-list.log" 2>&1; then pass "pi mcp list"; else fail "pi mcp list" "$WORK/mcp-list.log"; fi
 
 # MCP servers, as deps.ts launches them
-CODEGRAPH_MCP_TOOLS=explore,node,search,callers,callees,impact DO_NOT_TRACK=1 CODEGRAPH_NO_UPDATE_CHECK=1 \
-  check_mcp codegraph codegraph_impact "$(bin codegraph)" serve --mcp
 LIGHTPANDA_DISABLE_TELEMETRY=true check_mcp lightpanda goto "$(bin lightpanda)" mcp
 check_mcp playwright browser_snapshot "$(bin playwright-mcp)" --extension
 check_mcp chromium-devtools take_snapshot "$(bin chrome-devtools-mcp)" --no-usage-statistics

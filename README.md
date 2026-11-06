@@ -31,7 +31,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `index.ts` — the extension: PLAN/BUILD modes, mutation gates (one review per change set, shared by `write`/`edit` and the code tools), `/-`, sequential `write`/`edit`/`bash` (a batch containing one runs in order, so dependent calls see its effect), system prompt per run, UI
 - `lsp/` — code intelligence: a facade over the bundle's language servers (see below)
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
-- `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt and codegraph's tool name
+- `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `guidelines` (bullets in `<rules>`, in order)
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`
 - `install/SKILL.md` — the install/upgrade skill
@@ -70,9 +70,12 @@ built-in prompt, the harness reports an error once per session.
 gives the model one set of tools over them: `lsp_definition`,
 `lsp_type_definition`, `lsp_implementations`, `lsp_references`, `lsp_hover`,
 `lsp_symbols`, `lsp_call_hierarchy`, `lsp_type_hierarchy`, `lsp_diagnostics`,
-`lsp_code_actions`, `lsp_workspace` (read-only, codemode namespace `lsp`) and
-`lsp_refactor` (changes files, called directly). A symbol is addressed by
-`{ file, line, name }`.
+`lsp_code_actions`, `lsp_workspace` (read-only; declared to the model and
+callable from scripts, namespace `lsp`) and `lsp_refactor` (changes files,
+called directly). A symbol is addressed by `{ file, line, name }`; paths are
+relative to the session's cwd, in arguments and results, like every other
+tool's. A file no language server handles is moved as is, with a note to find
+its references with `rg`.
 
 - **Whole repository.** The workspace is the git repository of the session
   (the superproject of a submodule). TypeScript: every `tsconfig.json`/
