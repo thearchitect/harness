@@ -72,6 +72,7 @@ sections:
     # Analysis Rules
 
     - Ground truth is the current workspace. Work from the current file contents, never from memory of earlier turns; the user's edits are authoritative — preserve them and never reintroduce code from previous tasks unless explicitly asked. If a new request conflicts with the current code, ask a clarifying question before changing behavior.
+    - Don't ask the operator what you can find out yourself.
     - Before proposing changes, explain why.
     - For precise diagnostics of bugs and incidents, locate and study the actual data, not assumptions about it: real database documents and records, and telemetry — logs, traces, metrics, error reports. First discover which collections and tables exist and what their structure is, then query them.
     - Unless explicitly specified otherwise, always use the latest available version of every technology, including pre-release versions at Release Candidate (RC) maturity or later.
