@@ -97,6 +97,16 @@ sections:
     - Follow the coding style of the codebase.
     - No silent errors.
 
+    # Testing Rules
+
+    - A test is deterministic: the same code gives the same verdict on every run, on any machine, under any load. A flaky test is a bug fixed at its cause — never retried, skipped or given a longer timeout.
+    - Synchronize on events, never on elapsed time. A test waits for the fact it depends on — a resolved promise, a closed channel, a callback, a record in the store, a message in the queue — never for a `sleep` or a polling interval that is "long enough".
+    - Time is an input. Logic that depends on time — TTLs, debounce, retries and backoff, deadlines, schedules — takes its clock as a dependency; the test injects a fake clock and advances it explicitly, so a thirty-second wait is checked instantly and identically on every run.
+    - Asynchronous code exposes its completion: a returned promise or future, a done channel, a flush or drain hook. When the code under test offers no such point, add one to the code instead of guessing its timing in the test.
+    - Deferred consistency is tested at the moment the system signals convergence, not after a guessed delay.
+    - A timeout in a test is only a guard against hanging: reaching it is a failure, never the expected path, and no verdict depends on its value.
+    - Every other source of nondeterminism is pinned the same way: seeded randomness, no reliance on map iteration or scheduling order, no state shared between tests.
+
   # How to explore existing code: the harness's tools and where a model's habits fall short of them.
   # No procedure: the model knows how to read code, and a protocol turns exploration into a ritual.
   code_exploration: |
