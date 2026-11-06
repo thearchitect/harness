@@ -1,7 +1,7 @@
 /**
  * Integration tests against the real language servers of a bundle.
  *   HARNESS_MANIFEST=<bundle>/share/harness/manifest.json node --test lsp/test/servers.test.ts
- * (nix/lsp-test.sh runs them against a built bundle; go and cargo come from PATH.)
+ * (nix/test.sh runs them against a built bundle; go and cargo come from PATH.)
  *
  * Each language copies its fixture from lsp/testdata into a fresh git
  * repository and drives the facade as the tools do.
@@ -37,7 +37,7 @@ const toolchain: Toolchain | undefined = await (async () => {
     }
   }
 })();
-const skip = toolchain === undefined ? "HARNESS_MANIFEST is not set (nix/lsp-test.sh sets it)" : false;
+const skip = toolchain === undefined ? "HARNESS_MANIFEST is not set (nix/test.sh sets it)" : false;
 
 async function fixture(name: string): Promise<{ root: string; facade: Facade; close: () => Promise<void> }> {
   const root = await mkdtemp(join(tmpdir(), `harness-lsp-${name}-`));

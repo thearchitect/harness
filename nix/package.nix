@@ -47,6 +47,7 @@ let
         ../index.ts
         ../deps.ts
         ../lsp
+        ../tool_project_tree.ts
         ../workarounds.ts
         ../prompt.ts
         ../prompt.yaml
@@ -57,9 +58,12 @@ let
       ];
     };
     dontBuild = true;
+    # The extension's own npm dependencies (nix/npm) resolve through
+    # node_modules next to index.ts.
     installPhase = ''
       runHook preInstall
       cp -r . $out
+      ln -s ${nodeModules} $out/node_modules
       runHook postInstall
     '';
   };
@@ -242,6 +246,14 @@ let
       HARNESS_DEV_DIR="$(cd "''${HARNESS_DEV_DIR:-$PWD}" && pwd)"
       if [[ "$(${lib.getExe nodejs} -p 'require(process.argv[1]).name' "$HARNESS_DEV_DIR/package.json" 2>/dev/null)" != harness ]]; then
         echo "pi-dev: $HARNESS_DEV_DIR is not a harness checkout (run it from one or set HARNESS_DEV_DIR)" >&2
+        exit 1
+      fi
+      # The extension's npm dependencies, as in the installed extension: the
+      # checkout's node_modules (gitignored) points at the bundle's.
+      if [[ -L "$HARNESS_DEV_DIR/node_modules" || ! -e "$HARNESS_DEV_DIR/node_modules" ]]; then
+        ln -sfn ${nodeModules} "$HARNESS_DEV_DIR/node_modules"
+      else
+        echo "pi-dev: $HARNESS_DEV_DIR/node_modules is not a symlink; remove it so pi-dev can point it at the bundle's node_modules" >&2
         exit 1
       fi
     ''

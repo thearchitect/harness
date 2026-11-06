@@ -2,7 +2,7 @@
  * harness - code intelligence: a facade over the language servers of the
  * bundle (TypeScript 7, gopls, rust-analyzer).
  *
- *   tools.ts      the model's tools (lsp_*) and their formatting
+ *   tool_lsp.ts   the model's tools (lsp_*) and their formatting
  *   refactor.ts   lsp_refactor's operations, run in order; plan files
  *   generated.ts  whether a file looks generated, and why
  *   facade.ts     language-independent operations, positions by { file, line, name }
@@ -20,11 +20,13 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Facade } from "./facade.ts";
 import type { Toolchain } from "./profile.ts";
-import { registerLspTools, type Authorize, type IsScratch } from "./tools.ts";
+import { registerLspTools, type Authorize, type IsScratch } from "./tool_lsp.ts";
 import { Workspace } from "./workspace.ts";
 
-export type { Authorize, ChangeAuthorization, ChangeRequest, IsScratch } from "./tools.ts";
+export type { Authorize, ChangeAuthorization, ChangeRequest, IsScratch } from "./tool_lsp.ts";
 export type { Toolchain } from "./profile.ts";
+/** Directories of harness session workspaces: never part of a project. */
+export { AGENT_WORKSPACE_DIR } from "./snapshot.ts";
 
 export function registerLsp(
   pi: ExtensionAPI,

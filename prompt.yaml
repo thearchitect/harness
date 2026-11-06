@@ -102,11 +102,11 @@ sections:
 
     Applies to every task that depends on existing code — questions, bugs, incidents, features, UI changes, refactoring — from the first lookup on.
 
-    The first code lookup of every such task is `mcp__codegraph__codegraph_explore` with `projectPath` set to the project root. It returns the source of the relevant symbols and the call paths among them in one call, and it reports when a project is not indexed — only then continue that project with ordinary tools. Graph results are selective and heuristic, not exhaustive: expand them with the `lsp_*` tools, and use `rg`/`read` for what the graph does not link.
+    The first lookups of every such task are `project_tree` without arguments — the whole directory tree of the project — and `mcp__codegraph__codegraph_explore` with `projectPath` set to the project root. codegraph returns the source of the relevant symbols and the call paths among them in one call, and it reports when a project is not indexed — only then continue that project with ordinary tools. Graph results are selective and heuristic, not exhaustive: expand them with the `lsp_*` tools, and use `rg`/`read` for what the graph does not link.
 
     Navigate by project structure and shared data/contracts, not broad feature-keyword searches. DAO, DTO and API are roles: find their equivalents in each project.
 
-    1. **Map the structure:** with `codegraph_explore`, identify modules, workspace/build roots, data definitions, contracts, API entry points and composition/registration sites.
+    1. **Map the structure:** with the whole directory tree from `project_tree` and with `codegraph_explore`, identify modules, workspace/build roots, data definitions, contracts, API entry points and composition/registration sites.
     2. **Find the data anchors:** translate the question into domain entities, persisted structures, types and specific fields; inspect their definitions and related types.
     3. **Connect the contracts:** find corresponding DTO/messages, converters and API methods; follow both sides of transport boundaries, including generated code back to its source contract.
     4. **Expand usages:** use `lsp_references`/`lsp_implementations` on the relevant types, fields and methods to find readers, writers, validation, authorization and consumers across modules — not just the first matching feature.
@@ -116,7 +116,7 @@ sections:
 
     ## Waves
 
-    Exploration runs in a few dependent waves. A wave is every read-only lookup whose inputs are already known — codegraph, `lsp_*`, `rg`/`git log` through `tools.bash`, `read` — typically 3–8 calls. The first wave of a task contains `codegraph_explore`. Run a wave as one `codemode` script with `Promise.allSettled` and print only the findings: file:line locations, errors, truncation notices.
+    Exploration runs in a few dependent waves. A wave is every read-only lookup whose inputs are already known — `project_tree`, codegraph, `lsp_*`, `rg`/`git log` through `tools.bash`, `read` — typically 3–8 calls. The first wave of a task contains `project_tree` and `codegraph_explore`. Run a wave as one `codemode` script with `Promise.allSettled` and print only the findings: file:line locations, errors, truncation notices — except `project_tree`, whose tree is printed whole.
 
     Why a script and not the alternatives:
     - A compound `bash` (`rg …; cat …; sed -n …`) runs its parts one after another, puts every raw output into the context, and cannot reach codegraph or the `lsp_*` tools.
@@ -128,7 +128,9 @@ sections:
     Direct calls remain the right tool for a single lookup whose output you need whole (one file, one search); for builds, tests, deploys, git writes and other commands with effects or long runtime; and for `edit`/`write`. Keep a script's output within its budget (10k tokens by default): filter in the script or split the wave by subject.
 
     ```js
-    const [graph, refs, hits] = await Promise.allSettled([
+    const [tree, graph, refs, hits] = await Promise.allSettled([
+      // the layout: directories with their .dirinfo.md descriptions
+      tools.project_tree({}),
       // structure, source and call paths
       tools.mcp__codegraph__codegraph_explore({ query: "Order OrderDTO createOrder", projectPath: "/abs/root" }),
       // type-resolved usages of a data anchor
@@ -142,7 +144,8 @@ sections:
 
     - **Tool schemas:** discover them inside `codemode` with `describeTool(exactName)`, `describeNamespace(server)` or `searchTools(query, { namespace })` — without activating tools. Reuse source already returned; fetch exact source only for missing details.
     - **LSP (`lsp_*`, codemode namespace `lsp`):** language servers for TypeScript/JavaScript, Go and Rust over the whole repository — definitions, references, implementations, call and type hierarchies, symbols, hover, diagnostics, code actions. A symbol is addressed by `{ file, line, name }` (1-based line, the identifier on it). Answers cover every tsconfig project and the files outside them, every Go module (go.work plus every go.mod) with all build tags, every Cargo workspace with all features; each call synchronizes with the files on disk first and reports a failure as an error, never a partial result. `lsp_workspace` lists the coverage and what stays out: Go files behind negated build tags or another GOOS/GOARCH, Rust `cfg` branches of other targets. TypeScript is analyzed with TypeScript 7 whatever the project compiles with: the project's own build and type check stay authoritative.
-    - **`rg`/`read`:** string keys, configuration, serialization, languages the graph does not cover, links missing from the graph, and exact lines of files already located — not mapping the structure that `codegraph_explore` returns.
+    - **`project_tree`:** two steps. First, without arguments: the whole directory tree as sorted paths, each directory with the number of files directly in it and the first line of its `.dirinfo.md`, plus the files of the project root (manifests, entry points). Then, only where you need the files, `path` with `files: true` for each such directory, in a later wave: it lists every file of that subtree. It honors `.ignore`, `.gitignore` and the repository's `info/exclude`, so it shows the project without build output and dependencies. Paths start with `path` as given and go straight to `read`.
+    - **`rg`/`read`:** string keys, configuration, serialization, languages the graph does not cover, links missing from the graph, and exact lines of files already located — not mapping the structure that `project_tree` and `codegraph_explore` return.
     - **Refactoring:** check affected references/contracts and existing mechanisms before changes, then change through `lsp_refactor` as `## Refactoring` prescribes; review the returned diff and run focused project-native checks. Diagnostics alone do not establish behavioral correctness.
 
     ## Refactoring

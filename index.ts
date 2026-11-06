@@ -68,7 +68,8 @@ import { fileURLToPath } from "node:url";
 import { ensureThinkingBlocksVisible } from "./workarounds.ts";
 import { assembleSystemPrompt, codegraphToolProblem, systemPromptProblem } from "./prompt.ts";
 import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest } from "./deps.ts";
-import { registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
+import { AGENT_WORKSPACE_DIR, registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
+import { registerProjectTree } from "./tool_project_tree.ts";
 
 /* ============================================================================
  * ▄▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▄ ▀▀█▀▀ ▀▀█▀▀ ▄▀▀▀▀       ▄▀▀▀▀ ▄▀▀▀▄ █▄  █ █▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▀
@@ -781,7 +782,7 @@ async function sessionWorkspaceRoot(
   return canonicalizeProspectivePath(
     resolve(
       cwd,
-      ".agent-workspace-tmp",
+      AGENT_WORKSPACE_DIR,
       `${formatSessionDate(new Date(header.timestamp))}--${header.id}`,
     )
   );
@@ -818,6 +819,9 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     authorizeChange,
     (ctx, path) => isScratchPath(ctx, path),
   );
+
+  // project_tree: a project's layout in one call (tool_project_tree.ts).
+  registerProjectTree(pi);
 
   // Bundled skills: web-research (ollama web tools + lightpanda fallback).
   const extensionDir = dirname(fileURLToPath(import.meta.url));
@@ -1389,7 +1393,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       {
         const workspaceRoot =
           (await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager)) ??
-          resolve(ctx.cwd, ".agent-workspace-tmp");
+          resolve(ctx.cwd, AGENT_WORKSPACE_DIR);
         const { foreignCustomPrompt } = assembleSystemPrompt(event.systemPromptOptions, {
           activeTools: pi.getActiveTools(),
           workspaceRoot,
@@ -1569,7 +1573,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   async function scratchWorkspaceRoot(ctx: ExtensionContext): Promise<string> {
     return (
       (await sessionWorkspaceRoot(ctx.cwd, ctx.sessionManager)) ??
-      (await canonicalizeProspectivePath(resolve(ctx.cwd, ".agent-workspace-tmp")))
+      (await canonicalizeProspectivePath(resolve(ctx.cwd, AGENT_WORKSPACE_DIR)))
     );
   }
 

@@ -30,17 +30,19 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 
 - `index.ts` — the extension: PLAN/BUILD modes, mutation gates (one review per change set, shared by `write`/`edit` and the code tools), `/-`, sequential `write`/`edit`/`bash` (a batch containing one runs in order, so dependent calls see its effect), system prompt per run, UI
 - `lsp/` — code intelligence: a facade over the bundle's language servers (see below)
+- `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
 - `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt and codegraph's tool name
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `guidelines` (bullets in `<rules>`, in order)
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`
 - `install/SKILL.md` — the install/upgrade skill
 - `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the `/deps` report, the double-load guard (registered by `index.ts`)
 - `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition (called by `index.ts` at `// WORKAROUND Wn`)
-- `nix/` — the bundle: `package.nix` (launchers, extension fileset, manifest), `npm/` (pi, pi packages, npm MCP servers and TypeScript from one lockfile), `sources.json`, `update.sh`, `smoke.sh`, `lsp-test.sh`, CI tests
+- `nix/` — the bundle: `package.nix` (launchers, extension fileset, manifest), `npm/` (pi, pi packages, npm MCP servers, TypeScript and the extension's own npm dependencies from one lockfile), `sources.json`, `update.sh`, `smoke.sh`, `test.sh`, CI tests
 - `TODO.md` — waiting on upstream
 
 Where a text goes: always in the system prompt → `prompt.yaml`; loaded on
-demand → `skills/`.
+demand → `skills/`. A file that defines tools for the model is named
+`tool_<name>.ts`.
 
 ## System prompt
 
@@ -104,6 +106,22 @@ gives the model one set of tools over them: `lsp_definition`,
   crashes in two minutes need `/lsp restart`). The projects' toolchains (`go`,
   `cargo`) come from `PATH`.
 
+## Project tree
+
+`project_tree` gives the model a project's layout in two steps. Without
+arguments it returns the whole directory tree as byte-sorted paths, each
+directory with the number of files directly in it and the first line of its
+`.dirinfo.md` (`src/ (12 files) - HTTP API and its handlers`), plus the files of
+the project root (manifests, entry points). Then `path` with `files: true` lists
+every file of a subtree the model needs. A directory listed explicitly although
+the rules above ignore it (`node_modules/x`) is listed under its own rule
+files. It honors `.ignore`, `.gitignore`
+and the repository's `info/exclude` like fd and ripgrep (`.gitignore` only
+inside git; global git excludes are not read), never lists `.git`, session
+workspaces or symlinks, and marks unreadable directories in place.
+Project-specific exclusions go into the project's `.ignore`. The `.dirinfo.md`
+files are written by people; the model only reads them.
+
 ## Development
 
 ```bash
@@ -111,12 +129,15 @@ export HARNESS_DEV_DIR=~/src/harness   # default: the current directory
 pi-dev                 # the installed bundle with harness from the checkout; /reload after edits
 nix build              # the bundle as users get it
 nix/smoke.sh result    # smoke tests of the built bundle
-nix/lsp-test.sh result # lsp/ unit tests and tests against the bundle's language servers (needs node, git, go, cargo)
+nix/test.sh result     # unit tests and tests against the bundle's language servers (needs node, git, go, cargo)
 nix/update.sh          # bump every pin (what CI does on a schedule)
 ```
 
 Keep the checkout outside `~/.pi/agent/extensions/` (pi would load a second
-copy). No build step: pi loads `index.ts` through jiti. New files must be git
+copy). No build step: pi loads `index.ts` through jiti. The extension's npm
+dependencies come from `nix/npm` and resolve through `node_modules` next to
+`index.ts`: a symlink to the bundle's, made by the bundle itself, by `pi-dev`
+in the checkout and by `nix/test.sh`. New files must be git
 tracked and listed in the extension fileset of `nix/package.nix` to reach the
 bundle; `/reload` does not pick up a changed `prompt.yaml` or skill from an
 installed bundle — rebuild and reinstall. Never edit `nix/npm/package-lock.json`

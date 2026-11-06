@@ -66,7 +66,7 @@ LIGHTPANDA_DISABLE_TELEMETRY=true check_mcp lightpanda goto "$(bin lightpanda)" 
 check_mcp playwright browser_snapshot "$(bin playwright-mcp)" --extension
 check_mcp chromium-devtools take_snapshot "$(bin chrome-devtools-mcp)" --no-usage-statistics
 
-# Language servers run (their behavior: nix/lsp-test.sh)
+# Language servers run (their behavior: nix/test.sh)
 if "$(bin tsgo)" --version >"$WORK/tsgo.log" 2>&1; then pass "tsgo --version"; else fail "tsgo --version" "$WORK/tsgo.log"; fi
 if [[ -f "$(jq -r '.packages.typescript' "$MANIFEST")/package.json" ]]; then pass "typescript package"; else fail "typescript package"; fi
 if "$(bin gopls)" version >"$WORK/gopls.log" 2>&1; then pass "gopls version"; else fail "gopls version" "$WORK/gopls.log"; fi

@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 /** Directories of harness session workspaces: never part of a project. */
-const AGENT_WORKSPACE_DIR = ".agent-workspace-tmp";
+export const AGENT_WORKSPACE_DIR = ".agent-workspace-tmp";
 /** Outside git, these directories are never walked. */
 const UNTRACKED_SKIP = new Set(["node_modules", "target"]);
 const STAT_CONCURRENCY = 256;

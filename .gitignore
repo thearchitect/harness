@@ -1,4 +1,5 @@
-node_modules/
+# a directory, or the symlink pi-dev and nix/test.sh point at the bundle's
+node_modules
 *.tsbuildinfo
 .DS_Store
 .agent-workspace-tmp
