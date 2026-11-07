@@ -139,6 +139,7 @@ let
     "pi-ask-user"
     "pi-ollama-cloud"
     "pi-deepseek-search"
+    "@narumitw/pi-usage"
   ];
 
   # Read by deps.ts: absolute paths and versions of everything it registers or reports.
