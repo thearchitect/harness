@@ -4,16 +4,15 @@
  * - a live draft (header with mode and elapsed time, thinking, answer, the
  *   current action) with Telegram's native stop button, refreshed at most
  *   once a second on new content and at least every 20 s (a draft lives 30 s);
- * - "typing…" in the topic list every 4 s;
  * - silent committed messages when the uncommitted part grows large (checked
  *   at turn boundaries) and before a dialog;
  * - the final message with the banner, with sound.
  *
- * While a dialog waits for the user the view is paused: no draft, no typing.
+ * While a dialog waits for the user the view is paused: no draft.
  */
 
 import type { Clock, Timer } from "./clock.ts";
-import type { Keyboard, Outbox } from "./outbox.ts";
+import type { Outbox } from "./outbox.ts";
 import {
   COMMIT_CHARS,
   COMMIT_ITEMS,
@@ -30,7 +29,6 @@ import type { RpcEvent } from "./rpc.ts";
 
 const DRAFT_MIN_INTERVAL_MS = 1_000;
 const DRAFT_KEEPALIVE_MS = 20_000;
-const TYPING_INTERVAL_MS = 4_000;
 
 export class RunView {
   readonly draftId: number;
@@ -46,7 +44,6 @@ export class RunView {
   private lastDraftAt = Number.NEGATIVE_INFINITY;
   private draftTimer: Timer | undefined;
   private keepaliveTimer: Timer | undefined;
-  private typingTimer: Timer | undefined;
 
   /** `title`: "Planning" or "Building"; `draftId`: unique per run, non-zero. */
   constructor(outbox: Outbox, clock: Clock, title: string, draftId: number) {
@@ -55,7 +52,6 @@ export class RunView {
     this.title = title;
     this.draftId = draftId;
     this.startedAt = clock.now();
-    this.typing();
     this.changed();
   }
 
@@ -68,7 +64,7 @@ export class RunView {
       case "message_end": {
         const message = event.message as { role?: string; stopReason?: string; errorMessage?: string };
         if (message.role === "assistant" && message.stopReason === "error") {
-          this.items.push({ kind: "text", text: `❌ ${message.errorMessage ?? "the model request failed"}` });
+          this.items.push({ kind: "text", text: `Error: ${message.errorMessage ?? "the model request failed"}` });
           this.changed();
         } else {
           // a normal message: its blocks are already shown
@@ -80,7 +76,7 @@ export class RunView {
         break;
       case "tool_execution_start":
         this.items.push({ kind: "tool", id: event.toolCallId, name: event.toolName, args: event.args, done: false });
-        this.activity = `⏳ ${toolSummary(event.toolName, event.args)}`;
+        this.activity = toolSummary(event.toolName, event.args);
         this.changed();
         break;
       case "tool_execution_end": {
@@ -98,7 +94,7 @@ export class RunView {
         break;
       }
       case "auto_retry_start":
-        this.activity = `⚠️ retrying ${event.attempt}/${event.maxAttempts} in ${formatDuration(event.delayMs)}: ${event.errorMessage}`;
+        this.activity = `retrying ${event.attempt}/${event.maxAttempts} in ${formatDuration(event.delayMs)}: ${event.errorMessage}`;
         this.changed();
         break;
       case "auto_retry_end":
@@ -107,7 +103,7 @@ export class RunView {
         this.changed();
         break;
       case "compaction_start":
-        this.activity = "🗜 compacting…";
+        this.activity = "compacting…";
         this.changed();
         break;
       case "turn_end":
@@ -123,7 +119,7 @@ export class RunView {
     }
   }
 
-  /** A dialog opens: what happened so far is committed above it; no draft, no typing. */
+  /** A dialog opens: what happened so far is committed above it; no draft. */
   async pause(): Promise<void> {
     this.paused = true;
     this.stopTimers();
@@ -133,12 +129,11 @@ export class RunView {
   resume(): void {
     if (this.finished || !this.paused) return;
     this.paused = false;
-    this.typing();
     this.changed();
   }
 
-  /** The run settled: the rest and the banner, with sound; optional buttons under it. */
-  async finish(banner: string | undefined, keyboard?: Keyboard): Promise<number | undefined> {
+  /** The run settled: the rest and the banner; the last message with sound. */
+  async finish(banner: string | undefined): Promise<number | undefined> {
     this.finished = true;
     this.stopTimers();
     const chunks = this.chunks([...this.items.map((i) => renderItems([i])), ...(banner !== undefined ? [banner] : [])]);
@@ -146,7 +141,7 @@ export class RunView {
     let last: number | undefined;
     for (const [index, chunk] of chunks.entries()) {
       const final = index === chunks.length - 1;
-      last = await this.outbox.send({ markdown: chunk }, final ? { silent: false, keyboard, role: keyboard !== undefined ? "transient" : "plain" } : {});
+      last = await this.outbox.send({ markdown: chunk }, { silent: !final });
     }
     return last;
   }
@@ -224,7 +219,7 @@ export class RunView {
     this.draftTimer = undefined;
     if (this.paused || this.finished) return;
     this.lastDraftAt = this.clock.now();
-    const header = `${this.title === "Planning" ? "📝" : "🔨"} ${this.title} · ${formatDuration(this.clock.now() - this.startedAt)}`;
+    const header = `${this.title} · ${formatDuration(this.clock.now() - this.startedAt)}`;
     void this.outbox.draft(this.draftId, renderDraft(header, this.items, this.activity));
     this.keepaliveTimer?.cancel();
     this.keepaliveTimer = this.clock.after(DRAFT_KEEPALIVE_MS, () => {
@@ -233,18 +228,10 @@ export class RunView {
     });
   }
 
-  private typing(): void {
-    if (this.paused || this.finished) return;
-    void this.outbox.typing();
-    this.typingTimer = this.clock.after(TYPING_INTERVAL_MS, () => this.typing());
-  }
-
   private stopTimers(): void {
     this.draftTimer?.cancel();
     this.draftTimer = undefined;
     this.keepaliveTimer?.cancel();
     this.keepaliveTimer = undefined;
-    this.typingTimer?.cancel();
-    this.typingTimer = undefined;
   }
 }

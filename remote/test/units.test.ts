@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { modelsPanel, morePanel, renderSessionCard, REPLY_KEYBOARD, sectionOf } from "../card.ts";
+import { dirsPanel, modelsPanel, renderSessionCard } from "../card.ts";
 import { parseConfig } from "../config.ts";
 import { Dialogs } from "../dialogs.ts";
 import { parseDotenv } from "../dotenv.ts";
@@ -80,7 +80,7 @@ describe("render", () => {
       { kind: "tool", id: "1", name: "bash", args: { command: "ls -la" }, result: "x".repeat(3100), isError: true, durationMs: 1500, done: true },
     ];
     const out = renderItems(items);
-    assert.match(out, /^<details><summary>💭 Thinking<\/summary>\n\nhmm\n\n<\/details>\n\nHello\n\n<details><summary>❌ bash: ls -la · 2s<\/summary>/);
+    assert.match(out, /^<details><summary>Thinking<\/summary>\n\nhmm\n\n<\/details>\n\nHello\n\n<details><summary>bash: ls -la · 2s · failed<\/summary>/);
     assert.match(out, /… 100 more chars/);
   });
 
@@ -102,38 +102,29 @@ describe("render", () => {
   });
 
   test("banner", () => {
-    assert.equal(bannerLine({ mode: "plan", durationMs: 134_000, costUsd: 0.1234, model: "deepseek/deepseek-v4-pro" }), "✅ planning finished · 2m 14s · $0.12 · deepseek-v4-pro");
-    assert.equal(bannerLine({ mode: "normal", interrupted: true }), "⏹ building interrupted");
+    assert.equal(bannerLine({ mode: "plan", durationMs: 134_000, costUsd: 0.1234, model: "deepseek/deepseek-v4-pro" }), "planning finished · 2m 14s · $0.12 · deepseek-v4-pro");
+    assert.equal(bannerLine({ mode: "normal", interrupted: true }), "building interrupted");
     assert.equal(stripAnsi("\u001b[1mx\u001b[0m"), "x");
   });
 });
 
 describe("cards and panels", () => {
   test("the status card is one line of text", () => {
-    const base = { dir: "~/showone", model: "deepseek/deepseek-v4-pro", thinking: "max", nextMode: "plan" as const };
-    assert.equal(renderSessionCard({ ...base, status: { kind: "idle" } }, 0), "📁 <b>~/showone</b> · 🧠 deepseek-v4-pro · 💭 max · 📝 Plan · ● idle");
-    assert.match(renderSessionCard({ ...base, nextMode: "build", status: { kind: "running", since: 0 } }, 72_000), /🔨 Build next · ⏳ running 1m 12s$/);
+    const base = { dir: "~/showone", model: "deepseek/deepseek-v4-pro", thinking: "max" };
+    assert.equal(renderSessionCard({ ...base, status: { kind: "idle" } }, 0), "~/showone · deepseek-v4-pro · max · idle");
+    assert.equal(renderSessionCard({ ...base, status: { kind: "running", since: 0 } }, 72_000), "~/showone · deepseek-v4-pro · max · running 1m 12s");
   });
 
-  test("the keyboard: four sections; a press is recognized by its exact text", () => {
-    assert.deepEqual(REPLY_KEYBOARD.keyboard[0]?.map((b) => (typeof b === "string" ? b : b.text)), ["🔨 Build", "⏹ Stop", "🧠 Model", "⚙️ More"]);
-    assert.equal(REPLY_KEYBOARD.is_persistent, true);
-    assert.equal(sectionOf("🧠 Model"), "model");
-    assert.equal(sectionOf("🧠 Model please"), undefined);
+  test("directory choice: two per row, then Cancel", () => {
+    const panel = dirsPanel(["~", "~/a", "~/b"]);
+    assert.deepEqual(panel.keyboard.map((row) => row.map((b) => b.text)), [["~", "~/a"], ["~/b"], ["Cancel"]]);
   });
 
   test("model list pages", () => {
     const models = Array.from({ length: 10 }, (_, i) => ({ provider: "p", id: `m${i}` }));
     const page1 = modelsPanel(models, 1, "p/m9");
-    assert.deepEqual(page1.keyboard.map((row) => row.map((b) => b.text)), [["p/m8"], ["✓ p/m9"], ["‹", "✕"]]);
-    assert.equal(page1.html, "🧠 <b>Model</b> (2/2)");
-  });
-
-  test("⚙️ More: session actions only in a session topic", () => {
-    const data = (inSession: boolean): string[] => morePanel(inSession).keyboard.flat().map((b) => (b as { callback_data: string }).callback_data);
-    assert.deepEqual(data(true).slice(0, 3), ["s:thinking", "s:compact", "s:close"]);
-    assert.ok(!data(false).includes("s:thinking"));
-    assert.ok(data(false).includes("a:providers"));
+    assert.deepEqual(page1.keyboard.map((row) => row.map((b) => b.text)), [["p/m8"], ["p/m9 (current)"], ["Previous", "Cancel"]]);
+    assert.equal(page1.html, "Model (2/2):");
   });
 });
 
@@ -335,7 +326,7 @@ describe("outbox", () => {
 });
 
 describe("run view", () => {
-  test("draft at most once a second on new content, keepalive within 20 s, typing every 4 s", async () => {
+  test("draft at most once a second on new content, keepalive within 20 s, no typing", async () => {
     const clock = new FakeClock();
     const tg = new FakeTg();
     const view = new RunView(outbox(tg), clock, "Planning", 42);
@@ -350,10 +341,10 @@ describe("run view", () => {
     await clock.advance(1);
     const drafts = tg.of("sendRichMessageDraft");
     assert.equal(drafts.length, 2);
-    assert.deepEqual(drafts[1]?.slice(1, 4), [42, { markdown: "**📝 Planning · 1s**\n\nHello" }, { message_thread_id: 9, can_stop: true }]);
+    assert.deepEqual(drafts[1]?.slice(1, 4), [42, { markdown: "**Planning · 1s**\n\nHello" }, { message_thread_id: 9, can_stop: true }]);
     await clock.advance(20_000);
     assert.equal(tg.of("sendRichMessageDraft").length, 3, "keepalive");
-    assert.equal(tg.of("sendChatAction").length, 6, "typing at 0, 4, 8, 12, 16, 20 s");
+    assert.equal(tg.of("sendChatAction").length, 0);
   });
 
   test("pause commits and stops the draft; finish sends the rest with the banner and buttons, with sound", async () => {
@@ -366,16 +357,16 @@ describe("run view", () => {
     await view.pause();
     const committed = tg.of("sendRichMessage");
     assert.equal(committed.length, 1);
-    assert.match((committed[0]?.[1] as { markdown: string }).markdown, /<summary>🔧 bash: ls · 0s<\/summary>/);
+    assert.match((committed[0]?.[1] as { markdown: string }).markdown, /<summary>bash: ls · 0s<\/summary>/);
     const before = tg.of("sendRichMessageDraft").length;
     await clock.advance(30_000);
     assert.equal(tg.of("sendRichMessageDraft").length, before, "no drafts while paused");
     view.resume();
     view.onEvent({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } } as never);
     view.onEvent({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "Done." } } as never);
-    await view.finish("✅ planning finished", [[{ text: "🔨 Build", callback_data: "r:build" }]]);
+    await view.finish("planning finished");
     const final = tg.of("sendRichMessage")[1];
-    assert.deepEqual(final?.[1], { markdown: "Done.\n\n✅ planning finished" });
+    assert.deepEqual(final?.[1], { markdown: "Done.\n\nplanning finished" });
     assert.equal((final?.[2] as { disable_notification: boolean }).disable_notification, false);
     assert.equal(clock.pending(), 0, "no timers after finish");
   });
@@ -414,7 +405,9 @@ describe("dialogs", () => {
     const { dialogs, tg, responses, events } = harness();
     await dialogs.handle({ ...gate, options: [...gate.options] });
     const [, html, options] = tg.of("sendMessage")[0] ?? [];
-    assert.equal(html, "✏️ <b>Allow file change?</b>\n<pre>edit a.ts\n+x</pre>");
+    assert.equal(html, "<b>Allow file change?</b>\n<pre>edit a.ts\n+x</pre>");
+    assert.equal((options as { disable_notification: boolean }).disable_notification, false, "a dialog needs the user: with sound");
+    assert.deepEqual((options as { reply_markup: { inline_keyboard: { text: string }[][] } }).reply_markup.inline_keyboard.flat().map((b) => b.text), Object.values(GATE_OPTIONS));
     assert.deepEqual((options as { reply_markup: { inline_keyboard: { callback_data: string }[][] } }).reply_markup.inline_keyboard.flat().map((b) => b.callback_data), ["d:1:allow", "d:1:note", "d:1:reject", "d:1:stop"]);
     assert.equal(await dialogs.press(1, "allow"), "Allowed");
     assert.deepEqual(responses, [{ type: "extension_ui_response", id: "g1", value: "Allow" }]);
@@ -434,7 +427,7 @@ describe("dialogs", () => {
     assert.equal(dialogs.isOpen, false);
   });
 
-  test("Allow + note asks for the note, then allows with it", async () => {
+  test("Allow with comment asks for the comment, then allows with it", async () => {
     const { dialogs, responses } = harness();
     await dialogs.handle({ ...gate, options: [...gate.options] });
     await dialogs.press(1, "note");
@@ -447,7 +440,7 @@ describe("dialogs", () => {
     const { dialogs, tg, responses } = harness();
     await dialogs.handle({ type: "extension_ui_request", id: "s", method: "select", title: "Pick", options: ["a", "b"] });
     await dialogs.handle({ type: "extension_ui_request", id: "n", method: "notify", message: "fyi" });
-    assert.match(String(tg.of("editMessageText")[0]?.[2]), /❓ Pick\n\nfyi/);
+    assert.match(String(tg.of("editMessageText")[0]?.[2]), /^Pick\n\nfyi$/);
     assert.equal(await dialogs.press(1, "1"), "b");
     await dialogs.handle({ type: "extension_ui_request", id: "c", method: "confirm", title: "Sure?", message: "really" });
     await dialogs.press(2, "no");

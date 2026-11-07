@@ -1,7 +1,8 @@
 /**
  * Scenarios of the gateway end to end, with a recording Bot API, scripted pi
- * processes and a fake clock: topics and directories, runs and steering,
- * dialogs, banners, the native stop, deleted topics, crashes, quiescence.
+ * processes and a fake clock: places with and without an agent, /agent and
+ * /close, runs and steering, dialogs, banners, sound, the native stop,
+ * deleted topics, crashes.
  */
 
 import assert from "node:assert/strict";
@@ -23,6 +24,7 @@ import { FakeClock, FakePi, FakeTg, ok, settle } from "./fakes.ts";
 
 const ARTEM = 11;
 const STRANGER = 99;
+const TOPIC = 7;
 
 type World = { gateway: Gateway; tg: FakeTg; clock: FakeClock; pis: FakePi[]; store: StateStore; home: string; dataDir: string };
 
@@ -43,8 +45,8 @@ function makeWorld(subdirs: string[]): World {
     defaultSettings: {},
   };
   const home = homeOf(config, user);
-  for (const dir of subdirs) mkdirSync(join(home, dir), { recursive: true });
   mkdirSync(home, { recursive: true });
+  for (const dir of subdirs) mkdirSync(join(home, dir), { recursive: true });
   const clock = new FakeClock();
   const tg = new FakeTg();
   const store = new StateStore(join(dataDir, "gateway", "state.json"));
@@ -62,7 +64,7 @@ function makeWorld(subdirs: string[]): World {
       pis.push(pi);
       return pi;
     },
-    spec: (_user, topic) => ({ command: "pi", args: ["--session-id", topic.sessionId], cwd: topic.cwd, env: {} }),
+    spec: (_user, agent) => ({ command: "pi", args: ["--session-id", agent.sessionId], cwd: agent.cwd, env: {} }),
     newDraftId: () => draft++,
     startLogin: () => ({ result: Promise.resolve({ ok: true, providers: [] }), cancel: () => undefined }) as unknown as LoginRun,
     download: async () => Buffer.from("file"),
@@ -88,7 +90,7 @@ function text(body: string, threadId?: number, from = ARTEM): Promise<void> {
   } as Omit<Update, "update_id">);
 }
 
-function topicCreated(threadId: number, name: string, implicit: boolean): Promise<void> {
+function topicCreated(threadId: number): Promise<void> {
   return send({
     message: {
       message_id: threadId,
@@ -97,19 +99,24 @@ function topicCreated(threadId: number, name: string, implicit: boolean): Promis
       from: { id: ARTEM, is_bot: false, first_name: "A" },
       message_thread_id: threadId,
       is_topic_message: true,
-      forum_topic_created: { name, icon_color: 0, ...(implicit ? { is_name_implicit: true } : {}) },
+      forum_topic_created: { name: "work", icon_color: 0 },
     },
   } as Omit<Update, "update_id">);
 }
 
-function press(data: string, threadId: number, onMessage = 1): Promise<void> {
+function press(data: string, threadId: number | undefined, onMessage: number | undefined): Promise<void> {
   return send({
     callback_query: {
       id: `cb${updateId}`,
       from: { id: ARTEM, is_bot: false, first_name: "A" },
       chat_instance: "x",
       data,
-      message: { message_id: onMessage, date: 0, chat: { id: ARTEM, type: "private", first_name: "A" }, message_thread_id: threadId, is_topic_message: true },
+      message: {
+        message_id: onMessage ?? 1,
+        date: 0,
+        chat: { id: ARTEM, type: "private", first_name: "A" },
+        ...(threadId !== undefined ? { message_thread_id: threadId, is_topic_message: true } : {}),
+      },
     },
   } as Omit<Update, "update_id">);
 }
@@ -122,15 +129,16 @@ function sentTexts(): string[] {
   return world.tg.of("sendMessage").map((args) => String(args[1]));
 }
 
-function reactions(): string[] {
-  return world.tg.of("setMessageReaction").map((args) => (args[2] as { emoji: string }[])[0]?.emoji ?? "");
+/** Every message sent with sound: its text. */
+function loud(): string[] {
+  return world.tg.calls
+    .filter((c) => (c.method === "sendMessage" || c.method === "sendRichMessage") && (c.args[2] as { disable_notification?: boolean }).disable_notification === false)
+    .map((c) => (c.method === "sendMessage" ? String(c.args[1]) : (c.args[1] as { markdown: string }).markdown));
 }
 
-/** Binds topic 7 to ~/proj and returns its pi. */
-async function boundTopic(): Promise<FakePi> {
-  await topicCreated(7, "New topic", false);
-  await text("first task", 7);
-  await press("p:1", 7);
+/** /agent proj in the topic; returns its pi. */
+async function agentInTopic(): Promise<FakePi> {
+  await text("/agent proj", TOPIC);
   await settle();
   const pi = world.pis.at(-1);
   assert.ok(pi !== undefined);
@@ -143,79 +151,77 @@ describe("gateway", () => {
   });
   afterEach(() => rmSync(world.dataDir, { recursive: true, force: true }));
 
-  test("strangers and non-private chats are ignored", async () => {
+  test("strangers are ignored; topic creation and /start get no answer", async () => {
     await text("hi", undefined, STRANGER);
+    await topicCreated(TOPIC);
+    await text("/start");
     assert.deepEqual(world.tg.calls, []);
   });
 
-  test("a new topic: held messages, directory choice, rename, card, one prompt", async () => {
-    await topicCreated(7, "New topic", false);
-    await text("first task", 7);
-    const [welcome, choice] = world.tg.of("sendMessage");
-    assert.match(String(welcome?.[1]), /^Hi, artem!/);
-    assert.deepEqual((welcome?.[2] as { reply_markup: { keyboard: unknown[] } }).reply_markup.keyboard.length, 1, "the section keyboard comes with the welcome");
-    assert.equal(choice?.[1], "📁 <b>Where to work?</b>");
-    const buttons = (choice?.[2] as { reply_markup: { inline_keyboard: { text: string; callback_data: string }[][] } }).reply_markup.inline_keyboard.flat();
-    assert.deepEqual(buttons.map((b) => b.text), ["~", "~/proj", "~/zeta", "📁 Path…"]);
-    await text("and more", 7);
-    await press("p:1", 7);
+  test("a place without an agent: one silent line; no topic is ever created, renamed or deleted", async () => {
+    await text("fix the bug", TOPIC);
+    await text("fix the bug");
+    assert.deepEqual(sentTexts(), ["No agent here. /agent [path] starts one.", "No agent here. /agent [path] starts one."]);
+    assert.deepEqual(loud(), []);
+    assert.deepEqual(world.pis, []);
+    assert.ok(!world.tg.methods().some((m) => /ForumTopic|copyMessage|Reaction|ChatAction/.test(m)));
+  });
+
+  test("/agent without a path: directories at the bottom, one tap starts the agent and pins its status", async () => {
+    await text("/agent", TOPIC);
+    const panel = world.tg.sentId(/Directory/);
+    const buttons = (world.tg.of("sendMessage").at(-1)?.[2] as { reply_markup: { inline_keyboard: { text: string }[][] } }).reply_markup.inline_keyboard.flat();
+    assert.deepEqual(buttons.map((b) => b.text), ["~", "~/proj", "~/zeta", "Cancel"]);
+    await press("p:1", TOPIC, panel);
     await settle();
-    assert.deepEqual(world.tg.of("editForumTopic")[0]?.[2], { name: "~/proj" });
-    const topic = world.store.topic(ARTEM, 7);
-    assert.equal(topic?.cwd, join(world.home, "proj"));
-    assert.equal(topic?.title, "~/proj");
+    assert.equal(world.store.agent(ARTEM, TOPIC)?.cwd, join(world.home, "proj"));
+    assert.equal(world.pis[0]?.spec.cwd, join(world.home, "proj"));
     assert.equal(world.tg.of("pinChatMessage").length, 1);
-    const pi = world.pis[0];
-    assert.equal(pi?.spec.cwd, join(world.home, "proj"));
-    assert.deepEqual(pi?.prompts(), ["first task\n\nand more"]);
+    assert.match(String(world.tg.of("editMessageText").at(-1)?.[2]), /^~\/proj · deepseek-v4-pro · high · idle$/);
     assert.deepEqual(world.store.user(ARTEM).recentDirs, [join(world.home, "proj")]);
-    assert.equal(world.gateway.isQuiescent(), false, "a run is in progress");
-  });
-
-  test("a topic named by the user keeps its name; Path… resolves inside ~ only", async () => {
-    await topicCreated(8, "My fix", false);
-    await text("task", 8);
-    await press("p:path", 8);
-    await text("../..", 8);
-    assert.ok(sentTexts().some((t) => /outside your home/.test(t)));
-    assert.match(sentTexts().at(-1) ?? "", /Where to work/, "the choice stays the last message");
-    await text("~/zeta", 8);
-    await settle();
-    assert.equal(world.store.topic(ARTEM, 8)?.cwd, join(world.home, "zeta"));
     assert.deepEqual(world.tg.of("editForumTopic"), []);
-    assert.equal(world.store.topic(ARTEM, 8)?.title, "My fix");
   });
 
-  test("build from the card applies to one message; ! builds; messages during a run steer", async () => {
-    const pi = await boundTopic();
+  test("/agent with a path: inside ~ only; a second /agent in the same place is refused", async () => {
+    await text("/agent ../..", TOPIC);
+    assert.match(sentTexts().at(-1) ?? "", /outside your home/);
+    await agentInTopic();
+    await text("/agent zeta", TOPIC);
+    assert.match(sentTexts().at(-1) ?? "", /already running here \(~\/proj\)/);
+    assert.equal(world.pis.length, 1);
+  });
+
+  test("plan by default, ! builds, messages during a run steer; nothing but the final message makes a sound", async () => {
+    const pi = await agentInTopic();
+    await text("look around", TOPIC);
+    await text("also this", TOPIC);
+    pi.emit({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
+    pi.emit({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "The plan." } });
+    pi.emit({ type: "entry_appended", entry: { type: "custom", customType: FINISHED_ENTRY_TYPE, data: { mode: "plan", durationMs: 5000, costUsd: 0.01, model: "deepseek/v4" } } });
     pi.emit({ type: "agent_settled", aborted: false });
     await settle();
-    await text("🔨 Build", 7);
-    assert.ok(world.tg.of("deleteMessage").length > 0, "the press itself is deleted");
-    assert.match(sentTexts().at(-1) ?? "", /next message builds/);
-    assert.equal(world.store.topic(ARTEM, 7)?.nextMode, "build");
-    await text("do it", 7);
-    assert.equal(world.store.topic(ARTEM, 7)?.nextMode, "plan");
-    await text("also this", 7);
-    pi.emit({ type: "agent_settled", aborted: false });
-    await settle();
-    await text("!now", 7);
+    await text("!do it", TOPIC);
+    await world.clock.advance(0);
     const prompts = pi.requests.filter((r) => r.type === "prompt") as { message: string; streamingBehavior?: string }[];
     assert.deepEqual(prompts.map((p) => [p.message, p.streamingBehavior]), [
-      ["first task", undefined],
-      ["!do it", undefined],
+      ["look around", undefined],
       ["also this", "steer"],
-      ["!now", undefined],
+      ["!do it", undefined],
     ]);
-    assert.ok(reactions().includes("✍"));
+    assert.deepEqual(loud(), ["The plan.\n\nplanning finished · 5s · $0.01 · v4"]);
+    assert.ok(!world.tg.methods().some((m) => /Reaction|ChatAction/.test(m)));
+    const draft = world.tg.of("sendRichMessageDraft").at(-1)?.[2] as { markdown: string };
+    assert.match(draft.markdown, /^\*\*Building · 0s\*\*/);
   });
 
-  test("the gate dialog stays last; text rejects with a comment", async () => {
-    const pi = await boundTopic();
+  test("the gate dialog comes with sound; a text instead of a button rejects with that comment", async () => {
+    const pi = await agentInTopic();
+    await text("task", TOPIC);
     pi.ui({ type: "extension_ui_request", id: "g", method: "select", title: `${GATE_TITLE}\nedit x`, options: Object.values(GATE_OPTIONS) });
     await settle();
+    assert.deepEqual(loud(), ["<b>Allow file change?</b>\n<pre>edit x</pre>"]);
     assert.equal(world.gateway.isQuiescent(), false);
-    await text("wrong file", 7);
+    await text("wrong file", TOPIC);
     pi.ui({ type: "extension_ui_request", id: "c", method: "input", title: "Why reject? Required — the model sees this comment." });
     await settle();
     assert.deepEqual(pi.uiResponses, [
@@ -224,106 +230,76 @@ describe("gateway", () => {
     ]);
   });
 
-  test("the banner closes a planning run with Build buttons; 🔨 Build sends the build prompt", async () => {
-    const pi = await boundTopic();
-    pi.emit({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
-    pi.emit({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "The plan." } });
-    pi.emit({ type: "entry_appended", entry: { type: "custom", customType: FINISHED_ENTRY_TYPE, data: { mode: "plan", durationMs: 5000, costUsd: 0.01, model: "deepseek/v4" } } });
-    pi.emit({ type: "agent_settled", aborted: false });
-    await settle();
-    const final = world.tg.of("sendRichMessage").at(-1);
-    assert.deepEqual(final?.[1], { markdown: "The plan.\n\n✅ planning finished · 5s · $0.01 · v4" });
-    assert.ok(reactions().includes("👌"));
-    assert.equal(world.gateway.isQuiescent(), true);
-    await press("r:build", 7);
-    assert.equal(pi.prompts().at(-1), "!Implement the agreed plan.");
-  });
-
-  test("🧠 Model: the panel opens at the bottom of the topic and closes with the choice", async () => {
-    const pi = await boundTopic();
+  test("/model: a panel at the bottom, the choice replaces it", async () => {
+    const pi = await agentInTopic();
     const respond = pi.respond;
     pi.respond = (command) =>
       command.type === "get_available_models" ? ok("get_available_models", { models: [{ provider: "deepseek", id: "deepseek-flash" }, { provider: "deepseek", id: "deepseek-v4-pro" }] }) : respond(command);
-    await text("🧠 Model", 7);
-    const panel = world.tg.sentId(/Model/);
-    assert.ok(panel !== undefined);
-    await press("s:model:0", 7, panel);
+    await text("/model", TOPIC);
+    const panel = world.tg.sentId(/^Model/);
+    await press("s:model:0", TOPIC, 1);
+    assert.equal(toasts().at(-1), "This panel is closed.", "a stale panel does nothing");
+    await press("s:model:0", TOPIC, panel);
     assert.deepEqual(pi.requests.at(-1), { type: "set_model", provider: "deepseek", modelId: "deepseek-flash" });
-    assert.match(String(world.tg.of("editMessageText").at(-1)?.[2]), /deepseek-flash ✓/);
+    assert.equal(world.tg.of("editMessageText").filter((args) => args[1] === panel).at(-1)?.[2], "Model: deepseek/deepseek-flash");
   });
 
-  test("⚙️ More in All offers the account only; ⏹ there has nothing to stop", async () => {
-    await text("⚙️ More");
-    const more = world.tg.of("sendMessage").at(-1);
-    const data = (more?.[2] as { reply_markup: { inline_keyboard: { callback_data: string }[][] } }).reply_markup.inline_keyboard.flat().map((b) => b.callback_data);
-    assert.ok(data.includes("a:key") && !data.includes("s:close"));
-    await text("⏹ Stop");
-    assert.match(String(world.tg.of("editMessageText").at(-1)?.[2]), /Nothing is running/, "the outcome replaces the open panel");
+  test("agent commands without an agent; account commands anywhere", async () => {
+    await text("/model", TOPIC);
+    assert.equal(sentTexts().at(-1), "No agent here. /agent [path] starts one.");
+    await text("/sessions", TOPIC);
+    assert.equal(sentTexts().at(-1), "No agents.");
   });
 
   test("the draft's native stop aborts the run", async () => {
-    const pi = await boundTopic();
-    await send({ stopped_message_generation: { chat: { id: ARTEM, type: "private", first_name: "A" }, message_thread_id: 7, draft_id: 1 } } as Omit<Update, "update_id">);
+    const pi = await agentInTopic();
+    await text("task", TOPIC);
+    await send({ stopped_message_generation: { chat: { id: ARTEM, type: "private", first_name: "A" }, message_thread_id: TOPIC, draft_id: 1 } } as Omit<Update, "update_id">);
     assert.ok(pi.requests.some((r) => r.type === "abort"));
   });
 
-  test("a message in All moves into a new topic; with nothing to choose it starts in ~", async () => {
-    world = makeWorld([]);
-    await text("fix the bug");
-    assert.deepEqual(world.tg.of("createForumTopic")[0]?.slice(0, 2), [ARTEM, "fix the bug"]);
-    assert.equal(world.tg.of("copyMessage").length, 1);
-    assert.equal(world.tg.of("deleteMessage").length, 1);
+  test("/close: the process stops, the status line is unpinned, the place is free for another /agent", async () => {
+    const pi = await agentInTopic();
+    await text("/close", TOPIC);
+    const panel = world.tg.sentId(/^Close the agent/);
+    await press("s:closeyes", TOPIC, panel);
+    assert.equal(pi.closed, true);
+    assert.equal(world.store.agent(ARTEM, TOPIC), undefined);
+    assert.equal(world.tg.of("unpinChatMessage").length, 1);
+    await text("more", TOPIC);
+    assert.equal(sentTexts().at(-1), "No agent here. /agent [path] starts one.");
+    await text("/agent zeta", TOPIC);
     await settle();
-    const threadId = world.tg.of("copyMessage")[0]?.[3] as { message_thread_id: number };
-    assert.equal(world.store.topic(ARTEM, threadId.message_thread_id)?.cwd, world.home);
-    assert.deepEqual(world.pis[0]?.prompts(), ["fix the bug"]);
+    assert.equal(world.store.agent(ARTEM, TOPIC)?.cwd, join(world.home, "zeta"));
   });
 
-  test("a mobile client's implicit topic is adopted instead of creating another", async () => {
-    world = makeWorld([]);
-    await topicCreated(42, "fix the bug", true);
-    await world.clock.advance(3000);
-    await text("fix the bug");
-    assert.deepEqual(world.tg.of("createForumTopic"), []);
-    assert.equal((world.tg.of("copyMessage")[0]?.[3] as { message_thread_id: number }).message_thread_id, 42);
+  test("All is a place like any topic", async () => {
+    await text("/agent proj");
+    await settle();
+    await text("task");
+    assert.deepEqual(world.pis[0]?.prompts(), ["task"]);
+    assert.equal(world.store.agent(ARTEM, undefined)?.cwd, join(world.home, "proj"));
   });
 
-  test("a topic deleted by the user closes its session", async () => {
-    const pi = await boundTopic();
+  test("a topic deleted by the user takes its agent", async () => {
+    const pi = await agentInTopic();
+    await text("task", TOPIC);
     world.tg.failNext("sendRichMessage", "Bad Request: message thread not found");
     pi.emit({ type: "message_update", assistantMessageEvent: { type: "text_start", contentIndex: 0 } });
     pi.emit({ type: "message_update", assistantMessageEvent: { type: "text_end", contentIndex: 0, content: "Answer." } });
     pi.emit({ type: "agent_settled", aborted: false });
     await settle();
-    assert.equal(world.store.topic(ARTEM, 7)?.closed, true);
+    assert.equal(world.store.agent(ARTEM, TOPIC), undefined);
     assert.equal(pi.closed, true);
   });
 
-  test("an unexpected exit of pi is reported; the next message starts a new process", async () => {
-    const pi = await boundTopic();
+  test("an unexpected exit of pi is reported with sound; the next message starts a new process", async () => {
+    const pi = await agentInTopic();
     pi.crash();
     await settle();
-    assert.match(sentTexts().at(-1) ?? "", /pi exited unexpectedly/);
-    assert.ok(reactions().includes("💔"));
-    await text("again", 7);
+    assert.match(loud().at(-1) ?? "", /pi exited unexpectedly/);
+    await text("again", TOPIC);
     assert.equal(world.pis.length, 2);
     assert.deepEqual(world.pis[1]?.prompts(), ["again"]);
-  });
-
-  test("close: process stopped, topic renamed and marked closed", async () => {
-    const pi = await boundTopic();
-    pi.emit({ type: "agent_settled", aborted: false });
-    await settle();
-    await text("⚙️ More", 7);
-    const more = world.tg.sentId(/More/);
-    await press("s:close", 7, 1);
-    assert.equal(toasts().at(-1), "This panel is closed.", "a stale panel does nothing");
-    await press("s:close", 7, more);
-    await press("s:closeyes", 7, more);
-    assert.equal(pi.closed, true);
-    assert.equal(world.store.topic(ARTEM, 7)?.closed, true);
-    assert.deepEqual(world.tg.of("editForumTopic").at(-1)?.[2], { name: "✓ ~/proj" });
-    await text("more", 7);
-    assert.match(sentTexts().at(-1) ?? "", /closed/);
   });
 });

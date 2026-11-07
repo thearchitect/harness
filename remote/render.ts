@@ -94,15 +94,15 @@ export function resultText(result: unknown): string {
 function renderItem(item: Item): string {
   switch (item.kind) {
     case "thinking":
-      return `<details><summary>💭 Thinking</summary>\n\n${stripAnsi(item.text.trim())}\n\n</details>`;
+      return `<details><summary>Thinking</summary>\n\n${stripAnsi(item.text.trim())}\n\n</details>`;
     case "text":
       return stripAnsi(item.text.trim());
     case "tool": {
-      const status = !item.done ? "⏳" : item.isError ? "❌" : "🔧";
       const duration = item.durationMs !== undefined ? ` · ${formatDuration(item.durationMs)}` : "";
+      const status = !item.done ? " · running" : item.isError ? " · failed" : "";
       const args = JSON.stringify(item.args ?? {}, null, 2);
       const result = item.result !== undefined ? `\n\n${fence(truncate(stripAnsi(item.result), RESULT_LIMIT))}` : "";
-      return `<details><summary>${status} ${escapeHtml(toolSummary(item.name, item.args))}${duration}</summary>\n\n${fence(truncate(args, RESULT_LIMIT), "json")}${result}\n\n</details>`;
+      return `<details><summary>${escapeHtml(toolSummary(item.name, item.args))}${duration}${status}</summary>\n\n${fence(truncate(args, RESULT_LIMIT), "json")}${result}\n\n</details>`;
     }
     default:
       return assertNever(item);
@@ -154,10 +154,10 @@ export function formatDuration(ms: number): string {
   }
 }
 
-/** "✅ planning finished · 2m 14s · $0.12 · deepseek-v4-pro" */
+/** "planning finished · 2m 14s · $0.12 · deepseek-v4-pro" */
 export function bannerLine(details: FinishedDetails): string {
   const what = details.mode === "plan" ? "planning" : "building";
-  const head = details.interrupted ? `⏹ ${what} interrupted` : `✅ ${what} finished`;
+  const head = `${what} ${details.interrupted ? "interrupted" : "finished"}`;
   const model = details.model?.split("/").pop();
   return [
     head,

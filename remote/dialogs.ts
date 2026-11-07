@@ -1,9 +1,10 @@
 /**
- * Extension dialogs of one topic's pi process (RPC extension_ui_request) as
- * Telegram messages that stay the last message of the topic while open.
+ * Extension dialogs of one agent's pi process (RPC extension_ui_request) as
+ * Telegram messages that stay the last message of the place while open; they
+ * need the user, so they come with sound.
  *
- * - The write/edit gate (rpc-dialogs.ts contract): Allow, Allow + note,
- *   Reject…, Stop. A text sent instead of a button rejects with that text as
+ * - The write/edit gate (rpc-dialogs.ts contract, the same labels): Allow,
+ *   Allow with comment, Reject with comment, Stop. A text sent instead of a button rejects with that text as
  *   the comment, like "No (why?)" in the TUI. harness asks for the comment in
  *   a follow-up input dialog; the gateway answers it with the text it already
  *   has.
@@ -71,14 +72,14 @@ export class Dialogs {
         } else {
           const seq = this.seq + 1;
           const buttons = request.options.map((option, index) => [{ text: oneLine(option), callback_data: data(seq, index) }]);
-          await this.show({ kind: "select", id: request.id, seq, options: request.options }, `❓ ${html(request.title)}`, buttons, request.timeout);
+          await this.show({ kind: "select", id: request.id, seq, options: request.options }, html(request.title), buttons, request.timeout);
         }
         return;
       case "confirm": {
         const seq = this.seq + 1;
         await this.show(
           { kind: "confirm", id: request.id, seq },
-          `❓ <b>${html(request.title)}</b>\n${html(request.message)}`,
+          `<b>${html(request.title)}</b>\n${html(request.message)}`,
           [[{ text: "Yes", callback_data: data(seq, "yes") }, { text: "No", callback_data: data(seq, "no") }]],
           request.timeout,
         );
@@ -92,7 +93,7 @@ export class Dialogs {
           this.host.respond({ type: "extension_ui_response", id: request.id, value });
         } else {
           const prefill = request.method === "editor" && request.prefill ? `\n<pre>${html(request.prefill)}</pre>` : "";
-          await this.show({ kind: "input", id: request.id, seq: this.seq + 1 }, `✍️ ${html(request.title)}${prefill}`, undefined, request.method === "input" ? request.timeout : undefined);
+          await this.show({ kind: "input", id: request.id, seq: this.seq + 1 }, `${html(request.title)}${prefill}`, undefined, request.method === "input" ? request.timeout : undefined);
         }
         return;
       default:
@@ -114,12 +115,12 @@ export class Dialogs {
           if (option === undefined) {
             return "Unknown option.";
           } else {
-            await this.close({ type: "extension_ui_response", id: open.id, value: option }, `✔️ ${html(option)}`);
+            await this.close({ type: "extension_ui_response", id: open.id, value: option }, html(option));
             return option;
           }
         }
         case "confirm":
-          await this.close({ type: "extension_ui_response", id: open.id, confirmed: action === "yes" }, action === "yes" ? "✔️ Yes" : "✖️ No");
+          await this.close({ type: "extension_ui_response", id: open.id, confirmed: action === "yes" }, action === "yes" ? "Yes" : "No");
           return action === "yes" ? "Yes" : "No";
         case "input":
           return "Reply with text.";
@@ -138,19 +139,19 @@ export class Dialogs {
       switch (open.kind) {
         case "gate":
           if (open.awaiting === "note") {
-            await this.answerGate(open, GATE_OPTIONS.allowWithComment, text, `✅ allowed · note: ${html(text)}`);
+            await this.answerGate(open, GATE_OPTIONS.allowWithComment, text, `allowed: ${html(text)}`);
           } else {
-            await this.answerGate(open, GATE_OPTIONS.rejectWithComment, text, `❌ rejected: ${html(text)}`);
+            await this.answerGate(open, GATE_OPTIONS.rejectWithComment, text, `rejected: ${html(text)}`);
           }
           return true;
         case "select":
-          await this.close({ type: "extension_ui_response", id: open.id, cancelled: true }, "✖️ cancelled — choose a button next time");
+          await this.close({ type: "extension_ui_response", id: open.id, cancelled: true }, "cancelled");
           return true;
         case "confirm":
-          await this.close({ type: "extension_ui_response", id: open.id, cancelled: true }, "✖️ cancelled");
+          await this.close({ type: "extension_ui_response", id: open.id, cancelled: true }, "cancelled");
           return true;
         case "input":
-          await this.close({ type: "extension_ui_response", id: open.id, value: text }, `✔️ ${html(text)}`);
+          await this.close({ type: "extension_ui_response", id: open.id, value: text }, html(text));
           return true;
         default:
           return assertNever(open);
@@ -164,9 +165,9 @@ export class Dialogs {
     if (open === undefined) {
       // nothing open
     } else if (open.kind === "gate") {
-      await this.close({ type: "extension_ui_response", id: open.id, value: GATE_OPTIONS.stop }, "⏹ stopped");
+      await this.close({ type: "extension_ui_response", id: open.id, value: GATE_OPTIONS.stop }, "stopped");
     } else {
-      await this.close({ type: "extension_ui_response", id: open.id, cancelled: true }, "⏹ stopped");
+      await this.close({ type: "extension_ui_response", id: open.id, cancelled: true }, "stopped");
     }
   }
 
@@ -185,10 +186,10 @@ export class Dialogs {
     const seq = this.seq + 1;
     await this.show(
       { kind: "gate", id, seq },
-      `✏️ <b>Allow file change?</b>${details ? `\n<pre>${html(details)}</pre>` : ""}`,
+      `<b>${html(GATE_TITLE)}</b>${details ? `\n<pre>${html(details)}</pre>` : ""}`,
       [
-        [{ text: "✅ Allow", callback_data: data(seq, "allow") }, { text: "💬 Allow + note", callback_data: data(seq, "note") }],
-        [{ text: "❌ Reject…", callback_data: data(seq, "reject") }, { text: "⏹ Stop", callback_data: data(seq, "stop") }],
+        [{ text: GATE_OPTIONS.allow, callback_data: data(seq, "allow") }, { text: GATE_OPTIONS.allowWithComment, callback_data: data(seq, "note") }],
+        [{ text: GATE_OPTIONS.rejectWithComment, callback_data: data(seq, "reject") }, { text: GATE_OPTIONS.stop, callback_data: data(seq, "stop") }],
       ],
       undefined,
     );
@@ -197,17 +198,17 @@ export class Dialogs {
   private async pressGate(open: Extract<Open, { kind: "gate" }>, action: string): Promise<string> {
     switch (action) {
       case "allow":
-        await this.close({ type: "extension_ui_response", id: open.id, value: GATE_OPTIONS.allow }, "✅ allowed");
+        await this.close({ type: "extension_ui_response", id: open.id, value: GATE_OPTIONS.allow }, "allowed");
         return "Allowed";
       case "stop":
-        await this.close({ type: "extension_ui_response", id: open.id, value: GATE_OPTIONS.stop }, "⏹ stopped");
+        await this.close({ type: "extension_ui_response", id: open.id, value: GATE_OPTIONS.stop }, "stopped");
         return "Stopped";
       case "note":
       case "reject":
         open.awaiting = action;
         await this.host.outbox.editSticky(
-          { html: `${this.body}\n\n${action === "note" ? "💬 Write the note for the model:" : "❌ Write why — the model sees it:"}` },
-          [[{ text: "⏹ Stop", callback_data: data(open.seq, "stop") }]],
+          { html: `${this.body}\n\n${html(action === "note" ? GATE_COMMENT_PROMPTS.allowWithComment : GATE_COMMENT_PROMPTS.rejectWithComment)}` },
+          [[{ text: GATE_OPTIONS.stop, callback_data: data(open.seq, "stop") }]],
         );
         return action === "note" ? "Write the note" : "Write the reason";
       default:
@@ -223,7 +224,7 @@ export class Dialogs {
   private async show(open: Open, body: string, keyboard: Keyboard | undefined, timeout: number | undefined): Promise<void> {
     if (this.open !== undefined) {
       // pi asks one dialog at a time; a new one supersedes a stale one
-      await this.host.outbox.closeSticky({ html: `${this.body}\n\n⌛ superseded` });
+      await this.host.outbox.closeSticky({ html: `${this.body}\n\nsuperseded` });
     } else {
       await this.host.opened();
     }
@@ -235,7 +236,7 @@ export class Dialogs {
     this.timer = timeout !== undefined && timeout > 0
       ? this.host.clock.after(timeout, () => {
           // pi resolved the dialog itself on its timeout
-          if (this.open === open) void this.finish("⌛ timed out");
+          if (this.open === open) void this.finish("timed out");
         })
       : undefined;
   }
@@ -254,7 +255,7 @@ export class Dialogs {
   }
 
   private async notify(message: string, type: "info" | "warning" | "error"): Promise<void> {
-    const icon = type === "error" ? "❌ " : type === "warning" ? "⚠️ " : "";
+    const icon = type === "error" ? "Error: " : type === "warning" ? "Warning: " : "";
     const line = `${icon}${html(message)}`;
     if (this.open !== undefined) {
       this.body = `${this.body}\n\n${line}`;

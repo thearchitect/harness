@@ -140,19 +140,21 @@ deployment template `nix flake init -t github:thearchitect/harness#remote`
 (its README walks through the setup).
 
 - **Model.** A whitelist of Telegram users (`remote.yaml`); each works under
-  a uid of their own in `/data/home/<name>`. Every topic of the private chat
-  with the bot is one pi session (`pi --mode rpc --session-id`, profile
-  `server`) in a directory picked with one tap.
-- **Interaction.** A persistent keyboard of four sections (🔨 Build · ⏹ Stop ·
-  🧠 Model · ⚙️ More: thinking, compact, close, logins, secrets, the server
-  SSH key) acting on the topic it is pressed in; a section's choices open as a
-  panel at the bottom of the topic, never above the screen. A pinned status
-  line per topic (directory, model, thinking, next mode, state); a live draft of the run with
-  Telegram's native stop; thinking and tool calls in collapsed blocks; a
-  banner with duration and cost; 🔨 Build under a plan. Write/edit
-  confirmations are buttons and always the last message of the topic; a
-  text instead of a button rejects with that text. Writing during a run
-  steers it.
+  a uid of their own in `/data/home/<name>`. A place — a topic the user
+  created, or All — either has no agent (service commands) or runs exactly
+  one: `/agent [path]` starts a pi session there (`pi --mode rpc
+  --session-id`, profile `server`), `/close` ends it. The bot never creates,
+  renames or deletes topics.
+- **Interaction.** The semantics of the TUI: a message plans, a message
+  starting with `!` builds; writing during a run steers it; `/stop` or the
+  draft's native stop aborts. Commands: `/agent`, `/stop`, `/model`,
+  `/thinking`, `/compact`, `/close`, `/login`, `/secrets`, `/key`,
+  `/sessions`; their choices are a panel at the bottom of the place. A pinned
+  status line (directory, model, thinking, state); a live draft of the run;
+  thinking and tool calls in collapsed blocks; the harness banner. Write/edit
+  confirmations carry the gate's own buttons and stay the last message; a
+  text instead of a button rejects with that text. Only the final message of
+  a run, dialogs and errors make a sound.
 - **Machine.** One Fly machine with a volume; the gateway answers the
   webhook and exits when idle, so the machine sleeps until the next message.
 - **Secrets.** The image carries only cage ciphertext; the machine's identity

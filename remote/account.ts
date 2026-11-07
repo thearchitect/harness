@@ -1,8 +1,8 @@
 /**
- * The user's account, from ⚙️ More (or /login, /secrets, /key, /sessions) in
- * whatever topic they are: Login (OAuth providers), Secrets (their own cage
- * store), Key (the server SSH key), Sessions, Help. Everything happens at the
- * bottom of that topic: panels, requests for input, results.
+ * The user's account, through /login, /secrets, /key and /sessions in any
+ * place: OAuth providers, their own cage store, the server SSH key, the
+ * running agents. Everything happens at the bottom of that place: panels,
+ * requests for input (with sound), results (silent).
  *
  * Values typed for secrets and login codes are deleted from the chat as soon
  * as they are read.
@@ -24,7 +24,6 @@ export type AccountDeps = {
   /** The user's secrets or login changed: their processes restart. */
   restartUser(userId: number): void;
   startLogin(user: UserConfig, args: string[], callbacks: LoginCallbacks): LoginRun;
-  help: string;
 };
 
 type Awaiting =
@@ -57,8 +56,12 @@ export class Account {
 
   /** A command: /login, /secrets, /key, /sessions. */
   async command(name: string, place: Outbox): Promise<void> {
-    const action = { login: "providers", logout: "providers", secret: "secrets", secrets: "secrets", key: "key", whoami: "key", sessions: "sessions" }[name] ?? "help";
-    await this.panelAction(action, undefined, place);
+    const action = { login: "providers", secrets: "secrets", key: "key", sessions: "sessions" }[name];
+    if (action !== undefined) {
+      await this.panelAction(action, undefined, place);
+    } else {
+      throw new Error(`not an account command: /${name}`);
+    }
   }
 
   /** An account panel button `a:<action>[:<arg>]` in `place`; resolves with the toast text. */
@@ -68,21 +71,18 @@ export class Account {
       case "dismiss":
         await place.closePanel(undefined);
         return "OK";
-      case "help":
-        await place.closePanel(this.deps.help);
-        return "Help";
       case "key": {
         const key = await publicKey(this.deps.config, this.user);
         await place.closePanel(
           key !== undefined
-            ? `👤 Your server SSH key — add it to GitHub/GitLab for git over SSH, or as a cage recipient:\n<code>${escapeHtml(key)}</code>`
-            : "❌ The server SSH key does not exist yet.",
+            ? `<code>${escapeHtml(key)}</code>`
+            : "The server SSH key does not exist yet.",
         );
         return "Key";
       }
       case "sessions": {
         const lines = this.deps.sessionsSummary(this.user.telegramId);
-        await place.closePanel(lines.length > 0 ? `📋 <b>Sessions</b>\n${lines.join("\n")}` : "📋 No sessions yet.");
+        await place.closePanel(lines.length > 0 ? lines.join("\n") : "No agents.");
         return "Sessions";
       }
       case "providers":
@@ -91,12 +91,12 @@ export class Account {
       case "logout": {
         const provider = this.providers[Number(arg)];
         if (provider === undefined) {
-          await place.closePanel("❌ The list is outdated — open it again.");
+          await place.closePanel("The list is outdated, run /login again.");
           return "Failed";
         } else if (this.login !== undefined) {
           return "Another login is in progress";
         } else {
-          await place.closePanel(`🔑 ${action === "login" ? "Logging in to" : "Logging out of"} ${escapeHtml(provider.name)}…`);
+          await place.closePanel(`${action === "login" ? "Logging in to" : "Logging out of"} ${escapeHtml(provider.name)}…`);
           void this.runLogin(action, provider, place);
           return provider.name;
         }
@@ -105,8 +105,8 @@ export class Account {
         return this.showSecrets(place);
       case "add":
         this.awaiting = { kind: "secretName" };
-        await place.closePanel("🔐 New secret");
-        await place.send({ html: "🔐 Name of the new secret (A-Z, 0-9, _), e.g. <code>OPENAI_API_KEY</code>:" }, { role: "sticky", forceReply: "SECRET_NAME", silent: false });
+        await place.closePanel("New secret");
+        await place.send({ html: "Name (A-Z, 0-9, _):" }, { role: "sticky", forceReply: "SECRET_NAME", silent: false });
         return "Name the secret";
       case "del":
         if (arg === undefined) return "Unknown secret";
@@ -117,9 +117,9 @@ export class Account {
         const removed = await removeSecret(this.deps.config, this.user, arg);
         if (removed.ok) {
           this.deps.restartUser(this.user.telegramId);
-          await place.closePanel(`🗑 ${escapeHtml(arg)} deleted. New sessions start without it.`);
+          await place.closePanel(`${escapeHtml(arg)} deleted; agents get the change on their next start.`);
         } else {
-          await place.closePanel(`❌ ${escapeHtml(removed.problem)}`);
+          await place.closePanel(`Error: ${escapeHtml(removed.problem)}`);
         }
         return "Deleted";
       }
@@ -137,7 +137,7 @@ export class Account {
       const option = awaiting.prompt.options[index];
       if (option === undefined) return "Unknown option";
       this.awaiting = undefined;
-      await this.place?.closeSticky({ html: `${escapeHtml(awaiting.prompt.message)}\n✔️ ${escapeHtml(option.label)}` });
+      await this.place?.closeSticky({ html: `${escapeHtml(awaiting.prompt.message)}\n${escapeHtml(option.label)}` });
       awaiting.resolve(option.id);
       return option.label;
     }
@@ -152,34 +152,34 @@ export class Account {
       case "secretName": {
         const name = text.trim().toUpperCase();
         if (!SECRET_NAME.test(name)) {
-          await place.send({ html: "❌ Use A-Z, 0-9 and _ (letter or _ first). Try again:" }, { silent: false });
+          await place.send({ html: "Use A-Z, 0-9 and _ (a letter or _ first):" }, { silent: false });
         } else {
           this.awaiting = { kind: "secretValue", name };
-          await place.closeSticky({ html: `🔐 Name: <code>${escapeHtml(name)}</code>` });
-          await place.send({ html: `🔐 Value of <code>${escapeHtml(name)}</code> — your message is deleted right away:` }, { role: "sticky", forceReply: "value", silent: false });
+          await place.closeSticky({ html: `Name: <code>${escapeHtml(name)}</code>` });
+          await place.send({ html: `Value of <code>${escapeHtml(name)}</code> (the message is deleted at once):` }, { role: "sticky", forceReply: "value", silent: false });
         }
         return;
       }
       case "secretValue": {
         await place.delete(messageId);
         this.awaiting = undefined;
-        await place.closeSticky({ html: `🔐 Value of <code>${escapeHtml(awaiting.name)}</code> received.` });
+        await place.closeSticky({ html: `Value of <code>${escapeHtml(awaiting.name)}</code> received.` });
         const serverKey = await publicKey(this.deps.config, this.user);
         const saved = serverKey === undefined
           ? { ok: false as const, problem: "the server SSH key does not exist yet" }
           : await setSecret(this.deps.config, this.user, serverKey, awaiting.name, text);
         if (saved.ok) {
           this.deps.restartUser(this.user.telegramId);
-          await place.send({ html: `✅ ${escapeHtml(awaiting.name)} saved. Sessions get it from their next start.` }, { silent: false });
+          await place.send({ html: `${escapeHtml(awaiting.name)} saved; agents get it on their next start.` });
         } else {
-          await place.send({ html: `❌ ${escapeHtml(saved.problem)}` }, { silent: false });
+          await place.send({ html: `Error: ${escapeHtml(saved.problem)}` }, { silent: false });
         }
         return;
       }
       case "login": {
         if (awaiting.prompt.type === "secret" || awaiting.prompt.type === "manual_code") await place.delete(messageId);
         this.awaiting = undefined;
-        await place.closeSticky({ html: `${escapeHtml(awaiting.prompt.message)}\n✔️ received` });
+        await place.closeSticky({ html: `${escapeHtml(awaiting.prompt.message)}\nreceived` });
         awaiting.resolve(text.trim());
         return;
       }
@@ -188,13 +188,13 @@ export class Account {
     }
   }
 
-  /** /stop or ⏹ where the account waits: cancels the login or the pending input. */
+  /** /stop where the account waits: cancels the login or the pending input. */
   async stop(): Promise<void> {
     const awaiting = this.awaiting;
     this.awaiting = undefined;
     if (awaiting?.kind === "login") awaiting.reject(new Error("cancelled"));
     this.login?.cancel();
-    if (awaiting !== undefined) await this.place?.closeSticky({ html: "⏹ cancelled" });
+    if (awaiting !== undefined) await this.place?.closeSticky({ html: "cancelled" });
   }
 
   /* ------------------------------------------------------------------------ */
@@ -207,7 +207,7 @@ export class Account {
       await place.showPanel(providersPanel(this.providers));
       return "Choose a provider";
     } else {
-      await place.closePanel(`❌ ${escapeHtml(result.problem)}`);
+      await place.closePanel(`Error: ${escapeHtml(result.problem)}`);
       return "Failed";
     }
   }
@@ -218,7 +218,7 @@ export class Account {
       await place.showPanel(secretsPanel(listed.names));
       return listed.names.length > 0 ? "Your secrets" : "No secrets yet";
     } else {
-      await place.closePanel(`❌ ${escapeHtml(listed.problem)}`);
+      await place.closePanel(`Error: ${escapeHtml(listed.problem)}`);
       return "Failed";
     }
   }
@@ -233,15 +233,15 @@ export class Account {
     this.login = undefined;
     if (this.awaiting?.kind === "login") {
       this.awaiting = undefined;
-      await place.closeSticky({ html: "⌛ closed" });
+      await place.closeSticky({ html: "closed" });
     } else {
       // no prompt left open
     }
     if (result.ok) {
       this.deps.restartUser(this.user.telegramId);
-      await place.send({ html: action === "login" ? `✅ Logged in to ${escapeHtml(provider.name)}.` : `✅ Logged out of ${escapeHtml(provider.name)}.` }, { silent: false });
+      await place.send({ html: action === "login" ? `Logged in to ${escapeHtml(provider.name)}.` : `Logged out of ${escapeHtml(provider.name)}.` });
     } else {
-      await place.send({ html: `❌ ${escapeHtml(provider.name)}: ${escapeHtml(result.problem)}` }, { silent: false });
+      await place.send({ html: `Error: ${escapeHtml(provider.name)}: ${escapeHtml(result.problem)}` }, { silent: false });
     }
   }
 
@@ -266,13 +266,13 @@ export class Account {
     switch (event.type) {
       case "device_code":
         await place.send(
-          { html: `🔑 Enter this code: <code>${escapeHtml(event.userCode)}</code> (tap to copy)` },
+          { html: `Code: <code>${escapeHtml(event.userCode)}</code>` },
           { silent: false, keyboard: [[{ text: "Open", url: event.verificationUri }]] },
         );
         return;
       case "auth_url":
         await place.send(
-          { html: `🔑 ${escapeHtml(event.instructions ?? "Open the link to log in.")}` },
+          { html: escapeHtml(event.instructions ?? "Open the link to log in.") },
           { silent: false, keyboard: [[{ text: "Open", url: event.url }]] },
         );
         return;

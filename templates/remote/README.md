@@ -37,18 +37,20 @@ Inside `nix develop` (flyctl, skopeo, cage):
    cage dump -o ci.key ops:ci-cage-identity && gh secret set CAGE_SSH_IDENTITY < ci.key; rm ci.key
    ```
 6. **Deploy.** `cage run @root - ./deploy.sh` (or push).
-7. **Users.** Each user writes to the bot; ⚙️ More → 👤 Key shows their
-   server SSH key. Add it as their `server-<name>` recipient,
-   `cage encrypt`, commit: their API keys reach their sessions from then on.
-   They can also keep secrets of their own (🔐 Secrets) and log in to OAuth
-   providers (🔑 Login) from Telegram.
+7. **Users.** Each user writes `/key` to the bot: their server SSH key. Add
+   it as their `server-<name>` recipient, `cage encrypt`, commit: their API
+   keys reach their agents from then on. They can also keep secrets of their
+   own (`/secrets`) and log in to OAuth providers (`/login`).
 
 ## Using it
 
-- Write a task in a new topic (or in All): pick the directory with one tap,
-  the agent plans. 🔨 Build on the keyboard makes the next message build;
-  `!` before a message builds too; 🔨 Build under a plan implements it.
-- Write while the agent works to steer it; ⏹ stops it.
-- 🧠 Model and ⚙️ More open their choices at the bottom of the topic.
+- A topic you create (or All) is a place: `/agent [path]` starts an agent
+  there, `/close` ends it; without an agent a place is for service commands.
+- A message plans; a message starting with `!` builds. Writing during a run
+  steers it; `/stop` or the draft's stop button aborts.
+- `/model`, `/thinking`, `/compact`; `/login`, `/secrets`, `/key`,
+  `/sessions`.
 - Write/edit confirmations come as buttons; a text instead of a button
   rejects with that text as the reason.
+
+Operations (build, test, deploy, secrets, users): `AGENTS.md`.

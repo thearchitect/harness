@@ -110,7 +110,7 @@ async function main(): Promise<void> {
     const problems = await prepareUser(config, user);
     if (problems.length > 0) {
       log(`${user.name}: ${problems.join("; ")}`);
-      await bot.api.sendMessage(user.telegramId, `⚠️ Your account is not fully set up:\n${problems.join("\n")}`).catch((error: unknown) => log(`${user.name}: ${String(error)}`));
+      await bot.api.sendMessage(user.telegramId, `Your account is not fully set up:\n${problems.join("\n")}`).catch((error: unknown) => log(`${user.name}: ${String(error)}`));
     } else {
       log(`${user.name}: ready`);
     }
@@ -130,7 +130,7 @@ async function main(): Promise<void> {
     clock: systemClock,
     log,
     spawn: (spec, handlers) => new RpcProcess(spec, handlers),
-    spec: (user, topic) => piSpec(config, user, topic.cwd, topic.sessionId),
+    spec: (user, agent) => piSpec(config, user, agent.cwd, agent.sessionId),
     newDraftId: () => randomInt(1, 2 ** 31 - 1),
     startLogin: (user, args, callbacks) => new LoginRun(config, user, args, callbacks),
     download: async (fileId) => {
@@ -143,7 +143,6 @@ async function main(): Promise<void> {
     activity: () => idle.activity(),
   });
   const idle = new IdleShutdown(systemClock, config.limits.idleShutdownMinutes * 60_000, () => ready.isQuiescent(), () => void stop("idle"));
-  await ready.removeObsoleteTopics();
   gateway = ready;
   for (const update of early.splice(0)) void ready.onUpdate(update);
 

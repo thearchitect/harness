@@ -14,13 +14,13 @@
  * through onThreadGone.
  */
 
-import type { ForceReply, InlineKeyboardButton, InlineKeyboardMarkup, ReactionTypeEmoji, ReplyKeyboardMarkup } from "grammy/types";
+import type { ForceReply, InlineKeyboardButton, InlineKeyboardMarkup } from "grammy/types";
 import { plainFallback } from "./render.ts";
 import { describeError, isNotModified, isParseError, isThreadGone, type Tg } from "./tg.ts";
 
 export type Body = { html: string } | { markdown: string };
 export type Keyboard = InlineKeyboardButton[][];
-type Markup = InlineKeyboardMarkup | ForceReply | ReplyKeyboardMarkup;
+type Markup = InlineKeyboardMarkup | ForceReply;
 
 /** How a sent message takes part in the button invariant. */
 export type Role = "plain" | "transient" | "sticky" | "pinned";
@@ -31,8 +31,6 @@ export type SendOptions = {
   keyboard?: Keyboard;
   /** Ask for a text reply (sticky messages only). */
   forceReply?: string;
-  /** Install the chat's persistent reply keyboard (plain messages only). */
-  replyKeyboard?: ReplyKeyboardMarkup;
 };
 
 type Tracked = { messageId: number; body: Body; markup?: Markup; silent: boolean };
@@ -79,7 +77,7 @@ export class Outbox {
         ? ({ force_reply: true, input_field_placeholder: options.forceReply } satisfies ForceReply)
         : options.keyboard !== undefined
           ? ({ inline_keyboard: options.keyboard } satisfies InlineKeyboardMarkup)
-          : options.replyKeyboard;
+          : undefined;
       const silent = options.silent ?? true;
       if (role !== "pinned") {
         await this.stripTransient();
@@ -160,7 +158,7 @@ export class Outbox {
     return this.enqueue(() => this.stripTransient());
   }
 
-  /* Panels: the inline second level of a keyboard section, the topic's
+  /* Panels: the inline choices of a command, the place's
    * transient message. Showing a panel again edits it in place while it is
    * still the last message with buttons; otherwise a new one is posted. */
 
@@ -217,10 +215,8 @@ export class Outbox {
     );
   }
 
-  react(messageId: number, emoji: ReactionTypeEmoji["emoji"]): Promise<void> {
-    return this.enqueue(() =>
-      this.call("setMessageReaction", () => this.tg.setMessageReaction(this.chatId, messageId, [{ type: "emoji", emoji }])).then(() => undefined),
-    );
+  unpin(messageId: number): Promise<void> {
+    return this.enqueue(() => this.call("unpinChatMessage", () => this.tg.unpinChatMessage(this.chatId, messageId)).then(() => undefined));
   }
 
   /** The live draft of a run (ephemeral; Telegram keeps it 30 s). */
@@ -229,12 +225,6 @@ export class Outbox {
       this.call("sendRichMessageDraft", () =>
         this.tg.sendRichMessageDraft(this.chatId, draftId, { markdown }, { message_thread_id: this.threadId, can_stop: true }),
       ).then(() => undefined),
-    );
-  }
-
-  typing(): Promise<void> {
-    return this.enqueue(() =>
-      this.call("sendChatAction", () => this.tg.sendChatAction(this.chatId, "typing", { message_thread_id: this.threadId })).then(() => undefined),
     );
   }
 
