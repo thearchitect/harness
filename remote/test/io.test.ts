@@ -106,6 +106,7 @@ describe("accounts, secrets and login (runAs self)", () => {
     assert.deepEqual(await prepareUser(config, user), []);
     const home = homeOf(config, user);
     assert.equal(statSync(home).mode & 0o777, 0o700);
+    assert.equal(statSync(join(dataDir, "home")).mode & 0o777, 0o755, "users reach their homes");
     assert.match((await publicKey(config, user)) ?? "", /^ssh-ed25519 \S+ tester@/);
     assert.deepEqual(JSON.parse(readFileSync(join(home, ".pi/agent/settings.json"), "utf8")), { defaultProvider: "deepseek" });
     await runAsUser(config, user, "sh", ["-c", "echo '{}' > .pi/agent/settings.json"]);

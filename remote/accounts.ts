@@ -13,7 +13,7 @@
 
 import { spawn } from "node:child_process";
 import { chmodSync, chownSync, existsSync, mkdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Config, UserConfig } from "./config.ts";
 import type { RpcSpec } from "./rpc.ts";
 
@@ -101,6 +101,10 @@ export async function prepareUser(config: Config, user: UserConfig): Promise<str
   const home = homeOf(config, user);
   const problems: string[] = [];
   {
+    // The homes' parent is traversable by everyone; each home is its user's only.
+    const homes = dirname(home);
+    mkdirSync(homes, { recursive: true, mode: 0o755 });
+    chmodSync(homes, 0o755);
     mkdirSync(home, { recursive: true, mode: 0o700 });
     if (config.runAs === "users") {
       const stat = statSync(home);

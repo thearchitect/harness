@@ -11,6 +11,15 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 app="$(sed -n 's/^app *= *"\(.*\)"/\1/p' fly.toml)"
+
+# Internal: the KEY=VALUE lines `cage import` stores (stdout never shown).
+if [[ "${1-}" == "--deploy-token-env" ]]; then
+  token="$(flyctl tokens create deploy -a "$app")"
+  # The token contains a space ("FlyV1 fm2_…"): single-quoted.
+  printf "FLY_APP=%s\nFLY_API_TOKEN='%s'\n" "$app" "$token"
+  exit 0
+fi
+
 region="$(sed -n 's/^primary_region *= *"\(.*\)"/\1/p' fly.toml)"
 org="${FLY_ORG:-personal}"
 work="$(mktemp -d)"
@@ -32,5 +41,5 @@ cage dump -o "$work/identity" ops:fly-machine-identity
 printf 'HARNESS_MACHINE_IDENTITY=%s\n' "$(base64 -w0 <"$work/identity")" | flyctl secrets import --stage -a "$app" >/dev/null
 echo "machine identity staged"
 
-cage import ops:fly.env - sh -c "printf 'FLY_APP=%s\nFLY_API_TOKEN=%s\n' '$app' \"\$(flyctl tokens create deploy -a '$app')\""
+cage import ops:fly.env - "$0" --deploy-token-env
 echo "deploy token stored in ops:fly.env"
