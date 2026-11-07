@@ -178,6 +178,23 @@ let
 
   piCli = "${nodeModules}/@earendil-works/pi-coding-agent/dist/bundle/cli.js";
 
+  # herdr's own pi integration, pinned with its binary (the file
+  # `herdr integration install pi` writes). It listens for the harness
+  # extension's "herdr:blocked" events, so it runs in the same pi process; it is
+  # a no-op outside a herdr pane.
+  herdrPiIntegration = "${herdr}/share/herdr/integrations/pi/herdr-agent-state.ts";
+
+  # Bundled tools on PATH, with telemetry off unless the user sets otherwise
+  # (as deps.ts runs them).
+  lightpandaCli = writeShellScriptBin "lightpanda" ''
+    export LIGHTPANDA_DISABLE_TELEMETRY="''${LIGHTPANDA_DISABLE_TELEMETRY-true}"
+    exec ${lightpanda}/bin/lightpanda "$@"
+  '';
+  chromeDevtoolsMcpCli = writeShellScriptBin "chrome-devtools-mcp" ''
+    export CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS="''${CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS-1}"
+    exec ${nodeModules}/.bin/chrome-devtools-mcp "$@"
+  '';
+
   # Subcommands pi handles before parsing options (main.ts: auth, package
   # commands, config, mcp). `-e` must not precede them, or pi takes the
   # subcommand for a prompt; they do not need the bundled extensions.
@@ -204,6 +221,7 @@ let
       --exclude-tools tool_search \
       -e ${extensionDir} \
       ${lib.concatMapStringsSep " " (p: "-e ${nodeModules}/${p}") piPackages} \
+      -e ${herdrPiIntegration} \
       "$@"
   '';
 
@@ -238,6 +256,7 @@ stdenvNoCC.mkDerivation {
   dontUnpack = true;
   installPhase = ''
     runHook preInstall
+    test -f ${herdrPiIntegration}
     mkdir -p $out/bin $out/share/harness
     # A copy, not a symlink: scripts resolve the bundle (and its manifest)
     # from `readlink -f $(command -v pi)`.
@@ -245,6 +264,9 @@ stdenvNoCC.mkDerivation {
     ln -s ${dev}/bin/pi-dev $out/bin/pi-dev
     ln -s ${lib.getExe herdr} $out/bin/herdr
     ln -s ${lib.getExe pnpm} $out/bin/pnpm
+    ln -s ${lightpandaCli}/bin/lightpanda $out/bin/lightpanda
+    ln -s ${nodeModules}/.bin/playwright-mcp $out/bin/playwright-mcp
+    ln -s ${chromeDevtoolsMcpCli}/bin/chrome-devtools-mcp $out/bin/chrome-devtools-mcp
     ln -s ${manifest} $out/share/harness/manifest.json
     runHook postInstall
   '';

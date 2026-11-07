@@ -72,6 +72,17 @@ if "$(bin rust-analyzer)" --version >"$WORK/rust-analyzer.log" 2>&1; then pass "
 if "$BUNDLE/bin/pnpm" --version >"$WORK/pnpm.log" 2>&1; then pass "pnpm --version"; else fail "pnpm --version" "$WORK/pnpm.log"; fi
 if "$BUNDLE/bin/herdr" --version >"$WORK/herdr.log" 2>&1; then pass "herdr --version"; else fail "herdr --version" "$WORK/herdr.log"; fi
 
+# herdr's pi integration, loaded by the launcher
+herdr_pi="$(grep -o '[^ ]*/share/herdr/integrations/pi/herdr-agent-state.ts' "$PI" | head -n 1)"
+if [[ -n "$herdr_pi" && -f "$herdr_pi" ]]; then pass "launcher loads herdr's pi integration"; else fail "launcher loads herdr's pi integration"; fi
+
+# Bundled tools on PATH; telemetry off by default
+if "$BUNDLE/bin/lightpanda" version >"$WORK/lightpanda-cli.log" 2>&1; then pass "lightpanda version"; else fail "lightpanda version" "$WORK/lightpanda-cli.log"; fi
+if grep -q LIGHTPANDA_DISABLE_TELEMETRY "$BUNDLE/bin/lightpanda"; then pass "lightpanda telemetry off"; else fail "lightpanda telemetry off"; fi
+if "$BUNDLE/bin/playwright-mcp" --version >"$WORK/playwright-mcp-cli.log" 2>&1; then pass "playwright-mcp --version"; else fail "playwright-mcp --version" "$WORK/playwright-mcp-cli.log"; fi
+if "$BUNDLE/bin/chrome-devtools-mcp" --version >"$WORK/chrome-devtools-mcp-cli.log" 2>&1; then pass "chrome-devtools-mcp --version"; else fail "chrome-devtools-mcp --version" "$WORK/chrome-devtools-mcp-cli.log"; fi
+if grep -q CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS "$BUNDLE/bin/chrome-devtools-mcp"; then pass "chrome-devtools-mcp usage statistics off"; else fail "chrome-devtools-mcp usage statistics off"; fi
+
 if ((failures > 0)); then
   echo "$failures smoke test(s) failed (logs: $WORK)"
   exit 1

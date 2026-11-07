@@ -1,7 +1,11 @@
 # harness
 
 Personal pi workflow, distributed as a Nix bundle: the pinned `pi` with the
-harness extension, the bundled pi packages and the pinned MCP tools.
+harness extension, the bundled pi packages and the pinned MCP tools. On PATH:
+`pi`, `pi-dev`, `herdr`, `pnpm`, `lightpanda`, `playwright-mcp`,
+`chrome-devtools-mcp` (the last ones with telemetry off by default). herdr's pi
+integration is part of the bundle: do not `herdr integration install pi`
+(`/deps` warns about such a copy).
 
 ## Install
 

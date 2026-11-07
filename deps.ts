@@ -13,8 +13,8 @@
  *   mcp.json entry with the same name takes precedence, as for any
  *   extension-registered server);
  * - lspToolchain: the language servers lsp/ drives;
- * - depsReport: the /deps text - bundled versions, herdr integration state and
- *   how to update;
+ * - depsReport: the /deps text - bundled versions, a duplicate herdr pi
+ *   integration and how to update;
  * - claimHarnessInstance: the double-load guard.
  *
  * Updates are not done here: `nix profile upgrade harness` (or the user's
@@ -173,15 +173,30 @@ export function bundledMcpServers(bin: Manifest["bin"]): Record<string, McpServe
  * /deps
  * ------------------------------------------------------------------------- */
 
-function herdrIntegration(herdr: string): Promise<string> {
+/**
+ * The launcher loads herdr's pi integration from the bundle; a copy installed
+ * by `herdr integration install pi` would load in addition and report every
+ * state change twice.
+ */
+function herdrIntegration(herdr: string): Promise<{ text: string; level: "info" | "warning" }> {
   return new Promise((resolve) => {
     execFile(herdr, ["integration", "status"], { timeout: 10_000 }, (error, stdout) => {
       if (error) {
-        resolve(`unknown (${error.message.split("\n")[0]})`);
-        return;
+        resolve({ text: `unknown (${error.message.split("\n")[0]})`, level: "warning" });
+      } else {
+        const line = stdout.split("\n").find((l) => l.startsWith("pi:"));
+        const state = line ? line.slice(3).trim() : undefined;
+        if (state === undefined) {
+          resolve({ text: "unknown (herdr does not report a pi integration)", level: "warning" });
+        } else if (state.startsWith("not installed")) {
+          resolve({ text: "bundled", level: "info" });
+        } else {
+          resolve({
+            text: `bundled, plus a copy installed by herdr: ${state} - it loads twice; run \`herdr integration uninstall pi\``,
+            level: "warning",
+          });
+        }
       }
-      const line = stdout.split("\n").find((l) => l.startsWith("pi:"));
-      resolve(line ? line.slice(3).trim() : "not reported");
     });
   });
 }
@@ -194,8 +209,8 @@ export async function depsReport(manifest: Manifest): Promise<{ text: string; le
     ...Object.entries(manifest.versions)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([id, version]) => `  ${id.padEnd(width)}  ${version}`),
-    `herdr pi integration: ${herdr}${herdr.startsWith("current") ? "" : " - run `herdr integration install pi`"}`,
+    `herdr pi integration: ${herdr.text}`,
     UPDATE_HINT,
   ];
-  return { text: lines.join("\n"), level: herdr.startsWith("current") ? "info" : "warning" };
+  return { text: lines.join("\n"), level: herdr.level };
 }
