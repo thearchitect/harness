@@ -38,6 +38,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
 - `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `guidelines` (bullets in `<rules>`, in order)
+- `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (one pi RPC process per topic; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
 - `rpc-dialogs.ts` — the write/edit gate as plain select/input dialogs outside the TUI: the contract RPC clients (the Telegram gateway) render natively
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `cage`
 - `install/SKILL.md` — the install/upgrade skill

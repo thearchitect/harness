@@ -1,0 +1,18 @@
+{
+  "//": "Type check of the gateway (nix/test.sh): tsc -p remote. Node runs the sources directly (type stripping), so only erasable syntax is allowed.",
+  "compilerOptions": {
+    "target": "esnext",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"]
+  },
+  "include": ["*.ts", "test/*.ts", "../rpc-dialogs.ts"]
+}

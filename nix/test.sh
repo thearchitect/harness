@@ -29,5 +29,9 @@ fi
 cd "$ROOT"
 node --test tool_project_tree.test.ts
 node --test gate.test.ts
+# The Telegram gateway (remote/): type check, then its tests (cage, ssh-keygen
+# and the login helper run for real, in a throwaway home).
+"$(node -p 'require(process.argv[1]).bin.tsgo' "$HARNESS_MANIFEST")" -p remote
+node --test remote/test/*.test.ts
 node --test lsp/test/unit.test.ts
 node --test --test-concurrency=1 lsp/test/servers.test.ts

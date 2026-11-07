@@ -34,6 +34,9 @@
           harness = bundle;
           inherit (bundle.passthru) npmTools lightpanda;
         }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          harness-telegram = pkgs.callPackage ./nix/remote.nix { inherit bundle; };
+        }
       );
 
       devShells = forAllSystems (pkgs: {
