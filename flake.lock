@@ -1,6 +1,40 @@
 {
   "nodes": {
+    "cage": {
+      "inputs": {
+        "nixpkgs": "nixpkgs"
+      },
+      "locked": {
+        "lastModified": 1793030715,
+        "narHash": "sha256-efk0GjMgYy2UyJXKtBocyQKuX3SVR6MczPa9oY2O/uA=",
+        "owner": "themakers",
+        "repo": "cage",
+        "rev": "99319f069ef09e79ca1c121086912e8a0694efd5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "themakers",
+        "repo": "cage",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
+      "locked": {
+        "lastModified": 1779560665,
+        "narHash": "sha256-tpyBcxPpcQb8ukyNF7DoCwfSY3VPsxHoYwj00Cayv5o=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "64c08a7ca051951c8eae34e3e3cb1e202fe36786",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixos-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
+    "nixpkgs_2": {
       "locked": {
         "lastModified": 1793876309,
         "narHash": "sha256-Wojg9lIH/hDH91iDVH2/EPw8oDSpxjxhXONbU1yf4Zg=",
@@ -18,7 +52,8 @@
     },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "cage": "cage",
+        "nixpkgs": "nixpkgs_2"
       }
     }
   },

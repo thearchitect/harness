@@ -67,7 +67,8 @@ import {
 import { fileURLToPath } from "node:url";
 import { ensureThinkingBlocksVisible } from "./workarounds.ts";
 import { assembleSystemPrompt, systemPromptProblem } from "./prompt.ts";
-import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest } from "./deps.ts";
+import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest, readProfile, type Profile } from "./deps.ts";
+import { askGateViaDialogs, type GateDecision } from "./rpc-dialogs.ts";
 import { AGENT_WORKSPACE_DIR, registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
 import { registerProjectTree } from "./tool_project_tree.ts";
 
@@ -312,8 +313,7 @@ function formatTimestamp(ms: number): string {
  * a steer message — Stop carries it in the tool result only.
  * ========================================================================== */
 
-type GateAction = "allow" | "reject" | "stop";
-type GateDecision = { action: GateAction; comment?: string };
+type GateAction = GateDecision["action"];
 
 const GATE_MIN_EDITOR_WIDTH = 34;
 const GATE_LEFT_WIDTH = 24;
@@ -682,31 +682,8 @@ async function askGateDecision(
     }
   }
 
-  const prompt = `Allow file change?\n${detail.join("\n")}`;
-  const choice = await ctx.ui.select(prompt, [
-    "Yes",
-    "No — reject (comment required)",
-    "Stop",
-  ]);
-  if (choice === "Yes") {
-    const comment = await ctx.ui.input(
-      "Optional comment (Enter to skip).",
-      "Comment for the model…",
-    );
-    const trimmed = comment?.trim();
-    return { action: "allow", comment: trimmed ? trimmed : undefined };
-  }
-  if (choice === "No — reject (comment required)") {
-    const comment = await ctx.ui.input(
-      "Why reject? Required — the model sees this comment.",
-      "What is wrong / what to fix…",
-    );
-    const trimmed = comment?.trim();
-    if (!trimmed) return { action: "stop" };
-    return { action: "reject", comment: trimmed };
-  }
-  // "Stop" or a cancelled dialog both mean reject-and-stop without steer.
-  return { action: "stop" };
+  // Outside the TUI (RPC clients): the dialog contract of rpc-dialogs.ts.
+  return askGateViaDialogs(ctx.ui, detail);
 }
 
 
@@ -800,10 +777,17 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   void ensureThinkingBlocksVisible(); // WORKAROUND W2
 
   // Bundled dependencies (deps.ts): the MCP servers of the Nix bundle
-  // manifest; a missing manifest is shown in the status line, details in /deps.
+  // manifest for this profile; a missing manifest or an unknown profile is
+  // shown in the status line (the profile then stays desktop), details in /deps.
   const bundle = readManifest();
+  const profileChoice = readProfile();
+  const profile: Profile = "profile" in profileChoice ? profileChoice.profile : "desktop";
+  const bundleProblems = [
+    ...("problem" in bundle ? [bundle.problem] : []),
+    ...("problem" in profileChoice ? [profileChoice.problem] : []),
+  ];
   if ("manifest" in bundle) {
-    for (const [name, config] of Object.entries(bundledMcpServers(bundle.manifest.bin))) {
+    for (const [name, config] of Object.entries(bundledMcpServers(bundle.manifest.bin, profile))) {
       pi.registerMcpServer(name, config);
     }
   } else {
@@ -823,10 +807,11 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   // project_tree: a project's layout in one call (tool_project_tree.ts).
   registerProjectTree(pi);
 
-  // Bundled skills: web-research (ollama web tools + lightpanda fallback).
+  // Bundled skills: web-research (ollama web tools + lightpanda fallback),
+  // cage (secrets through the bundled cage CLI).
   const extensionDir = dirname(fileURLToPath(import.meta.url));
   pi.on("resources_discover", () => ({
-    skillPaths: ["web-research"].map((name) =>
+    skillPaths: ["web-research", "cage"].map((name) =>
       join(extensionDir, "skills", name, "SKILL.md"),
     ),
   }));
@@ -1032,10 +1017,14 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
 
   async function showDeps(ctx: ExtensionContext): Promise<void> {
     if ("problem" in bundle) {
-      ctx.ui.notify(`harness: ${bundle.problem}`, "error");
+      ctx.ui.notify(`harness: ${bundleProblems.join("; ")}`, "error");
     } else {
-      const report = await depsReport(bundle.manifest);
-      ctx.ui.notify(report.text, report.level);
+      const report = await depsReport(bundle.manifest, profile);
+      if ("problem" in profileChoice) {
+        ctx.ui.notify(`harness: ${profileChoice.problem}\n${report.text}`, "warning");
+      } else {
+        ctx.ui.notify(report.text, report.level);
+      }
     }
   }
 
@@ -1260,10 +1249,10 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       applyContextWindowOverrides(ctx.model);
       updateStatusWidget(ctx);
       void ensureThinkingBlocksVisible(); // WORKAROUND W2
-      if ("problem" in bundle) {
-        ctx.ui.setStatus("harness-deps", `harness: ${bundle.problem}`);
+      if (bundleProblems.length > 0) {
+        ctx.ui.setStatus("harness-deps", `harness: ${bundleProblems.join("; ")}`);
       } else {
-        // the bundle manifest is in place: nothing to show
+        // the bundle manifest and the profile are in place: nothing to show
       }
       if (ctx.mode !== "tui") return;
       ctx.ui.setEditorComponent(
@@ -1456,7 +1445,14 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   pi.on(
     "agent_settled",
     (_event: EventOf<"agent_settled">, ctx: ExtensionContext): void => {
-      if (ctx.mode !== "tui" || !ctx.isIdle()) return;
+      // The finished entry is read by the TUI renderer and, in RPC mode, by
+      // the Telegram gateway (remote/), which shows it as the run's banner.
+      if (ctx.mode === "tui" || ctx.mode === "rpc") {
+        // a consumer is attached: record the cycle below
+      } else {
+        return; // print/json modes: nothing renders the entry
+      }
+      if (!ctx.isIdle()) return;
       const now = Date.now();
       const durationMs =
         cycleStartTime !== undefined ? now - cycleStartTime : undefined;

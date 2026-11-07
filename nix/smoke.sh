@@ -55,6 +55,29 @@ if "$PI" --help >"$WORK/help.log" 2>&1 && ! grep -q "Failed to load extension" "
 else
   fail "pi --help loads the bundled extensions" "$WORK/help.log"
 fi
+# Profiles: the server profile (Telegram gateway) loads no ask_user; both load
+# the bundled skills.
+# rpc_commands <log> [env...]: the command names pi reports over RPC.
+rpc_commands() {
+  local log="$1"
+  shift
+  printf '%s\n' '{"id":"c","type":"get_commands"}' \
+    | (cd "$WORK" && env "$@" timeout 90 "$PI" --mode rpc --no-session) 2>"$log" \
+    | jq -r 'select(.id == "c") | .data.commands[].name' 2>>"$log"
+}
+desktop_commands="$(rpc_commands "$WORK/rpc-desktop.log" HARNESS_PROFILE=)"
+server_commands="$(rpc_commands "$WORK/rpc-server.log" HARNESS_PROFILE=server)"
+if grep -qx 'skill:ask-user' <<<"$desktop_commands" && grep -qx 'skill:cage' <<<"$desktop_commands"; then
+  pass "desktop profile: ask-user and cage skills"
+else
+  fail "desktop profile: ask-user and cage skills" "$WORK/rpc-desktop.log"
+fi
+if ! grep -qx 'skill:ask-user' <<<"$server_commands" && grep -qx 'skill:cage' <<<"$server_commands" && grep -qx 'deps' <<<"$server_commands"; then
+  pass "server profile: no ask-user, cage skill, harness loaded"
+else
+  fail "server profile: no ask-user, cage skill, harness loaded" "$WORK/rpc-server.log"
+fi
+
 # Subcommands bypass the -e flags.
 if "$PI" list >"$WORK/list.log" 2>&1; then pass "pi list"; else fail "pi list" "$WORK/list.log"; fi
 if "$PI" mcp list >"$WORK/mcp-list.log" 2>&1; then pass "pi mcp list"; else fail "pi mcp list" "$WORK/mcp-list.log"; fi
@@ -71,6 +94,7 @@ if "$(bin gopls)" version >"$WORK/gopls.log" 2>&1; then pass "gopls version"; el
 if "$(bin rust-analyzer)" --version >"$WORK/rust-analyzer.log" 2>&1; then pass "rust-analyzer --version"; else fail "rust-analyzer --version" "$WORK/rust-analyzer.log"; fi
 if "$BUNDLE/bin/pnpm" --version >"$WORK/pnpm.log" 2>&1; then pass "pnpm --version"; else fail "pnpm --version" "$WORK/pnpm.log"; fi
 if "$BUNDLE/bin/herdr" --version >"$WORK/herdr.log" 2>&1; then pass "herdr --version"; else fail "herdr --version" "$WORK/herdr.log"; fi
+if "$BUNDLE/bin/cage" help >"$WORK/cage.log" 2>&1 && [[ "$(bin cage)" == "$(readlink -f "$BUNDLE/bin/cage")" ]]; then pass "cage help"; else fail "cage help" "$WORK/cage.log"; fi
 
 # herdr's pi integration, loaded by the launcher
 herdr_pi="$(grep -o '[^ ]*/share/herdr/integrations/pi/herdr-agent-state.ts' "$PI" | head -n 1)"

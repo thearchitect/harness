@@ -2,10 +2,11 @@
 
 Personal pi workflow, distributed as a Nix bundle: the pinned `pi` with the
 harness extension, the bundled pi packages and the pinned MCP tools. On PATH:
-`pi`, `pi-dev`, `herdr`, `pnpm`, `lightpanda`, `playwright-mcp`,
+`pi`, `pi-dev`, `herdr`, `pnpm`, `cage`, `lightpanda`, `playwright-mcp`,
 `chrome-devtools-mcp` (the last ones with telemetry off by default). herdr's pi
 integration is part of the bundle: do not `herdr integration install pi`
-(`/deps` warns about such a copy).
+(`/deps` warns about such a copy). `HARNESS_PROFILE=server` runs pi headless
+(as the Telegram gateway does): no user-browser MCP servers, no `ask_user`.
 
 ## Install
 
@@ -37,7 +38,8 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
 - `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `guidelines` (bullets in `<rules>`, in order)
-- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`
+- `rpc-dialogs.ts` — the write/edit gate as plain select/input dialogs outside the TUI: the contract RPC clients (the Telegram gateway) render natively
+- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `cage`
 - `install/SKILL.md` — the install/upgrade skill
 - `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the `/deps` report, the double-load guard (registered by `index.ts`)
 - `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition (called by `index.ts` at `// WORKAROUND Wn`)

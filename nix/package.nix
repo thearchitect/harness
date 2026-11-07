@@ -20,6 +20,7 @@
   pnpm,
   ripgrep,
   fd,
+  cage,
   harnessSrc,
 }:
 let
@@ -44,6 +45,7 @@ let
       fileset = lib.fileset.unions [
         ../index.ts
         ../deps.ts
+        ../rpc-dialogs.ts
         ../lsp
         ../tool_project_tree.ts
         ../workarounds.ts
@@ -141,6 +143,11 @@ let
     "pi-deepseek-search"
     "@narumitw/pi-usage"
   ];
+  # HARNESS_PROFILE=server (the Telegram gateway, remote/) runs without
+  # ask_user: its RPC dialogs cannot render options natively, the model asks
+  # in plain text instead.
+  serverPiPackages = lib.remove "pi-ask-user" piPackages;
+  packageFlags = packages: lib.concatMapStringsSep " " (p: "-e ${nodeModules}/${p}") packages;
 
   # Read by deps.ts: absolute paths and versions of everything it registers or reports.
   manifest = writeText "harness-manifest.json" (
@@ -156,6 +163,7 @@ let
         chrome-devtools-mcp = npmVersion "chrome-devtools-mcp";
         herdr = herdr.version;
         pnpm = pnpm.version;
+        cage = cage.version;
       }
       // lib.genAttrs piPackages npmVersion;
       # Package directories: pi itself, the bundled pi packages, and typescript
@@ -173,6 +181,7 @@ let
         playwright-mcp = "${nodeModules}/.bin/playwright-mcp";
         chrome-devtools-mcp = "${nodeModules}/.bin/chrome-devtools-mcp";
         herdr = lib.getExe herdr;
+        cage = "${cage}/bin/cage"; # cage sets no meta.mainProgram
       };
     }
   );
@@ -215,13 +224,17 @@ let
     case "''${1-}" in
       ${piSubcommands}) exec ${lib.getExe nodejs} ${piCli} "$@" ;;
     esac
+    case "''${HARNESS_PROFILE-}" in
+      server) harness_packages=(${packageFlags serverPiPackages}) ;;
+      *) harness_packages=(${packageFlags piPackages}) ;;
+    esac
     # Discover schemas inside codemode, without promoting tools into model
     # declarations (tool_search changes invalidate the provider's prompt cache).
     exec ${lib.getExe nodejs} ${piCli} \
       --tools +codemode \
       --exclude-tools tool_search \
       -e ${extensionDir} \
-      ${lib.concatMapStringsSep " " (p: "-e ${nodeModules}/${p}") piPackages} \
+      "''${harness_packages[@]}" \
       -e ${herdrPiIntegration} \
       "$@"
   '';
@@ -265,6 +278,7 @@ stdenvNoCC.mkDerivation {
     ln -s ${dev}/bin/pi-dev $out/bin/pi-dev
     ln -s ${lib.getExe herdr} $out/bin/herdr
     ln -s ${lib.getExe pnpm} $out/bin/pnpm
+    ln -s ${cage}/bin/cage $out/bin/cage
     ln -s ${lightpandaCli}/bin/lightpanda $out/bin/lightpanda
     ln -s ${nodeModules}/.bin/playwright-mcp $out/bin/playwright-mcp
     ln -s ${chromeDevtoolsMcpCli}/bin/chrome-devtools-mcp $out/bin/chrome-devtools-mcp

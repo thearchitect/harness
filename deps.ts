@@ -9,12 +9,15 @@
  *
  * - readManifest: the manifest, or why it is unusable (pi not started through
  *   the launcher);
- * - bundledMcpServers: the bundled MCP servers and their exposure policy (an
- *   mcp.json entry with the same name takes precedence, as for any
- *   extension-registered server);
+ * - readProfile: where this pi runs - `desktop` (the user's machine, default)
+ *   or `server` (HARNESS_PROFILE=server: headless, no user browser, as the
+ *   Telegram gateway of remote/ runs it);
+ * - bundledMcpServers: the bundled MCP servers of the profile and their
+ *   exposure policy (an mcp.json entry with the same name takes precedence, as
+ *   for any extension-registered server);
  * - lspToolchain: the language servers lsp/ drives;
- * - depsReport: the /deps text - bundled versions, a duplicate herdr pi
- *   integration and how to update;
+ * - depsReport: the /deps text - profile, bundled versions, a duplicate herdr
+ *   pi integration and how to update;
  * - claimHarnessInstance: the double-load guard.
  *
  * Updates are not done here: `nix profile upgrade harness` (or the user's
@@ -39,7 +42,11 @@ type BinId =
   | "rust-analyzer"
   | "playwright-mcp"
   | "chrome-devtools-mcp"
-  | "herdr";
+  | "herdr"
+  | "cage";
+
+/** Where pi runs: the user's machine, or a headless server (no user browser). */
+export type Profile = "desktop" | "server";
 
 export type Manifest = {
   harness: string;
@@ -58,6 +65,22 @@ export function readManifest(): { manifest: Manifest } | { problem: string } {
   } catch (error) {
     return { problem: `cannot read ${path}: ${error instanceof Error ? error.message : String(error)}` };
   }
+}
+
+/** The profile HARNESS_PROFILE selects, or why its value is unusable. */
+export function readProfile(): { profile: Profile } | { problem: string } {
+  const value = process.env.HARNESS_PROFILE;
+  if (value === undefined || value === "") {
+    return { profile: "desktop" };
+  } else if (value === "server") {
+    return { profile: "server" };
+  } else {
+    return { problem: `unknown HARNESS_PROFILE=${value} (expected server)` };
+  }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unexpected value: ${String(value)}`);
 }
 
 /**
@@ -119,24 +142,39 @@ export function lspToolchain(manifest: Manifest): { toolchain: Toolchain } | { p
  * and batches them (fan-out over many symbols in one script); tools that write
  * files are direct, so every write is a visible call in the transcript.
  */
-export function bundledMcpServers(bin: Manifest["bin"]): Record<string, McpServerConfig> {
-  // The user's own browser. HARNESS_BROWSER (executable) and
-  // HARNESS_BROWSER_USER_DATA_DIR (profile) are host settings; without them
-  // the servers use their defaults (Chrome's standard locations).
+export function bundledMcpServers(bin: Manifest["bin"], profile: Profile): Record<string, McpServerConfig> {
+  switch (profile) {
+    case "desktop":
+      return { lightpanda: lightpandaServer(bin), ...userBrowserServers(bin) };
+    case "server":
+      // headless: there is no user browser to attach to
+      return { lightpanda: lightpandaServer(bin) };
+    default:
+      return assertNever(profile);
+  }
+}
+
+function lightpandaServer(bin: Manifest["bin"]): McpServerConfig {
+  return {
+    description:
+      "Headless JS-capable browser: open pages, render to markdown, links, clicks, forms, fallback web search",
+    command: bin.lightpanda,
+    args: ["mcp"],
+    env: { LIGHTPANDA_DISABLE_TELEMETRY: "true" },
+    timeout: 60,
+    toolExposure: { goto: "direct", markdown: "direct" },
+  };
+}
+
+/** The servers that attach to the user's own running browser. */
+function userBrowserServers(bin: Manifest["bin"]): Record<string, McpServerConfig> {
+  // HARNESS_BROWSER (executable) and HARNESS_BROWSER_USER_DATA_DIR (profile)
+  // are host settings; without them the servers use their defaults (Chrome's
+  // standard locations).
   const browser = process.env.HARNESS_BROWSER;
   const userDataDir = process.env.HARNESS_BROWSER_USER_DATA_DIR;
 
   return {
-    lightpanda: {
-      description:
-        "Headless JS-capable browser: open pages, render to markdown, links, clicks, forms, fallback web search",
-      command: bin.lightpanda,
-      args: ["mcp"],
-      env: { LIGHTPANDA_DISABLE_TELEMETRY: "true" },
-      timeout: 60,
-      toolExposure: { goto: "direct", markdown: "direct" },
-    },
-
     playwright: {
       description:
         "Control selected tabs in the user's running browser through the Playwright extension: snapshots, clicks, forms, screenshots, console and network",
@@ -201,11 +239,25 @@ function herdrIntegration(herdr: string): Promise<{ text: string; level: "info" 
   });
 }
 
-export async function depsReport(manifest: Manifest): Promise<{ text: string; level: "info" | "warning" }> {
+export async function depsReport(
+  manifest: Manifest,
+  profile: Profile,
+): Promise<{ text: string; level: "info" | "warning" }> {
   const width = Math.max(...Object.keys(manifest.versions).map((id) => id.length));
-  const herdr = await herdrIntegration(manifest.bin.herdr);
+  let herdr: { text: string; level: "info" | "warning" };
+  switch (profile) {
+    case "desktop":
+      herdr = await herdrIntegration(manifest.bin.herdr);
+      break;
+    case "server":
+      herdr = { text: "not used (server profile)", level: "info" };
+      break;
+    default:
+      herdr = assertNever(profile);
+  }
   const lines = [
     `harness ${manifest.harness}`,
+    `profile: ${profile}`,
     ...Object.entries(manifest.versions)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([id, version]) => `  ${id.padEnd(width)}  ${version}`),

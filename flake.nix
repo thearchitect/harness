@@ -2,9 +2,15 @@
   description = "harness: pi coding agent bundle (pi + harness extension + pi packages + MCP tools)";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+  # cage pins its own nixpkgs: its vendorHash is computed against it.
+  inputs.cage.url = "github:themakers/cage";
 
   outputs =
-    { self, nixpkgs }:
+    {
+      self,
+      nixpkgs,
+      cage,
+    }:
     let
       # The systems CI builds and tests (nix/ci.py); Intel macOS is not one of them.
       systems = [
@@ -18,7 +24,10 @@
       packages = forAllSystems (
         pkgs:
         let
-          bundle = pkgs.callPackage ./nix/package.nix { harnessSrc = self; };
+          bundle = pkgs.callPackage ./nix/package.nix {
+            harnessSrc = self;
+            cage = cage.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          };
         in
         {
           default = bundle;

@@ -28,5 +28,6 @@ fi
 
 cd "$ROOT"
 node --test tool_project_tree.test.ts
+node --test gate.test.ts
 node --test lsp/test/unit.test.ts
 node --test --test-concurrency=1 lsp/test/servers.test.ts
