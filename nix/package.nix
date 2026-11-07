@@ -286,15 +286,18 @@ stdenvNoCC.mkDerivation {
     runHook postInstall
   '';
 
+  # Not `dev`: stdenv would take a `dev` attribute for the package's
+  # development output and put pi-dev instead of the bundle into the
+  # buildInputs and shells that list the bundle.
   passthru = {
     inherit
       extension
       npmTools
       lightpanda
       manifest
-      dev
       cage
       ;
+    piDev = dev;
   };
 
   meta = {

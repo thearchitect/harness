@@ -43,7 +43,7 @@
         default = pkgs.mkShell {
           # pi-dev: the bundle with the harness extension loaded from the working tree.
           packages = [
-            self.packages.${pkgs.stdenv.hostPlatform.system}.default.passthru.dev
+            self.packages.${pkgs.stdenv.hostPlatform.system}.default.passthru.piDev
             pkgs.nodejs
             pkgs.jq
             pkgs.curl
