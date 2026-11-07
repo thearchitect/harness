@@ -2,8 +2,8 @@
 
 A [harness](https://github.com/thearchitect/harness) agent on a Fly.io
 machine, used through a Telegram bot: every whitelisted user works in their
-own home under their own uid; every topic of the private chat with the bot is
-one pi session. Created with `nix flake init -t github:thearchitect/harness#remote`.
+own home under their own uid; a topic of the private chat with the bot runs
+at most one agent. Created with `nix flake init -t github:thearchitect/harness#remote`.
 
 - `remote.yaml` — the bot, the users (whitelist), limits, initial pi settings
 - `.cage/` — secrets ([cage](https://github.com/themakers/cage)): the bot token

@@ -61,6 +61,9 @@ The gateway's code and tests live in harness: `nix/test.sh result`, or
 - Roll back: `flyctl deploy -a <app> --image registry.fly.io/<app>:<older tag>`.
 - A deploy interrupts running agents with a notice; sessions stay on disk.
 - The machine sleeps when idle and wakes on the next Telegram message.
+- A change of the state format (`state.json` version) is not migrated: stop
+  the agents, `rm /data/gateway/state.json` over `flyctl ssh`, deploy; users
+  start their agents again with `/agent` (pi sessions stay on disk).
 
 ## Secrets
 
