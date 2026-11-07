@@ -132,6 +132,34 @@ workspaces or symlinks, and marks unreadable directories in place.
 Project-specific exclusions go into the project's `.ignore`. The `.dirinfo.md`
 files are written by people; the model only reads them.
 
+## Remote: Telegram on Fly
+
+harness also runs on a server, used through a Telegram bot: `remote/`
+(`harness-telegram`), `lib.mkRemoteImage` (`nix/remote-image.nix`) and the
+deployment template `nix flake init -t github:thearchitect/harness#remote`
+(its README walks through the setup).
+
+- **Model.** A whitelist of Telegram users (`remote.yaml`); each works under
+  a uid of their own in `/data/home/<name>`. Every topic of the private chat
+  with the bot is one pi session (`pi --mode rpc --session-id`, profile
+  `server`) in a directory picked with one tap; the ⚙️ Account topic holds
+  logins, secrets and the user's server SSH key.
+- **Interaction.** A pinned card per topic (directory, model, thinking, the
+  next message's Plan/Build, stop, close); a live draft of the run with
+  Telegram's native stop; thinking and tool calls in collapsed blocks; a
+  banner with duration and cost; 🔨 Build under a plan. Write/edit
+  confirmations are buttons and always the last message of the topic; a
+  text instead of a button rejects with that text. Writing during a run
+  steers it.
+- **Machine.** One Fly machine with a volume; the gateway answers the
+  webhook and exits when idle, so the machine sleeps until the next message.
+- **Secrets.** The image carries only cage ciphertext; the machine's identity
+  is its single Fly secret. The bot token and webhook secret stay inside the
+  gateway; each pi process gets only its user's variables (the deployment's
+  `user-<name>` env and the user's own `~/.cage`), never the gateway's.
+  An agent sees its user's secrets and `auth.json` — the boundary is between
+  users, not between a user and their agent.
+
 ## Development
 
 ```bash

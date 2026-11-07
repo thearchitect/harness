@@ -51,9 +51,29 @@
         };
       });
 
-      checks = forAllSystems (pkgs: {
-        bundle = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
-      });
+      checks = forAllSystems (
+        pkgs:
+        {
+          bundle = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        }
+        // pkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
+          # The template's configuration builds into an image.
+          remote-image = self.lib.mkRemoteImage {
+            inherit pkgs;
+            config = ./templates/remote/remote.yaml;
+            envs = ./nix/testdata/remote-envs;
+            tag = "check";
+          };
+        }
+      );
+
+      # The OCI image of a remote deployment (Telegram gateway): nix/remote-image.nix.
+      lib.mkRemoteImage = import ./nix/remote-image.nix self;
+
+      templates.remote = {
+        path = ./templates/remote;
+        description = "A remote harness deployment: Telegram gateway on Fly.io (cage secrets, CI deploys)";
+      };
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);
     };

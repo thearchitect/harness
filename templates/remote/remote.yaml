@@ -1,0 +1,33 @@
+# The deployment: the bot, who may use it, limits, the users' initial pi
+# settings. lib.mkRemoteImage adds the image's paths; changes take effect
+# with the next deploy.
+telegram:
+  # Variables of the cage env `machine` (.cage/cage.yaml).
+  tokenVariable: TELEGRAM_BOT_TOKEN
+  webhookSecretVariable: TELEGRAM_WEBHOOK_SECRET
+  # https://<fly app>.fly.dev/telegram
+  publicUrl: https://my-harness.fly.dev/telegram
+  listenPort: 8080
+
+# The whitelist: numeric Telegram user ids. Each user gets a uid of their own
+# and a home on the volume (/data/home/<name>); uids must never be reused.
+users:
+  - name: alice
+    telegramId: 123456789
+    uid: 1001
+    git: { name: Alice Example, email: alice@example.com }
+    # The user's own SSH public keys: recipients of their cage secrets.
+    publicKeys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample alice@laptop
+
+limits:
+  sessionsPerUser: 2 # pi processes of one user at a time
+  sessionsTotal: 4 # pi processes on the machine (≈300 MB each)
+  idleMinutes: 30 # an idle pi process stops after this
+  idleShutdownMinutes: 15 # the machine stops when nothing happens for this long
+
+# ~/.pi/agent/settings.json of a new user (an existing file is never touched).
+defaultSettings:
+  defaultProvider: deepseek
+  defaultModel: deepseek-v4-pro
+  defaultThinkingLevel: high

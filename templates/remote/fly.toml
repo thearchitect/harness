@@ -1,0 +1,35 @@
+# One machine with a volume. It sleeps: the gateway exits when idle, and a
+# Telegram webhook wakes it through the Fly proxy.
+app = "my-harness"
+primary_region = "ams"
+kill_signal = "SIGTERM"
+kill_timeout = 30
+
+[deploy]
+  strategy = "immediate"
+
+[[mounts]]
+  source = "data"
+  destination = "/data"
+  initial_size = "10gb"
+
+# The machine's cage identity (bootstrap.sh), written as a file at boot.
+[[files]]
+  guest_path = "/run/harness/machine-identity"
+  secret_name = "HARNESS_MACHINE_IDENTITY"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_start_machines = true
+  # The proxy cannot see the agents' work; the gateway stops the machine itself.
+  auto_stop_machines = "off"
+  min_machines_running = 0
+
+[[restart]]
+  # An idle exit (code 0) leaves the machine stopped; a crash restarts it.
+  policy = "on-failure"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "2gb"

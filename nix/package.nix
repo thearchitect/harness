@@ -293,6 +293,7 @@ stdenvNoCC.mkDerivation {
       lightpanda
       manifest
       dev
+      cage
       ;
   };
 

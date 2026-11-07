@@ -70,6 +70,9 @@ jobs:
       - name: Telegram gateway
         if: steps.plan.outputs.action == 'build' && runner.os == 'Linux'
         run: nix build --print-build-logs --no-link .#harness-telegram
+      - name: Remote image
+        if: steps.plan.outputs.action == 'build' && matrix.system == 'x86_64-linux'
+        run: nix build --print-build-logs --no-link .#checks.x86_64-linux.remote-image
       - name: Export binary cache
         if: inputs.publish-cache && steps.plan.outputs.action == 'build'
         env:

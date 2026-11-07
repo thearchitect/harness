@@ -1,0 +1,42 @@
+kind: cage/v1
+
+# Replace the example keys. Plaintext lives in .cage/secrets (ignored by git);
+# the encrypted store (.cage/store) is committed and baked into the image
+# (only envs/machine.cage and envs/user-<name>.cage).
+dirs:
+  default: .cage/secrets
+  ops: .cage/secrets/ops
+  alice: .cage/secrets/users/alice
+
+recipients:
+  # The operator's own keys.
+  operator:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample operator@laptop
+  alice:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample alice@laptop
+  # `cage keygen -comment actions-ci ops:ci-cage-identity` prints it.
+  actions-ci:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample actions-ci
+  # `cage keygen -comment fly-machine ops:fly-machine-identity` prints it.
+  fly-machine:
+    - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample fly-machine
+  # The server key of the user (⚙️ Account → 👤 Key), after the first start.
+  server-alice: []
+
+envs:
+  # The operator: everything shared.
+  root:
+    files: [telegram.env, ops:fly.env, ops:fly-machine-identity, ops:ci-cage-identity]
+    recipients: [operator]
+  # CI: deploys.
+  ci-deploy:
+    files: [ops:fly.env]
+    recipients: [actions-ci]
+  # The machine: bot token and webhook secret.
+  machine:
+    files: [telegram.env]
+    recipients: [fly-machine]
+  # The pi processes of alice (her API keys).
+  user-alice:
+    files: [alice:llm.env]
+    recipients: [alice, server-alice]
