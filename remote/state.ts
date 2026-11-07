@@ -1,7 +1,7 @@
 /**
  * The gateway's durable state, one JSON file on the volume (root, 0600):
- * which Telegram topic is which pi session, the pinned cards and the users'
- * Account topics. Every change is written at once, atomically (temp file +
+ * which Telegram topic is which pi session, the pinned status cards, the
+ * users' recent directories and which keyboard they have. Every change is written at once, atomically (temp file +
  * rename), so a crash or a deploy never leaves a half-written file.
  *
  * Held first messages, open dialogs and pending inputs are not here: they live
@@ -28,15 +28,24 @@ export type TopicState = {
 };
 
 export type UserState = {
-  accountThreadId?: number;
-  accountCardMessageId?: number;
   /** Most recent first, at most RECENT_DIRS_LIMIT. */
   recentDirs: string[];
+  /** card.ts KEYBOARD_VERSION the user's chat has; absent: none yet. */
+  keyboardVersion?: number;
 };
 
 type StateFile = {
-  version: 1;
+  version: 2;
   users: Record<string, UserState>;
+  topics: TopicState[];
+  /** Topics of the gateway's earlier version to delete once (v1: the Account topics). */
+  obsoleteTopics?: { userId: number; threadId: number }[];
+};
+
+/** Version 1: users had an Account topic with a pinned card. */
+type StateFileV1 = {
+  version: 1;
+  users: Record<string, { accountThreadId?: number; recentDirs: string[] }>;
   topics: TopicState[];
 };
 
@@ -57,14 +66,24 @@ export class StateStore {
       text = readFileSync(path, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return { version: 1, users: {}, topics: [] };
+        return { version: 2, users: {}, topics: [] };
       } else {
         throw new Error(`cannot read ${path}: ${(error as Error).message}`);
       }
     }
     const parsed = JSON.parse(text) as { version?: unknown };
-    if (parsed.version === 1) {
+    if (parsed.version === 2) {
       return parsed as StateFile;
+    } else if (parsed.version === 1) {
+      const v1 = parsed as StateFileV1;
+      return {
+        version: 2,
+        users: Object.fromEntries(Object.entries(v1.users).map(([id, user]) => [id, { recentDirs: user.recentDirs }])),
+        topics: v1.topics,
+        obsoleteTopics: Object.entries(v1.users).flatMap(([id, user]) =>
+          user.accountThreadId !== undefined ? [{ userId: Number(id), threadId: user.accountThreadId }] : [],
+        ),
+      };
     } else {
       throw new Error(`${path}: unsupported state version ${String(parsed.version)}`);
     }
@@ -75,6 +94,16 @@ export class StateStore {
     const temp = `${this.path}.tmp`;
     writeFileSync(temp, `${JSON.stringify(this.data, null, 2)}\n`, { mode: 0o600 });
     renameSync(temp, this.path);
+  }
+
+  /** Topics left by an earlier version, to delete once (then forgetObsolete). */
+  obsoleteTopics(): { userId: number; threadId: number }[] {
+    return [...(this.data.obsoleteTopics ?? [])];
+  }
+
+  forgetObsolete(): void {
+    delete this.data.obsoleteTopics;
+    this.save();
   }
 
   user(userId: number): UserState {

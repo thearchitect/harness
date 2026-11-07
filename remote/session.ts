@@ -6,7 +6,10 @@
  * - Reactions on the user's message: 👀 accepted, ✍ steered into the run,
  *   👌 finished, 💔 failed or interrupted.
  * - The pinned card shows directory, model, thinking level, the next
- *   message's mode and the status, and carries the session controls.
+ *   message's mode and the status (text only).
+ * - The keyboard's sections act on this session: 🔨 Build (next message),
+ *   ⏹ Stop, 🧠 Model and the session part of ⚙️ More open their panel at the
+ *   bottom of the topic.
  * - After planning, the final message offers 🔨 Build / 💬 Build with note.
  *
  * The process starts on demand (`pi --session-id`, the session is resumed
@@ -15,11 +18,11 @@
 
 import type { RpcExtensionUIRequest, RpcExtensionUIResponse, RpcResponse } from "@earendil-works/pi-coding-agent";
 import { homeOf } from "./accounts.ts";
-import { renderSessionCard, type SessionStatus, type SessionView } from "./card.ts";
+import { buildPanel, closePanel, modelsPanel, renderSessionCard, thinkingPanel, type Section, type SessionStatus } from "./card.ts";
 import type { Clock, Timer } from "./clock.ts";
 import type { Config, UserConfig } from "./config.ts";
 import { Dialogs } from "./dialogs.ts";
-import { Outbox, type Keyboard } from "./outbox.ts";
+import type { Keyboard, Outbox } from "./outbox.ts";
 import type { PoolProcess, SessionPool } from "./pool.ts";
 import { bannerLine, escapeHtml, FINISHED_ENTRY_TYPE, type FinishedDetails } from "./render.ts";
 import type { RpcEvent, RpcHandlers, RpcRequest, RpcSpec } from "./rpc.ts";
@@ -64,7 +67,9 @@ export class TopicSession {
   private starting: Promise<PiProcess | { problem: string }> | undefined;
   private run: Run | undefined;
   private status: SessionStatus = { kind: "stopped" };
-  private view: SessionView = { kind: "main" };
+  /** The lists the open panel shows (its buttons carry indexes). */
+  private models: { provider: string; id: string }[] = [];
+  private levels: string[] = [];
   private model: string | undefined;
   private thinking: string | undefined;
   private cardTimer: Timer | undefined;
@@ -72,11 +77,12 @@ export class TopicSession {
   private awaitingBuildNote = false;
   private stopping = false;
 
-  constructor(deps: SessionDeps, user: UserConfig, threadId: number) {
+  /** `outbox`: the topic's (the gateway owns one per topic). */
+  constructor(deps: SessionDeps, user: UserConfig, threadId: number, outbox: Outbox) {
     this.deps = deps;
     this.user = user;
     this.threadId = threadId;
-    this.outbox = new Outbox(deps.tg, user.telegramId, threadId, (line) => this.log(line), () => void this.threadGone());
+    this.outbox = outbox;
     this.dialogs = new Dialogs({
       outbox: this.outbox,
       clock: deps.clock,
@@ -115,10 +121,9 @@ export class TopicSession {
     return this.run !== undefined;
   }
 
-  /** Posts and pins the session card (topic just bound). */
+  /** Posts and pins the status card (topic just bound). */
   async createCard(): Promise<void> {
-    const card = renderSessionCard(this.cardState(), this.deps.clock.now());
-    const messageId = await this.outbox.send({ html: card.html }, { role: "pinned", keyboard: card.keyboard });
+    const messageId = await this.outbox.send({ html: renderSessionCard(this.cardState(), this.deps.clock.now()) }, { role: "pinned" });
     if (messageId !== undefined) {
       this.deps.store.updateTopic(this.user.telegramId, this.threadId, (t) => (t.cardMessageId = messageId));
       await this.outbox.pin(messageId);
@@ -214,65 +219,87 @@ export class TopicSession {
     }
   }
 
-  /** Card button `c:<action>[:<arg>]`; resolves with the toast text. */
-  async card(action: string, arg: string | undefined): Promise<string> {
+  /** A keyboard section pressed in this topic (⚙️ More is the gateway's: it mixes in the account). */
+  async section(section: Exclude<Section, "more">): Promise<void> {
+    switch (section) {
+      case "build":
+        this.setNextMode("build");
+        await this.outbox.showPanel(buildPanel("build"));
+        return;
+      case "stop":
+        if (this.run !== undefined || this.dialogs.isOpen) {
+          await this.stop();
+          await this.outbox.closePanel("⏹ Stopping…");
+        } else {
+          await this.outbox.closePanel("⏹ Nothing is running.");
+        }
+        return;
+      case "model":
+        await this.panelAction("models", "0");
+        return;
+      default:
+        assertNever(section);
+    }
+  }
+
+  /** A session panel button `s:<action>[:<arg>]`; resolves with the toast text. */
+  async panelAction(action: string, arg: string | undefined): Promise<string> {
     switch (action) {
-      case "mode":
-        this.deps.store.updateTopic(this.user.telegramId, this.threadId, (t) => (t.nextMode = arg === "build" ? "build" : "plan"));
-        this.refreshCard();
-        return arg === "build" ? "Next message: Build" : "Next message: Plan";
+      case "mode": {
+        const mode = arg === "build" ? "build" : "plan";
+        this.setNextMode(mode);
+        await this.outbox.showPanel(buildPanel(mode));
+        return mode === "build" ? "Next message: Build" : "Next message: Plan";
+      }
       case "models": {
         const proc = await this.ensureProcess();
-        if ("problem" in proc) return proc.problem;
+        if ("problem" in proc) return this.failPanel(proc.problem);
         const page = Number(arg ?? 0);
-        const models = this.view.kind === "models" ? this.view.models : await this.availableModels(proc);
-        this.view = { kind: "models", page, models };
-        this.refreshCard();
-        return models.length > 0 ? "Choose a model" : "No models available";
+        if (page === 0) this.models = await this.availableModels(proc);
+        await this.outbox.showPanel(modelsPanel(this.models, page, this.model));
+        return "Choose a model";
       }
       case "model": {
-        const chosen = this.view.kind === "models" ? this.view.models[Number(arg)] : undefined;
+        const chosen = this.models[Number(arg)];
         const proc = this.proc;
-        this.view = { kind: "main" };
         if (chosen === undefined || proc === undefined) {
-          this.refreshCard();
-          return "The list is outdated";
+          return this.failPanel("The list is outdated — open it again.");
         } else {
           const response = await this.request(proc, { type: "set_model", provider: chosen.provider, modelId: chosen.id });
           if (response?.success) this.model = `${chosen.provider}/${chosen.id}`;
           this.refreshCard();
-          return response?.success ? `Model: ${chosen.id}` : "Could not switch the model";
+          await this.outbox.closePanel(response?.success ? `🧠 ${escapeHtml(chosen.provider)}/${escapeHtml(chosen.id)} ✓` : "❌ Could not switch the model.");
+          return response?.success ? `Model: ${chosen.id}` : "Failed";
         }
       }
       case "thinking": {
         const proc = await this.ensureProcess();
-        if ("problem" in proc) return proc.problem;
+        if ("problem" in proc) return this.failPanel(proc.problem);
         const response = await this.request(proc, { type: "get_available_thinking_levels" });
-        const levels = response?.success ? ((response as { data?: { levels?: string[] } }).data?.levels ?? []) : [];
-        this.view = { kind: "thinking", levels };
-        this.refreshCard();
+        this.levels = response?.success ? ((response as { data?: { levels?: string[] } }).data?.levels ?? []) : [];
+        await this.outbox.showPanel(thinkingPanel(this.levels, this.thinking));
         return "Choose the thinking level";
       }
       case "level": {
-        const level = this.view.kind === "thinking" ? this.view.levels[Number(arg)] : undefined;
+        const level = this.levels[Number(arg)];
         const proc = this.proc;
-        this.view = { kind: "main" };
         if (level === undefined || proc === undefined) {
-          this.refreshCard();
-          return "The list is outdated";
+          return this.failPanel("The list is outdated — open it again.");
         } else {
           const response = await this.request(proc, { type: "set_thinking_level", level: level as never });
           if (response?.success) this.thinking = level;
           this.refreshCard();
-          return response?.success ? `Thinking: ${level}` : "Could not set the level";
+          await this.outbox.closePanel(response?.success ? `💭 ${escapeHtml(level)} ✓` : "❌ Could not set the level.");
+          return response?.success ? `Thinking: ${level}` : "Failed";
         }
       }
       case "compact": {
-        if (this.run !== undefined) return "Wait until the run finishes";
+        if (this.run !== undefined) return this.failPanel("Wait until the run finishes.");
         const proc = await this.ensureProcess();
-        if ("problem" in proc) return proc.problem;
+        if ("problem" in proc) return this.failPanel(proc.problem);
         this.setStatus({ kind: "compacting" });
         this.deps.pool.setBusy(this.key, true);
+        await this.outbox.closePanel("🗜 Compacting…");
         void this.request(proc, { type: "compact" }).then((response) => {
           this.deps.pool.setBusy(this.key, false);
           this.setStatus({ kind: "idle" });
@@ -280,23 +307,29 @@ export class TopicSession {
         });
         return "Compacting…";
       }
-      case "stop":
-        await this.stop();
-        return "Stopping…";
       case "close":
-        this.view = { kind: "confirmClose" };
-        this.refreshCard();
+        await this.outbox.showPanel(closePanel());
         return "Close this session?";
       case "closeyes":
+        await this.outbox.closePanel("✓ Session closed.");
         await this.close();
         return "Closed";
-      case "back":
-        this.view = { kind: "main" };
-        this.refreshCard();
+      case "dismiss":
+        await this.outbox.closePanel(undefined);
         return "OK";
       default:
         return "Unknown action";
     }
+  }
+
+  private async failPanel(problem: string): Promise<string> {
+    await this.outbox.closePanel(`❌ ${escapeHtml(problem)}`);
+    return "Failed";
+  }
+
+  private setNextMode(mode: "plan" | "build"): void {
+    this.deps.store.updateTopic(this.user.telegramId, this.threadId, (t) => (t.nextMode = mode));
+    this.refreshCard();
   }
 
   /** Buttons under the final message of a planning run. */
@@ -326,7 +359,6 @@ export class TopicSession {
     await this.stop();
     await this.stopProcess();
     const topic = this.deps.store.updateTopic(this.user.telegramId, this.threadId, (t) => (t.closed = true));
-    this.view = { kind: "main" };
     this.setStatus({ kind: "closed" });
     await this.deps.tg
       .editForumTopic(this.user.telegramId, this.threadId, { name: `✓ ${topic.title}`.slice(0, 128) })
@@ -347,7 +379,8 @@ export class TopicSession {
 
   /* ------------------------------------------------------------------------ */
 
-  private async threadGone(): Promise<void> {
+  /** The user deleted the topic (reported by its outbox). */
+  async threadGone(): Promise<void> {
     this.log("topic deleted by the user: closing the session");
     this.run?.view.dispose();
     this.run = undefined;
@@ -511,7 +544,6 @@ export class TopicSession {
       thinking: this.thinking,
       nextMode: topic.nextMode,
       status: topic.closed ? { kind: "closed" } : this.status,
-      view: this.view,
     };
   }
 
@@ -520,13 +552,16 @@ export class TopicSession {
     if (topic?.cardMessageId === undefined) {
       return; // no card yet (topic being bound) or the topic is gone
     }
-    const card = renderSessionCard(this.cardState(), this.deps.clock.now());
-    void this.outbox.edit(topic.cardMessageId, { html: card.html }, card.keyboard);
+    void this.outbox.edit(topic.cardMessageId, { html: renderSessionCard(this.cardState(), this.deps.clock.now()) });
   }
 
   private log(line: string): void {
     this.deps.log(`${this.user.name}/${this.threadId}: ${line}`);
   }
+}
+
+function assertNever(value: never): never {
+  throw new Error(`unexpected value: ${String(value)}`);
 }
 
 /** `~` or `~/sub/dir` for a directory inside the user's home. */

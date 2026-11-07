@@ -2,11 +2,13 @@
  * Routing of Telegram updates: only private chats of configured users; per
  * user, updates are handled strictly in order.
  *
- * - All (no topic): a task starts a new topic (the message moves into it);
- *   account commands answer in the Account topic.
- * - The Account topic: its card, login and secrets inputs.
- * - A topic with a session: messages, commands, card and dialog buttons.
+ * - The chat's persistent keyboard (card.ts SECTIONS): a press arrives as a
+ *   message with the section's text; it is deleted and the section acts on
+ *   the topic it came from (its panel opens at the bottom there).
+ * - All (no topic): a task starts a new topic (the message moves into it).
+ * - A topic with a session: messages, commands, panel and dialog buttons.
  * - Any other topic: a new conversation (topics.ts).
+ * - The account (Login, Secrets, Key, Sessions) works in any topic.
  *
  * Gateway commands are handled here; any other /command goes to pi.
  */
@@ -15,11 +17,12 @@ import { randomUUID } from "node:crypto";
 import type { Message, Update } from "grammy/types";
 import { Account } from "./account.ts";
 import { homeOf, runAsUser } from "./accounts.ts";
+import { KEYBOARD_VERSION, morePanel, REPLY_KEYBOARD, sectionOf, type Section } from "./card.ts";
 import type { UserConfig } from "./config.ts";
 import type { LoginCallbacks, LoginRun } from "./login.ts";
+import { Outbox } from "./outbox.ts";
 import { escapeHtml } from "./render.ts";
 import { displayDir, TopicSession, type SessionDeps, type UserInput } from "./session.ts";
-
 import { TopicBinder } from "./topics.ts";
 
 export type GatewayDeps = SessionDeps & {
@@ -35,31 +38,35 @@ const DOWNLOAD_LIMIT = 20 * 1024 * 1024;
 
 export const BOT_COMMANDS = [
   { command: "new", description: "New session: /new [path]" },
-  { command: "build", description: "Build: /build [task] (or next message)" },
-  { command: "plan", description: "Plan: /plan [task] (or next message)" },
+  { command: "build", description: "Build: /build [task] (or the next message)" },
+  { command: "plan", description: "Plan: /plan [task]" },
   { command: "stop", description: "Stop the agent" },
   { command: "model", description: "Choose the model" },
   { command: "thinking", description: "Choose the thinking level" },
   { command: "compact", description: "Compact the context" },
   { command: "close", description: "Close this session" },
-  { command: "account", description: "Logins, secrets, server key" },
+  { command: "login", description: "Log in to a provider" },
+  { command: "secrets", description: "Your secrets" },
+  { command: "key", description: "Your server SSH key" },
   { command: "help", description: "How this works" },
 ];
 
-const ACCOUNT_COMMANDS = new Set(["account", "login", "logout", "secret", "secrets", "whoami", "sessions"]);
+const ACCOUNT_COMMANDS = new Set(["login", "logout", "secret", "secrets", "key", "whoami", "sessions"]);
 
-const HELP = [
+export const HELP = [
   "<b>harness</b> — a coding agent per topic.",
-  "• Write a task in a new topic (or in All); pick the directory; the agent plans.",
-  "• Build: the pinned card's 🔨 Build (next message), <code>!</code> before the text, or 🔨 Build after a plan.",
-  "• Write while it works to steer; ⏹ (draft or card) or /stop stops it.",
-  "• The pinned card: model, thinking, compact, close. ⚙️ Account: logins, secrets, your server key.",
+  "• <b>Start</b>: write a task in a new topic (or here in All); pick the directory; the agent plans.",
+  "• <b>Build</b>: 🔨 Build on the keyboard makes the next message build; <code>!</code> before a message builds too; 🔨 Build under a plan implements it.",
+  "• <b>While it works</b>: write to steer it; ⏹ (in the draft or on the keyboard) stops it.",
+  "• <b>🧠 Model</b>, and <b>⚙️ More</b>: thinking, compact, close; log in, secrets, your server SSH key, sessions.",
+  "• The pinned line of a topic shows its directory, model, mode and state.",
 ].join("\n");
 
 export class Gateway {
   private readonly deps: GatewayDeps;
   private readonly users = new Map<number, UserConfig>();
   private readonly sessions = new Map<string, TopicSession>();
+  private readonly places = new Map<string, Outbox>();
   private readonly accounts = new Map<number, Account>();
   private readonly chains = new Map<number, Promise<void>>();
   private readonly binder: TopicBinder;
@@ -73,6 +80,7 @@ export class Gateway {
       tg: deps.tg,
       log: deps.log,
       now: () => deps.clock.now(),
+      place: (user, threadId) => this.place(user, threadId),
       bind: (user, threadId, cwd, title, held) => this.bind(user, threadId, cwd, title, held),
     });
   }
@@ -105,11 +113,22 @@ export class Gateway {
     return next;
   }
 
+  /** Deletes the topics an earlier version left (the v1 Account topics). */
+  async removeObsoleteTopics(): Promise<void> {
+    const obsolete = this.deps.store.obsoleteTopics();
+    for (const { userId, threadId } of obsolete) {
+      await this.deps.tg
+        .deleteForumTopic(userId, threadId)
+        .catch((error: unknown) => this.deps.log(`deleting obsolete topic ${threadId} of ${userId}: ${String(error)}`));
+    }
+    if (obsolete.length > 0) this.deps.store.forgetObsolete();
+  }
+
   /** The gateway stops: running runs are interrupted with a notice, processes stop. */
   async shutdown(): Promise<void> {
     await Promise.all([...this.sessions.values()].map((s) => s.shutdown()));
     await this.deps.pool.stopAll();
-    await Promise.all([...this.sessions.values()].map((s) => s.outbox.flush()));
+    await Promise.all([...this.places.values()].map((p) => p.flush()));
   }
 
   /* ------------------------------------------------------------------------ */
@@ -119,16 +138,16 @@ export class Gateway {
       await this.onMessage(user, update.message);
     } else if (update.callback_query !== undefined) {
       const query = update.callback_query;
-      const toast = await this.onButton(user, query.message?.message_thread_id, query.data ?? "");
+      const message = query.message;
+      const threadId = message?.is_topic_message === true ? message.message_thread_id : undefined;
+      const toast = await this.onButton(user, threadId, message?.message_id, query.data ?? "");
       await this.deps.tg.answerCallbackQuery(query.id, { text: toast.slice(0, 200) }).catch((error: unknown) => this.deps.log(`answerCallbackQuery: ${String(error)}`));
     } else if (update.stopped_message_generation !== undefined) {
       const threadId = update.stopped_message_generation.message_thread_id;
       if (threadId !== undefined) await this.session(user, threadId)?.stop();
     } else if (update.edited_message !== undefined) {
-      const threadId = update.edited_message.message_thread_id;
-      await this.deps.tg
-        .sendMessage(user.telegramId, "Edits are not applied — send a new message.", { message_thread_id: threadId, reply_parameters: { message_id: update.edited_message.message_id } })
-        .catch((error: unknown) => this.deps.log(`edited_message reply: ${String(error)}`));
+      const edited = update.edited_message;
+      await this.place(user, edited.is_topic_message === true ? edited.message_thread_id : undefined).send({ html: "Edits are not applied — send a new message." });
     } else {
       // other update kinds are not used
     }
@@ -149,12 +168,22 @@ export class Gateway {
     if (text === undefined && message.photo === undefined && message.document === undefined) {
       return; // service messages (pins, topic edits) and unsupported content
     }
+    await this.ensureKeyboard(user);
+    const place = this.place(user, threadId);
+    const section = sectionOf(message.text);
     const command = parseCommand(message.text);
     const account = this.account(user);
     const topic = threadId !== undefined ? this.deps.store.topic(user.telegramId, threadId) : undefined;
+    const session = topic !== undefined && !topic.closed && threadId !== undefined ? this.session(user, threadId) : undefined;
 
-    if (command !== undefined && ACCOUNT_COMMANDS.has(command.name)) {
-      await account.command(command.name);
+    if (section !== undefined) {
+      await place.delete(message.message_id); // the press itself is not a message
+      await this.section(user, section, place, session);
+    } else if (account.awaitsText(place) && command?.name !== "stop") {
+      await place.userPosted();
+      await account.text(text ?? "", message.message_id);
+    } else if (command !== undefined && ACCOUNT_COMMANDS.has(command.name)) {
+      await account.command(command.name, place);
       if (threadId !== undefined && topic === undefined && this.binder.isFreshImplicit(user.telegramId, threadId)) {
         // a client created this topic just to carry the command: remove it
         await this.deps.tg.deleteForumTopic(user.telegramId, threadId).catch((error: unknown) => this.deps.log(`deleteForumTopic: ${String(error)}`));
@@ -164,21 +193,33 @@ export class Gateway {
     } else if (command?.name === "new") {
       await this.newTopic(user, command.args);
     } else if (command?.name === "help" || command?.name === "start") {
-      await this.reply(user, threadId, HELP);
-      if (command.name === "start") await account.ensure();
-    } else if (threadId !== undefined && threadId === account.threadId) {
-      if (command?.name === "stop") {
-        await account.stop();
-      } else {
-        await account.text(text ?? "", message.message_id);
-      }
-    } else if (topic !== undefined) {
-      await this.inSession(user, topic.threadId, message, command, text ?? "");
+      await place.send({ html: HELP });
+    } else if (command?.name === "stop" && session === undefined) {
+      await account.stop();
+    } else if (topic !== undefined && threadId !== undefined) {
+      await this.inSession(user, threadId, message, command, text ?? "");
     } else if (threadId !== undefined) {
       const input = await this.input(user, threadId, message, text ?? "");
       if (input !== undefined) await this.binder.message(user, threadId, input);
     } else {
       await this.fromAll(user, message, text ?? "");
+    }
+  }
+
+  /** A keyboard section pressed in `place`. */
+  private async section(user: UserConfig, section: Section, place: Outbox, session: TopicSession | undefined): Promise<void> {
+    if (section === "more") {
+      await place.showPanel(morePanel(session !== undefined));
+    } else if (session !== undefined) {
+      await session.section(section);
+    } else if (section === "stop") {
+      if (this.account(user).awaitsText(place)) {
+        await this.account(user).stop();
+      } else {
+        await place.closePanel("⏹ Nothing is running here.");
+      }
+    } else {
+      await place.closePanel("This works in a session topic. Write a task to start one.");
     }
   }
 
@@ -190,17 +231,17 @@ export class Gateway {
         await session.stop();
         return;
       case "model":
-        await session.card("models", "0");
+        await session.section("model");
         return;
       case "thinking":
       case "compact":
       case "close":
-        await session.card(command.name, undefined);
+        await session.panelAction(command.name, undefined);
         return;
       case "build":
       case "plan":
         if (command.args === "") {
-          await session.card("mode", command.name);
+          await session.panelAction("mode", command.name);
         } else {
           await session.userInput({ text: command.name === "build" ? `!${command.args}` : command.args, messageId: message.message_id });
         }
@@ -213,10 +254,20 @@ export class Gateway {
     }
   }
 
+  /** The chat gets the section keyboard (again, when it changed), with the help. */
+  private async ensureKeyboard(user: UserConfig): Promise<void> {
+    if ((this.deps.store.user(user.telegramId).keyboardVersion ?? 0) >= KEYBOARD_VERSION) {
+      return;
+    } else {
+      this.deps.store.updateUser(user.telegramId, (u) => (u.keyboardVersion = KEYBOARD_VERSION));
+      await this.place(user, undefined).send({ html: `Hi, ${escapeHtml(user.name)}!\n\n${HELP}` }, { silent: false, replyKeyboard: REPLY_KEYBOARD });
+    }
+  }
+
   /** A message outside topics: it moves into a new topic of its own. */
   private async fromAll(user: UserConfig, message: Message, text: string): Promise<void> {
     if (text.startsWith("/")) {
-      await this.reply(user, undefined, "Commands for a session work inside its topic. /new starts one.");
+      await this.place(user, undefined).send({ html: "Session commands work inside its topic. /new starts one." });
       return;
     }
     // A mobile client has just created a topic for this message: use it.
@@ -254,26 +305,35 @@ export class Gateway {
       return;
     }
     this.binder.noteCreated(user.telegramId, threadId, name, "bot");
+    const place = this.place(user, threadId);
     if (path === "") {
-      await this.reply(user, threadId, "Write the task here — I'll ask where to work.");
+      await place.send({ html: "Write the task here — I'll ask where to work." });
     } else {
       const problem = await this.binder.openAt(user, threadId, path);
-      await this.reply(user, threadId, problem !== undefined ? `❌ ${escapeHtml(problem)}` : "Write the task.");
+      await place.send({ html: problem !== undefined ? `❌ ${escapeHtml(problem)}` : "Write the task." });
     }
   }
 
-  private async onButton(user: UserConfig, threadId: number | undefined, data: string): Promise<string> {
+  private async onButton(user: UserConfig, threadId: number | undefined, messageId: number | undefined, data: string): Promise<string> {
     const [kind, action = "", arg] = data.split(":");
+    const place = this.place(user, threadId);
     const session = threadId !== undefined ? this.session(user, threadId) : undefined;
     switch (kind) {
       case "a":
-        return this.account(user).card(action, arg);
+        return place.ownsPanel(messageId) ? this.account(user).panelAction(action, arg, place) : "This panel is closed.";
+      case "s":
+        if (!place.ownsPanel(messageId)) {
+          return "This panel is closed.";
+        } else if (session !== undefined) {
+          return session.panelAction(action, arg);
+        } else {
+          await place.closePanel(undefined);
+          return "OK";
+        }
       case "l":
         return this.account(user).loginChoice(Number(action));
       case "p":
         return threadId !== undefined ? this.binder.press(user, threadId, action) : "Unknown topic";
-      case "c":
-        return session !== undefined ? session.card(action, arg) : "This session is gone";
       case "d":
         return session !== undefined ? session.dialogButton(Number(action), arg ?? "") : "This session is gone";
       case "r":
@@ -285,6 +345,7 @@ export class Gateway {
 
   /** The message as a prompt input: text, photos as images, documents saved to the inbox. */
   private async input(user: UserConfig, threadId: number, message: Message, text: string): Promise<UserInput | undefined> {
+    const place = this.place(user, threadId);
     let body = text;
     const reply = message.reply_to_message;
     if (reply !== undefined && reply.forum_topic_created === undefined && reply.from?.is_bot === true) {
@@ -298,19 +359,19 @@ export class Gateway {
         try {
           images.push({ data: (await this.deps.download(largest.file_id)).toString("base64"), mimeType: "image/jpeg" });
         } catch (error) {
-          await this.reply(user, threadId, `❌ Could not download the photo: ${escapeHtml(String(error))}`);
+          await place.send({ html: `❌ Could not download the photo: ${escapeHtml(String(error))}` }, { silent: false });
           return undefined;
         }
       }
     } else if (message.document !== undefined) {
       const doc = message.document;
       if ((doc.file_size ?? 0) > DOWNLOAD_LIMIT) {
-        await this.reply(user, threadId, "❌ Files over 20 MB cannot be received through Telegram.");
+        await place.send({ html: "❌ Files over 20 MB cannot be received through Telegram." }, { silent: false });
         return undefined;
       }
       const saved = await this.saveDocument(user, threadId, doc.file_id, doc.file_name ?? `file-${message.message_id}`);
       if ("problem" in saved) {
-        await this.reply(user, threadId, `❌ ${escapeHtml(saved.problem)}`);
+        await place.send({ html: `❌ ${escapeHtml(saved.problem)}` }, { silent: false });
         return undefined;
       }
       body = `${body}\n\n[attached file: ${saved.path}]`.trim();
@@ -349,6 +410,27 @@ export class Gateway {
     }
   }
 
+  /** The outbox of a topic (or of All): one per place, shared by everything that posts there. */
+  private place(user: UserConfig, threadId: number | undefined): Outbox {
+    const key = `${user.telegramId}:${threadId ?? "all"}`;
+    const existing = this.places.get(key);
+    if (existing !== undefined) {
+      return existing;
+    } else {
+      const outbox = new Outbox(this.deps.tg, user.telegramId, threadId, (line) => this.deps.log(`${user.name}/${threadId ?? "all"}: ${line}`), () => {
+        // the user deleted the topic
+        if (threadId !== undefined) {
+          void this.sessions.get(key)?.threadGone();
+          this.binder.forget(user.telegramId, threadId);
+        } else {
+          // All cannot be deleted
+        }
+      });
+      this.places.set(key, outbox);
+      return outbox;
+    }
+  }
+
   private session(user: UserConfig, threadId: number): TopicSession | undefined {
     const key = `${user.telegramId}:${threadId}`;
     const existing = this.sessions.get(key);
@@ -357,7 +439,7 @@ export class Gateway {
     } else if (this.deps.store.topic(user.telegramId, threadId) === undefined) {
       return undefined;
     } else {
-      const session = new TopicSession(this.deps, user, threadId);
+      const session = new TopicSession(this.deps, user, threadId, this.place(user, threadId));
       this.sessions.set(key, session);
       return session;
     }
@@ -369,10 +451,8 @@ export class Gateway {
     const account = new Account(
       {
         config: this.deps.config,
-        store: this.deps.store,
-        tg: this.deps.tg,
         log: this.deps.log,
-        sessionsRunning: (userId) => this.deps.store.topics(userId).filter((t) => this.sessions.get(`${userId}:${t.threadId}`)?.isRunning === true).length,
+        help: HELP,
         sessionsSummary: (userId) =>
           this.deps.store
             .topics(userId)
@@ -385,12 +465,6 @@ export class Gateway {
     );
     this.accounts.set(user.telegramId, account);
     return account;
-  }
-
-  private async reply(user: UserConfig, threadId: number | undefined, html: string): Promise<void> {
-    await this.deps.tg
-      .sendMessage(user.telegramId, html, { message_thread_id: threadId, parse_mode: "HTML", link_preview_options: { is_disabled: true } })
-      .catch((error: unknown) => this.deps.log(`${user.name}: reply: ${String(error)}`));
   }
 }
 

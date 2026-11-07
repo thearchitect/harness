@@ -143,6 +143,7 @@ async function main(): Promise<void> {
     activity: () => idle.activity(),
   });
   const idle = new IdleShutdown(systemClock, config.limits.idleShutdownMinutes * 60_000, () => ready.isQuiescent(), () => void stop("idle"));
+  await ready.removeObsoleteTopics();
   gateway = ready;
   for (const update of early.splice(0)) void ready.onUpdate(update);
 

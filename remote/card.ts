@@ -1,16 +1,47 @@
 /**
- * The pinned cards: the session card of each topic and the account card of
- * the Account topic. Pure rendering of text (HTML) and buttons from state;
- * lists (models, thinking levels, providers, secrets) open inside the card
- * instead of new messages, so nothing scrolls.
+ * What the user sees of the controls:
  *
- * callback_data: `c:<action>[:<arg>]` for the session card, `a:<action>[:<arg>]`
- * for the account card (Telegram allows 64 bytes).
+ * - the chat's persistent reply keyboard: four section buttons, the same in
+ *   every topic (Telegram shows one reply keyboard for the whole chat); a
+ *   press acts on the topic it was sent from;
+ * - the pinned status card of a session topic: text only (the pinned bar
+ *   shows its first line), no buttons — nobody has to scroll up to it;
+ * - panels: the inline second level of a section, posted as the last message
+ *   of the topic and edited in place while the user navigates; the outcome
+ *   replaces the panel's text.
+ *
+ * callback_data of panel buttons: `s:<action>[:<arg>]` (session),
+ * `a:<action>[:<arg>]` (account); Telegram allows 64 bytes.
  */
 
+import type { ReplyKeyboardMarkup } from "grammy/types";
 import type { Keyboard } from "./outbox.ts";
 import { escapeHtml, formatDuration } from "./render.ts";
 import type { TurnMode } from "./state.ts";
+
+/** The section buttons; a press arrives as a message with exactly this text. */
+export const SECTIONS = {
+  build: "🔨 Build",
+  stop: "⏹ Stop",
+  model: "🧠 Model",
+  more: "⚙️ More",
+} as const;
+export type Section = keyof typeof SECTIONS;
+
+/** Bump when the keyboard changes: every user gets it again. */
+export const KEYBOARD_VERSION = 1;
+
+export const REPLY_KEYBOARD: ReplyKeyboardMarkup = {
+  keyboard: [[{ text: SECTIONS.build }, { text: SECTIONS.stop }, { text: SECTIONS.model }, { text: SECTIONS.more }]],
+  is_persistent: true,
+  resize_keyboard: true,
+  input_field_placeholder: "Task, or a reply to the agent…",
+};
+
+export function sectionOf(text: string | undefined): Section | undefined {
+  const entry = Object.entries(SECTIONS).find(([, label]) => label === text);
+  return entry !== undefined ? (entry[0] as Section) : undefined;
+}
 
 export type SessionStatus =
   | { kind: "stopped" }
@@ -20,29 +51,24 @@ export type SessionStatus =
   | { kind: "compacting" }
   | { kind: "closed" };
 
-export type SessionView =
-  | { kind: "main" }
-  | { kind: "models"; page: number; models: { provider: string; id: string }[] }
-  | { kind: "thinking"; levels: string[] }
-  | { kind: "confirmClose" };
-
 export type SessionCard = {
   dir: string;
   model?: string;
   thinking?: string;
   nextMode: TurnMode;
   status: SessionStatus;
-  view: SessionView;
 };
 
-export const MODELS_PER_PAGE = 8;
-
-export function renderSessionCard(card: SessionCard, now: number): { html: string; keyboard: Keyboard } {
-  const model = card.model !== undefined ? ` · 🧠 ${escapeHtml(card.model)}` : "";
-  const thinking = card.thinking !== undefined ? ` · 💭 ${escapeHtml(card.thinking)}` : "";
-  const next = card.nextMode === "plan" ? "📝 Plan" : "🔨 Build";
-  const html = `📁 <b>${escapeHtml(card.dir)}</b>${model}${thinking}\nNext message: ${next} · ${statusText(card.status, now)}`;
-  return { html, keyboard: card.status.kind === "closed" ? [] : sessionKeyboard(card) };
+/** The pinned status: "📁 ~/proj · 🧠 deepseek-v4-pro · 💭 max · 📝 Plan · ● idle". */
+export function renderSessionCard(card: SessionCard, now: number): string {
+  const parts = [
+    `📁 <b>${escapeHtml(card.dir)}</b>`,
+    ...(card.model !== undefined ? [`🧠 ${escapeHtml(card.model.split("/").pop() ?? card.model)}`] : []),
+    ...(card.thinking !== undefined ? [`💭 ${escapeHtml(card.thinking)}`] : []),
+    card.nextMode === "plan" ? "📝 Plan" : "🔨 Build next",
+    statusText(card.status, now),
+  ];
+  return parts.join(" · ");
 }
 
 function statusText(status: SessionStatus, now: number): string {
@@ -64,92 +90,99 @@ function statusText(status: SessionStatus, now: number): string {
   }
 }
 
-function sessionKeyboard(card: SessionCard): Keyboard {
-  const view = card.view;
-  switch (view.kind) {
-    case "main": {
-      const busy = card.status.kind === "running" || card.status.kind === "waiting" || card.status.kind === "compacting";
-      return [
-        [
-          { text: card.nextMode === "plan" ? "📝 Plan ✓" : "📝 Plan", callback_data: "c:mode:plan" },
-          { text: card.nextMode === "build" ? "🔨 Build ✓" : "🔨 Build", callback_data: "c:mode:build" },
-        ],
-        [
-          { text: "🧠 Model", callback_data: "c:models:0" },
-          { text: "💭 Thinking", callback_data: "c:thinking" },
-          { text: "🗜 Compact", callback_data: "c:compact" },
-        ],
-        busy ? [{ text: "⏹ Stop", callback_data: "c:stop" }, { text: "✓ Close", callback_data: "c:close" }] : [{ text: "✓ Close", callback_data: "c:close" }],
-      ];
-    }
-    case "models": {
-      const pages = Math.max(1, Math.ceil(view.models.length / MODELS_PER_PAGE));
-      const start = view.page * MODELS_PER_PAGE;
-      const rows: Keyboard = view.models.slice(start, start + MODELS_PER_PAGE).map((m, i) => [
-        { text: `${m.provider}/${m.id}`, callback_data: `c:model:${start + i}` },
-      ]);
-      rows.push([
-        ...(view.page > 0 ? [{ text: "‹", callback_data: `c:models:${view.page - 1}` }] : []),
-        { text: "✕", callback_data: "c:back" },
-        ...(view.page < pages - 1 ? [{ text: "›", callback_data: `c:models:${view.page + 1}` }] : []),
-      ]);
-      return rows;
-    }
-    case "thinking":
-      return [...view.levels.map((level, i) => [{ text: level, callback_data: `c:level:${i}` }]), [{ text: "✕", callback_data: "c:back" }]];
-    case "confirmClose":
-      return [[{ text: "✓ Yes, close", callback_data: "c:closeyes" }, { text: "No", callback_data: "c:back" }]];
-    default:
-      return assertNever(view);
-  }
+export const MODELS_PER_PAGE = 8;
+
+/** ⚙️ More: session actions (in a session topic) and the account. */
+export function morePanel(inSession: boolean): { html: string; keyboard: Keyboard } {
+  return {
+    html: "⚙️ <b>More</b>",
+    keyboard: [
+      ...(inSession
+        ? [[
+            { text: "💭 Thinking", callback_data: "s:thinking" },
+            { text: "🗜 Compact", callback_data: "s:compact" },
+            { text: "✓ Close", callback_data: "s:close" },
+          ]]
+        : []),
+      [
+        { text: "🔑 Login", callback_data: "a:providers" },
+        { text: "🔐 Secrets", callback_data: "a:secrets" },
+      ],
+      [
+        { text: "👤 Key", callback_data: "a:key" },
+        { text: "📋 Sessions", callback_data: "a:sessions" },
+        { text: "❓ Help", callback_data: "a:help" },
+      ],
+      [{ text: "✕", callback_data: "s:dismiss" }],
+    ],
+  };
 }
 
-export type AccountView =
-  | { kind: "main" }
-  | { kind: "providers"; providers: { id: string; name: string; loggedIn: boolean }[] }
-  | { kind: "secrets"; names: string[] }
-  | { kind: "confirmDelete"; name: string };
-
-export type AccountCard = {
-  name: string;
-  uid: number;
-  secrets?: number;
-  sessionsRunning: number;
-  view: AccountView;
-};
-
-export function renderAccountCard(card: AccountCard): { html: string; keyboard: Keyboard } {
-  const secrets = card.secrets !== undefined ? `🔐 ${card.secrets} secret${card.secrets === 1 ? "" : "s"} · ` : "";
-  const html = `👤 <b>${escapeHtml(card.name)}</b> · uid ${card.uid}\n${secrets}📋 ${card.sessionsRunning} running`;
-  return { html, keyboard: accountKeyboard(card.view) };
+export function modelsPanel(models: { provider: string; id: string }[], page: number, current: string | undefined): { html: string; keyboard: Keyboard } {
+  const pages = Math.max(1, Math.ceil(models.length / MODELS_PER_PAGE));
+  const start = page * MODELS_PER_PAGE;
+  const rows: Keyboard = models.slice(start, start + MODELS_PER_PAGE).map((m, i) => {
+    const name = `${m.provider}/${m.id}`;
+    return [{ text: name === current ? `✓ ${name}` : name, callback_data: `s:model:${start + i}` }];
+  });
+  rows.push([
+    ...(page > 0 ? [{ text: "‹", callback_data: `s:models:${page - 1}` }] : []),
+    { text: "✕", callback_data: "s:dismiss" },
+    ...(page < pages - 1 ? [{ text: "›", callback_data: `s:models:${page + 1}` }] : []),
+  ]);
+  return { html: models.length > 0 ? `🧠 <b>Model</b>${pages > 1 ? ` (${page + 1}/${pages})` : ""}` : "🧠 No models available — log in or add an API key (⚙️ More).", keyboard: rows };
 }
 
-function accountKeyboard(view: AccountView): Keyboard {
-  switch (view.kind) {
-    case "main":
-      return [
-        [{ text: "🔑 Login", callback_data: "a:providers" }, { text: "🔐 Secrets", callback_data: "a:secrets" }],
-        [{ text: "👤 Key", callback_data: "a:key" }, { text: "📋 Sessions", callback_data: "a:sessions" }],
-      ];
-    case "providers":
-      return [
-        ...view.providers.map((p, i) => [
-          p.loggedIn
-            ? { text: `✓ ${p.name} — log out`, callback_data: `a:logout:${i}` }
-            : { text: `🔑 ${p.name}`, callback_data: `a:login:${i}` },
-        ]),
-        [{ text: "✕", callback_data: "a:back" }],
-      ];
-    case "secrets":
-      return [
-        ...view.names.map((name) => [{ text: `🗑 ${name}`, callback_data: `a:del:${name}` }]),
-        [{ text: "➕ Add", callback_data: "a:add" }, { text: "✕", callback_data: "a:back" }],
-      ];
-    case "confirmDelete":
-      return [[{ text: `🗑 Delete ${view.name}`, callback_data: `a:delyes:${view.name}` }, { text: "No", callback_data: "a:secrets" }]];
-    default:
-      return assertNever(view);
-  }
+export function thinkingPanel(levels: string[], current: string | undefined): { html: string; keyboard: Keyboard } {
+  return {
+    html: "💭 <b>Thinking level</b>",
+    keyboard: [
+      levels.map((level, i) => ({ text: level === current ? `✓ ${level}` : level, callback_data: `s:level:${i}` })),
+      [{ text: "✕", callback_data: "s:dismiss" }],
+    ],
+  };
+}
+
+export function closePanel(): { html: string; keyboard: Keyboard } {
+  return {
+    html: "✓ <b>Close this session?</b> The topic stays as history.",
+    keyboard: [[{ text: "✓ Close", callback_data: "s:closeyes" }, { text: "✕", callback_data: "s:dismiss" }]],
+  };
+}
+
+export function buildPanel(nextMode: TurnMode): { html: string; keyboard: Keyboard } {
+  return nextMode === "build"
+    ? { html: "🔨 <b>The next message builds.</b>", keyboard: [[{ text: "📝 Back to Plan", callback_data: "s:mode:plan" }]] }
+    : { html: "📝 The next message plans.", keyboard: [[{ text: "🔨 Build next", callback_data: "s:mode:build" }]] };
+}
+
+export function providersPanel(providers: { id: string; name: string; loggedIn: boolean }[]): { html: string; keyboard: Keyboard } {
+  return {
+    html: "🔑 <b>Log in</b> — OAuth providers. On a phone, prefer the ones with a device code (e.g. OpenAI Codex).",
+    keyboard: [
+      ...providers.map((p, i) => [
+        p.loggedIn ? { text: `✓ ${p.name} — log out`, callback_data: `a:logout:${i}` } : { text: `🔑 ${p.name}`, callback_data: `a:login:${i}` },
+      ]),
+      [{ text: "✕", callback_data: "a:dismiss" }],
+    ],
+  };
+}
+
+export function secretsPanel(names: string[]): { html: string; keyboard: Keyboard } {
+  return {
+    html: names.length > 0 ? `🔐 <b>Your secrets</b> (tap to delete):` : "🔐 <b>No secrets yet.</b> They reach every new session as environment variables.",
+    keyboard: [
+      ...names.map((name) => [{ text: `🗑 ${name}`, callback_data: `a:del:${name}` }]),
+      [{ text: "➕ Add", callback_data: "a:add" }, { text: "✕", callback_data: "a:dismiss" }],
+    ],
+  };
+}
+
+export function deleteSecretPanel(name: string): { html: string; keyboard: Keyboard } {
+  return {
+    html: `🗑 Delete <code>${escapeHtml(name)}</code>?`,
+    keyboard: [[{ text: "🗑 Delete", callback_data: `a:delyes:${name}` }, { text: "✕", callback_data: "a:secrets" }]],
+  };
 }
 
 function assertNever(value: never): never {

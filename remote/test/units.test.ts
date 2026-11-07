@@ -5,7 +5,7 @@
 
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { renderAccountCard, renderSessionCard } from "../card.ts";
+import { modelsPanel, morePanel, renderSessionCard, REPLY_KEYBOARD, sectionOf } from "../card.ts";
 import { parseConfig } from "../config.ts";
 import { Dialogs } from "../dialogs.ts";
 import { parseDotenv } from "../dotenv.ts";
@@ -108,27 +108,32 @@ describe("render", () => {
   });
 });
 
-describe("cards", () => {
-  test("session card by status", () => {
-    const base = { dir: "~/showone", model: "deepseek/v4", thinking: "high", nextMode: "plan" as const, view: { kind: "main" as const } };
-    const idle = renderSessionCard({ ...base, status: { kind: "idle" } }, 0);
-    assert.equal(idle.html, "📁 <b>~/showone</b> · 🧠 deepseek/v4 · 💭 high\nNext message: 📝 Plan · ● idle");
-    assert.deepEqual(idle.keyboard.flat().map((b) => (b as { callback_data: string }).callback_data), ["c:mode:plan", "c:mode:build", "c:models:0", "c:thinking", "c:compact", "c:close"]);
-    const running = renderSessionCard({ ...base, nextMode: "build", status: { kind: "running", since: 0 } }, 72_000);
-    assert.match(running.html, /Next message: 🔨 Build · ⏳ running 1m 12s/);
-    assert.ok(running.keyboard.flat().some((b) => (b as { callback_data: string }).callback_data === "c:stop"));
-    assert.deepEqual(renderSessionCard({ ...base, status: { kind: "closed" } }, 0).keyboard, []);
+describe("cards and panels", () => {
+  test("the status card is one line of text", () => {
+    const base = { dir: "~/showone", model: "deepseek/deepseek-v4-pro", thinking: "max", nextMode: "plan" as const };
+    assert.equal(renderSessionCard({ ...base, status: { kind: "idle" } }, 0), "📁 <b>~/showone</b> · 🧠 deepseek-v4-pro · 💭 max · 📝 Plan · ● idle");
+    assert.match(renderSessionCard({ ...base, nextMode: "build", status: { kind: "running", since: 0 } }, 72_000), /🔨 Build next · ⏳ running 1m 12s$/);
+  });
+
+  test("the keyboard: four sections; a press is recognized by its exact text", () => {
+    assert.deepEqual(REPLY_KEYBOARD.keyboard[0]?.map((b) => (typeof b === "string" ? b : b.text)), ["🔨 Build", "⏹ Stop", "🧠 Model", "⚙️ More"]);
+    assert.equal(REPLY_KEYBOARD.is_persistent, true);
+    assert.equal(sectionOf("🧠 Model"), "model");
+    assert.equal(sectionOf("🧠 Model please"), undefined);
   });
 
   test("model list pages", () => {
     const models = Array.from({ length: 10 }, (_, i) => ({ provider: "p", id: `m${i}` }));
-    const page1 = renderSessionCard({ dir: "~", nextMode: "plan", status: { kind: "idle" }, view: { kind: "models", page: 1, models } }, 0);
-    assert.deepEqual(page1.keyboard.map((row) => row.map((b) => b.text)), [["p/m8"], ["p/m9"], ["‹", "✕"]]);
+    const page1 = modelsPanel(models, 1, "p/m9");
+    assert.deepEqual(page1.keyboard.map((row) => row.map((b) => b.text)), [["p/m8"], ["✓ p/m9"], ["‹", "✕"]]);
+    assert.equal(page1.html, "🧠 <b>Model</b> (2/2)");
   });
 
-  test("account card", () => {
-    const card = renderAccountCard({ name: "artem", uid: 1001, secrets: 1, sessionsRunning: 2, view: { kind: "main" } });
-    assert.equal(card.html, "👤 <b>artem</b> · uid 1001\n🔐 1 secret · 📋 2 running");
+  test("⚙️ More: session actions only in a session topic", () => {
+    const data = (inSession: boolean): string[] => morePanel(inSession).keyboard.flat().map((b) => (b as { callback_data: string }).callback_data);
+    assert.deepEqual(data(true).slice(0, 3), ["s:thinking", "s:compact", "s:close"]);
+    assert.ok(!data(false).includes("s:thinking"));
+    assert.ok(data(false).includes("a:providers"));
   });
 });
 
@@ -287,6 +292,25 @@ describe("outbox", () => {
     tg.failNext("editMessageText", "Bad Request: message is not modified");
     await box.edit(101, { html: "card" });
     assert.deepEqual(tg.methods(), ["sendMessage", "sendMessage", "editMessageText"]);
+  });
+
+  test("a panel is edited in place while it is the last message, re-posted below otherwise, closed with its outcome", async () => {
+    const tg = new FakeTg();
+    const box = outbox(tg);
+    await box.showPanel({ html: "page 1", keyboard: [[{ text: "›", callback_data: "s:models:1" }]] });
+    const panelId = tg.of("sendMessage")[0] !== undefined ? 100 : -1;
+    assert.equal(box.ownsPanel(panelId), true);
+    await box.showPanel({ html: "page 2", keyboard: [[{ text: "‹", callback_data: "s:models:0" }]] });
+    assert.deepEqual(tg.methods(), ["sendMessage", "editMessageText"]);
+    await box.userPosted();
+    assert.equal(box.ownsPanel(panelId), false, "a message below retires the panel");
+    await box.showPanel({ html: "again", keyboard: [[{ text: "x", callback_data: "s:dismiss" }]] });
+    assert.deepEqual(tg.methods().slice(2), ["editMessageReplyMarkup", "sendMessage"]);
+    await box.closePanel("🧠 p/m1 ✓");
+    assert.deepEqual(tg.of("editMessageText").at(-1)?.slice(1, 3), [101, "🧠 p/m1 ✓"]);
+    await box.showPanel({ html: "more", keyboard: [[{ text: "✕", callback_data: "s:dismiss" }]] });
+    await box.closePanel(undefined);
+    assert.equal(tg.methods().at(-1), "deleteMessage");
   });
 
   test("rich markdown Telegram cannot parse is resent as plain text", async () => {

@@ -13,7 +13,7 @@ import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { homeOf } from "./accounts.ts";
 import type { Config, UserConfig } from "./config.ts";
-import { Outbox } from "./outbox.ts";
+import type { Outbox } from "./outbox.ts";
 import { escapeHtml } from "./render.ts";
 import type { UserInput } from "./session.ts";
 import { displayDir } from "./session.ts";
@@ -26,6 +26,8 @@ export type BinderDeps = {
   tg: Tg;
   log(line: string): void;
   now(): number;
+  /** The topic's outbox (the gateway owns one per topic). */
+  place(user: UserConfig, threadId: number): Outbox;
   /** Binds the topic to a new session in `cwd` and sends it the held inputs. */
   bind(user: UserConfig, threadId: number, cwd: string, title: string, held: UserInput[]): Promise<void>;
 };
@@ -216,10 +218,12 @@ export class TopicBinder {
   }
 
   private outbox(user: UserConfig, threadId: number): Outbox {
-    return new Outbox(this.deps.tg, user.telegramId, threadId, (line) => this.deps.log(`${user.name}/${threadId}: ${line}`), () => {
-      // the user deleted the topic before choosing: forget it
-      this.pending.delete(key(user.telegramId, threadId));
-    });
+    return this.deps.place(user, threadId);
+  }
+
+  /** The user deleted the topic before choosing: forget it. */
+  forget(userId: number, threadId: number): void {
+    this.pending.delete(key(userId, threadId));
   }
 }
 

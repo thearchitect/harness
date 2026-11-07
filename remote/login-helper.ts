@@ -13,7 +13,7 @@
 
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 type Incoming = { type: "answer"; id: string; value: string } | { type: "cancel" };
 
@@ -45,7 +45,11 @@ process.stdin.on("data", (chunk: string) => {
 
 async function main(): Promise<void> {
   const [mode, providerId] = process.argv.slice(2);
-  const runtime = await ModelRuntime.create({ authPath: join(homedir(), ".pi", "agent", "auth.json"), refreshOnCreate: false });
+  const agentDir = join(homedir(), ".pi", "agent");
+  const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), refreshOnCreate: false });
+  // The installation's stable id (OpenAI's ChatGPT sign-in needs it), kept in
+  // the user's settings.json as pi itself does.
+  const settings = SettingsManager.create(homedir(), agentDir);
   if (mode === "list") {
     const credentials = await runtime.listCredentials();
     const list = runtime
@@ -64,7 +68,7 @@ async function main(): Promise<void> {
           send({ type: "prompt", id, prompt: shown });
         }),
       notify: (event) => send({ type: "notify", event }),
-    });
+    }, { getDeviceId: () => settings.getOrCreateDeviceId() });
   } else if (mode === "logout" && providerId !== undefined) {
     await runtime.logout(providerId);
   } else {

@@ -52,7 +52,7 @@ export class FakeClock implements Clock {
   }
 }
 
-export type Call = { method: string; args: unknown[] };
+export type Call = { method: string; args: unknown[]; result?: unknown };
 
 /** A Bot API that records every call and returns plausible results. */
 export class FakeTg {
@@ -72,6 +72,12 @@ export class FakeTg {
     return this.calls.filter((c) => c.method === method).map((c) => c.args);
   }
 
+  /** The id of the last message sent whose text matches. */
+  sentId(pattern: RegExp): number | undefined {
+    const call = this.calls.filter((c) => c.method === "sendMessage" && pattern.test(String(c.args[1]))).at(-1);
+    return (call?.result as { message_id?: number } | undefined)?.message_id;
+  }
+
   methods(): string[] {
     return this.calls.map((c) => c.method);
   }
@@ -79,20 +85,23 @@ export class FakeTg {
   get api(): Tg {
     const handler: ProxyHandler<object> = {
       get: (_target, method: string) => async (...args: unknown[]) => {
-        this.calls.push({ method, args });
+        const call: Call = { method, args };
+        this.calls.push(call);
         const failure = this.failures.get(method)?.shift();
         if (failure !== undefined) throw failure;
         switch (method) {
           case "sendMessage":
           case "sendRichMessage":
-            return { message_id: this.nextMessageId++ };
           case "copyMessage":
-            return { message_id: this.nextMessageId++ };
+            call.result = { message_id: this.nextMessageId++ };
+            break;
           case "createForumTopic":
-            return { message_thread_id: this.nextThreadId++, name: args[1] };
+            call.result = { message_thread_id: this.nextThreadId++, name: args[1] };
+            break;
           default:
-            return true;
+            call.result = true;
         }
+        return call.result;
       },
     };
     return new Proxy({}, handler) as Tg;
