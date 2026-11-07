@@ -15,6 +15,9 @@ import { SessionPool, type PoolProcess } from "../pool.ts";
 import { bannerLine, fence, type Item, MESSAGE_LIMIT, renderDraft, renderItems, splitText, stripAnsi, toolSummary } from "../render.ts";
 import { RunView } from "../stream.ts";
 import { GATE_OPTIONS, GATE_TITLE, GATE_COMMENT_PROMPTS } from "../../rpc-dialogs.ts";
+import { Account, LOGIN_TIMEOUT_MS } from "../account.ts";
+import type { Config } from "../config.ts";
+import type { LoginCallbacks, LoginRun } from "../login.ts";
 import { FakeClock, FakeTg, settle } from "./fakes.ts";
 
 const VALID = `
@@ -454,5 +457,103 @@ describe("dialogs", () => {
       { type: "extension_ui_response", id: "i", value: "Bob" },
       { type: "extension_ui_response", id: "x", cancelled: true },
     ]);
+  });
+});
+
+/** A login helper run the test drives: prompts on demand, finishes when cancelled (killed) or told to. */
+class FakeLogin {
+  cancelled = false;
+  readonly result: Promise<{ ok: true; providers?: { id: string; name: string; loggedIn: boolean }[] } | { ok: false; problem: string }>;
+  private finish!: (result: { ok: true; providers?: { id: string; name: string; loggedIn: boolean }[] } | { ok: false; problem: string }) => void;
+  readonly callbacks: LoginCallbacks;
+  constructor(callbacks: LoginCallbacks) {
+    this.callbacks = callbacks;
+    this.result = new Promise((resolve) => (this.finish = resolve));
+  }
+  cancel(): void {
+    this.cancelled = true;
+    this.finish({ ok: false, problem: "login helper exited with null" });
+  }
+  complete(result: { ok: true; providers?: { id: string; name: string; loggedIn: boolean }[] }): void {
+    this.finish(result);
+  }
+}
+
+describe("account login", () => {
+  const user = { name: "artem", telegramId: 1, uid: 1001, gid: 1001, git: { name: "A", email: "a@x" }, publicKeys: [] };
+  const providers = [
+    { id: "openai", name: "OpenAI", loggedIn: false },
+    { id: "openai-codex", name: "OpenAI Codex (legacy)", loggedIn: false },
+  ];
+
+  function setup(): { account: Account; clock: FakeClock; tg: FakeTg; box: Outbox; logins: FakeLogin[] } {
+    const clock = new FakeClock();
+    const tg = new FakeTg();
+    const logins: FakeLogin[] = [];
+    const account = new Account(
+      {
+        config: {} as Config,
+        clock,
+        log: () => undefined,
+        sessionsSummary: () => [],
+        restartUser: () => undefined,
+        startLogin: (_user, args, callbacks) => {
+          const run = new FakeLogin(callbacks);
+          if (args[0] === "list") run.complete({ ok: true, providers });
+          logins.push(run);
+          return run as unknown as LoginRun;
+        },
+      },
+      user,
+    );
+    return { account, clock, tg, box: outbox(tg), logins };
+  }
+
+  async function startLogin(s: ReturnType<typeof setup>, index: number): Promise<FakeLogin> {
+    await s.account.command("login", s.box);
+    await s.account.panelAction("login", String(index), s.box);
+    const run = s.logins.at(-1);
+    assert.ok(run !== undefined);
+    return run;
+  }
+
+  test("choosing another provider cancels the login in progress and starts the new one", async () => {
+    const s = setup();
+    const first = await startLogin(s, 0);
+    const pending = first.callbacks.prompt({ type: "manual_code", message: "Paste the redirect URL" });
+    const rejected = assert.rejects(pending, /cancelled/);
+    await settle();
+    assert.equal(s.account.quiescent, false);
+    const second = await startLogin(s, 1);
+    assert.equal(first.cancelled, true);
+    await rejected;
+    assert.equal(second.cancelled, false);
+    assert.match(String(s.tg.of("editMessageText").map((args) => args[2]).find((t) => /Paste the redirect URL\ncancelled/.test(String(t)))), /cancelled/);
+    void second.callbacks.prompt({ type: "select", message: "Select OpenAI Codex login method:", options: [{ id: "browser", label: "Browser" }, { id: "device_code", label: "Device code" }] });
+    await settle();
+    assert.equal(s.tg.sentId(/Select OpenAI Codex login method/) !== undefined, true, "the new login's prompt is shown");
+    assert.ok(!(s.tg.of("sendMessage").map((args) => String(args[1])).some((t) => /^Error: OpenAI:/.test(t))), "the cancelled login reports nothing");
+  });
+
+  test("a login is cancelled after 10 minutes, not before; the account is quiescent again", async () => {
+    const s = setup();
+    const run = await startLogin(s, 0);
+    await s.clock.advance(LOGIN_TIMEOUT_MS - 1);
+    assert.equal(run.cancelled, false);
+    await s.clock.advance(1);
+    assert.equal(run.cancelled, true);
+    assert.equal(s.tg.of("sendMessage").map((args) => String(args[1])).at(-1), "Login timed out.");
+    assert.equal(s.account.quiescent, true);
+  });
+
+  test("a finished login stops its timer", async () => {
+    const s = setup();
+    const run = await startLogin(s, 1);
+    run.complete({ ok: true });
+    await settle();
+    assert.equal(s.tg.of("sendMessage").map((args) => String(args[1])).at(-1), "Logged in to OpenAI Codex (legacy).");
+    await s.clock.advance(LOGIN_TIMEOUT_MS);
+    assert.equal(run.cancelled, false);
+    assert.equal(s.clock.pending(), 0);
   });
 });

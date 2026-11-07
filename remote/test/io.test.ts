@@ -136,4 +136,20 @@ describe("accounts, secrets and login (runAs self)", () => {
     assert.equal(result.ok, true, JSON.stringify(result));
     assert.ok(result.ok && (result.providers ?? []).some((p) => p.id === "openai-codex" && !p.loggedIn));
   });
+
+  test("cancelling a login waiting for the user ends its helper", async () => {
+    let prompted!: () => void;
+    const asked = new Promise<void>((resolve) => (prompted = resolve));
+    const run = new LoginRun(config, user, ["login", "openai-codex"], {
+      prompt: () => {
+        prompted();
+        return new Promise<string>(() => undefined); // the user never answers
+      },
+      notify: () => undefined,
+    });
+    await asked;
+    run.cancel();
+    const result = await run.result;
+    assert.equal(result.ok, false);
+  });
 });

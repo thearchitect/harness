@@ -343,6 +343,7 @@ export class Gateway {
     const account = new Account(
       {
         config: this.deps.config,
+        clock: this.deps.clock,
         log: this.deps.log,
         sessionsSummary: (userId) =>
           this.deps.store

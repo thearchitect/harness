@@ -6,10 +6,15 @@
  *
  * Values typed for secrets and login codes are deleted from the chat as soon
  * as they are read.
+ *
+ * One login at a time: choosing a provider while a login is in progress
+ * cancels it; a login that has not finished in LOGIN_TIMEOUT_MS is cancelled
+ * (it would otherwise keep the machine awake waiting for a code).
  */
 
 import { publicKey } from "./accounts.ts";
 import { deleteSecretPanel, providersPanel, secretsPanel } from "./card.ts";
+import type { Clock, Timer } from "./clock.ts";
 import type { Config, UserConfig } from "./config.ts";
 import type { AuthEvent, AuthPrompt, LoginCallbacks, LoginRun, Provider } from "./login.ts";
 import type { Outbox } from "./outbox.ts";
@@ -18,6 +23,7 @@ import { listSecrets, removeSecret, SECRET_NAME, setSecret } from "./secrets.ts"
 
 export type AccountDeps = {
   config: Config;
+  clock: Clock;
   log(line: string): void;
   /** One line per open session of the user: directory and state. */
   sessionsSummary(userId: number): string[];
@@ -25,6 +31,10 @@ export type AccountDeps = {
   restartUser(userId: number): void;
   startLogin(user: UserConfig, args: string[], callbacks: LoginCallbacks): LoginRun;
 };
+
+export const LOGIN_TIMEOUT_MS = 10 * 60_000;
+
+type Login = { run: LoginRun; place: Outbox; timer: Timer; cancelled?: "replaced" | "timeout" | "stopped" };
 
 type Awaiting =
   | { kind: "secretName" }
@@ -37,7 +47,7 @@ export class Account {
   /** Where the account was last used: inputs and login output go there. */
   private place: Outbox | undefined;
   private awaiting: Awaiting | undefined;
-  private login: LoginRun | undefined;
+  private login: Login | undefined;
   private providers: Provider[] = [];
 
   constructor(deps: AccountDeps, user: UserConfig) {
@@ -93,9 +103,8 @@ export class Account {
         if (provider === undefined) {
           await place.closePanel("The list is outdated, run /login again.");
           return "Failed";
-        } else if (this.login !== undefined) {
-          return "Another login is in progress";
         } else {
+          if (this.login !== undefined) await this.cancelLogin("replaced");
           await place.closePanel(`${action === "login" ? "Logging in to" : "Logging out of"} ${escapeHtml(provider.name)}…`);
           void this.runLogin(action, provider, place);
           return provider.name;
@@ -190,11 +199,14 @@ export class Account {
 
   /** /stop where the account waits: cancels the login or the pending input. */
   async stop(): Promise<void> {
-    const awaiting = this.awaiting;
-    this.awaiting = undefined;
-    if (awaiting?.kind === "login") awaiting.reject(new Error("cancelled"));
-    this.login?.cancel();
-    if (awaiting !== undefined) await this.place?.closeSticky({ html: "cancelled" });
+    if (this.login !== undefined) {
+      await this.cancelLogin("stopped");
+    } else if (this.awaiting !== undefined) {
+      this.awaiting = undefined;
+      await this.place?.closeSticky({ html: "cancelled" });
+    } else {
+      // nothing waits
+    }
   }
 
   /* ------------------------------------------------------------------------ */
@@ -224,12 +236,22 @@ export class Account {
   }
 
   private async runLogin(action: "login" | "logout", provider: Provider, place: Outbox): Promise<void> {
+    // Prompts and notifications of a cancelled login are dropped.
+    let login: Login | undefined;
+    const current = (): boolean => login !== undefined && this.login === login;
     const run = this.deps.startLogin(this.user, [action, provider.id], {
-      prompt: (prompt) => this.askLogin(prompt, place),
-      notify: (event) => void this.notifyLogin(event, place),
+      prompt: (prompt) => (current() ? this.askLogin(prompt, place) : Promise.reject(new Error("cancelled"))),
+      notify: (event) => {
+        if (current()) void this.notifyLogin(event, place);
+      },
     });
-    this.login = run;
+    login = { run, place, timer: this.deps.clock.after(LOGIN_TIMEOUT_MS, () => void this.cancelLogin("timeout")) };
+    this.login = login;
     const result = await run.result;
+    if (login.cancelled !== undefined) {
+      return; // reported by cancelLogin
+    }
+    login.timer.cancel();
     this.login = undefined;
     if (this.awaiting?.kind === "login") {
       this.awaiting = undefined;
@@ -242,6 +264,36 @@ export class Account {
       await place.send({ html: action === "login" ? `Logged in to ${escapeHtml(provider.name)}.` : `Logged out of ${escapeHtml(provider.name)}.` });
     } else {
       await place.send({ html: `Error: ${escapeHtml(provider.name)}: ${escapeHtml(result.problem)}` }, { silent: false });
+    }
+  }
+
+  /** Ends the login in progress: its open prompt closes, its helper is stopped. */
+  private async cancelLogin(reason: NonNullable<Login["cancelled"]>): Promise<void> {
+    const login = this.login;
+    if (login === undefined) {
+      return; // finished meanwhile
+    }
+    this.login = undefined;
+    login.cancelled = reason;
+    login.timer.cancel();
+    login.run.cancel();
+    const awaiting = this.awaiting;
+    if (awaiting?.kind === "login") {
+      this.awaiting = undefined;
+      awaiting.reject(new Error("cancelled"));
+      await login.place.closeSticky({ html: `${escapeHtml(awaiting.prompt.message)}\ncancelled` });
+    } else {
+      // no prompt open
+    }
+    switch (reason) {
+      case "timeout":
+        await login.place.send({ html: "Login timed out." });
+        return;
+      case "replaced":
+      case "stopped":
+        return; // the user did it
+      default:
+        assertNever(reason);
     }
   }
 

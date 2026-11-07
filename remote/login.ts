@@ -34,10 +34,11 @@ type HelperMessage =
   | { type: "done"; ok: true }
   | { type: "done"; ok: false; error: string };
 
-/** One run of the helper; `cancel()` aborts a login in progress. */
+/** One run of the helper; `cancel()` stops a login in progress (the helper is killed: a browser login may wait on a socket no abort reaches). */
 export class LoginRun {
   readonly result: Promise<{ ok: true; providers?: Provider[] } | { ok: false; problem: string }>;
   private readonly write: (record: object) => void;
+  private readonly kill: () => void;
 
   constructor(config: Config, user: UserConfig, args: string[], callbacks: LoginCallbacks) {
     const child = spawn(process.execPath, [LOGIN_HELPER, ...args], {
@@ -48,6 +49,9 @@ export class LoginRun {
     });
     this.write = (record) => {
       if (child.exitCode === null) child.stdin.write(`${JSON.stringify(record)}\n`);
+    };
+    this.kill = () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill("SIGTERM");
     };
     let providers: Provider[] | undefined;
     let done: { ok: true } | { ok: false; problem: string } | undefined;
@@ -95,7 +99,7 @@ export class LoginRun {
   }
 
   cancel(): void {
-    this.write({ type: "cancel" });
+    this.kill();
   }
 }
 

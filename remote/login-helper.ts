@@ -8,21 +8,22 @@
  *                   {"type":"prompt","id":"1","prompt":AuthPrompt}
  *                   {"type":"notify","event":AuthEvent}
  *                   {"type":"done","ok":true} | {"type":"done","ok":false,"error":"…"}
- * gateway → helper: {"type":"answer","id":"1","value":"…"} | {"type":"cancel"}
+ * gateway → helper: {"type":"answer","id":"1","value":"…"}
+ *
+ * The gateway cancels a login by killing the helper.
  */
 
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { ModelRuntime, SettingsManager } from "@earendil-works/pi-coding-agent";
 
-type Incoming = { type: "answer"; id: string; value: string } | { type: "cancel" };
+type Incoming = { type: "answer"; id: string; value: string };
 
 function send(record: object): void {
   process.stdout.write(`${JSON.stringify(record)}\n`);
 }
 
-const waiting = new Map<string, { resolve(value: string): void; reject(error: Error): void }>();
-const cancel = new AbortController();
+const waiting = new Map<string, (value: string) => void>();
 let nextId = 1;
 let buffer = "";
 
@@ -32,14 +33,8 @@ process.stdin.on("data", (chunk: string) => {
   buffer = lines.pop() ?? "";
   for (const line of lines.filter((l) => l.trim() !== "")) {
     const message = JSON.parse(line) as Incoming;
-    if (message.type === "answer") {
-      waiting.get(message.id)?.resolve(message.value);
-      waiting.delete(message.id);
-    } else {
-      cancel.abort();
-      for (const waiter of waiting.values()) waiter.reject(new Error("cancelled"));
-      waiting.clear();
-    }
+    waiting.get(message.id)?.(message.value);
+    waiting.delete(message.id);
   }
 });
 
@@ -59,11 +54,10 @@ async function main(): Promise<void> {
     send({ type: "providers", list });
   } else if (mode === "login" && providerId !== undefined) {
     await runtime.login(providerId, "oauth", {
-      signal: cancel.signal,
       prompt: (prompt) =>
-        new Promise<string>((resolve, reject) => {
+        new Promise<string>((resolve) => {
           const id = String(nextId++);
-          waiting.set(id, { resolve, reject });
+          waiting.set(id, resolve);
           const { signal: _signal, ...shown } = prompt;
           send({ type: "prompt", id, prompt: shown });
         }),
