@@ -15,7 +15,7 @@ import { spawn } from "node:child_process";
 import { chmodSync, chownSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Config, UserConfig } from "./config.ts";
-import type { RpcSpec } from "./rpc.ts";
+import type { RpcSpec } from "./core/rpc.ts";
 
 export function homeOf(config: Config, user: UserConfig): string {
   return join(config.dataDir, "home", user.name);

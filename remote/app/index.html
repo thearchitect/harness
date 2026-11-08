@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>harness</title>
+  <script src="https://telegram.org/js/telegram-web-app.js?64"></script>
+  <link rel="stylesheet" href="{{app.css}}">
+  <script defer src="{{app.js}}"></script>
+  <script defer src="{{alpine.js}}"></script>
+</head>
+<body x-data="app" :class="{ stale: stale }">
+  <template x-if="problem">
+    <p class="problem" x-text="problem"></p>
+  </template>
+
+  <template x-if="state">
+    <main>
+      <section id="here">
+        <h2 x-text="state.workspace.title"></h2>
+        <template x-if="here">
+          <div class="card">
+            <div class="row">
+              <div class="grow">
+                <div class="title" x-text="here.dir + ' · ' + here.title"></div>
+                <div class="hint" x-text="statusText(here)"></div>
+              </div>
+            </div>
+            <div class="fields" id="model">
+              <label>Model
+                <select :disabled="stale || busy" @focus="loadModels(here.id)" @change="act({ type: 'model', agentId: here.id, provider: $event.target.value.split('/')[0], id: $event.target.value.split('/').slice(1).join('/') })">
+                  <option x-text="here.model ?? 'not started'" :value="here.model ?? ''" selected></option>
+                  <template x-for="m in (models[here.id] ?? []).filter((m) => m !== here.model)" :key="m">
+                    <option :value="m" x-text="m"></option>
+                  </template>
+                </select>
+              </label>
+              <label id="thinking">Thinking
+                <select :disabled="stale || busy" @focus="loadLevels(here.id)" @change="act({ type: 'thinking', agentId: here.id, level: $event.target.value })">
+                  <option x-text="here.thinking ?? '—'" :value="here.thinking ?? ''" selected></option>
+                  <template x-for="l in (levels[here.id] ?? []).filter((l) => l !== here.thinking)" :key="l">
+                    <option :value="l" x-text="l"></option>
+                  </template>
+                </select>
+              </label>
+            </div>
+            <div class="actions">
+              <button x-show="here.status === 'running' || here.status === 'waiting'" :disabled="stale || busy" @click="act({ type: 'stop', agentId: here.id })">Stop</button>
+              <button :disabled="stale || busy" @click="act({ type: 'detach' })">Detach</button>
+              <button class="destructive" :disabled="stale || busy" @click="confirmThen('Close the agent? Its session stays in the history.', { type: 'close', agentId: here.id })">Close</button>
+            </div>
+          </div>
+        </template>
+        <template x-if="!here">
+          <p class="hint">No agent here.</p>
+        </template>
+      </section>
+
+      <section id="sessions" x-show="others.length > 0">
+        <h3>Agents</h3>
+        <template x-for="a in others" :key="a.id">
+          <div class="card">
+            <div class="title" x-text="a.dir + ' · ' + a.title"></div>
+            <div class="hint" x-text="statusText(a) + ' · ' + (a.workspace ? a.workspace.title : 'background')"></div>
+            <div class="actions">
+              <button :disabled="stale || busy" @click="act({ type: 'attach', agentId: a.id })">Here</button>
+              <select class="move" :disabled="stale || busy" @change="$event.target.value && act({ type: 'move', agentId: a.id, to: Number($event.target.value) }); $event.target.value = ''">
+                <option value="">Move to…</option>
+                <template x-for="w in state.workspaces.filter((w) => w.id !== state.workspace.id && w.agentId !== a.id)" :key="w.id">
+                  <option :value="w.id" x-text="w.title"></option>
+                </template>
+              </select>
+              <button class="destructive" :disabled="stale || busy" @click="confirmThen('Close the agent? Its session stays in the history.', { type: 'close', agentId: a.id })">Close</button>
+            </div>
+          </div>
+        </template>
+      </section>
+
+      <section id="new">
+        <h3>New agent</h3>
+        <div class="card row">
+          <select class="grow" x-model="dir" :disabled="stale || busy">
+            <template x-for="d in state.dirs" :key="d">
+              <option :value="d" x-text="d"></option>
+            </template>
+          </select>
+          <button :disabled="stale || busy || !dir" @click="act({ type: 'new', dir })">Start</button>
+        </div>
+      </section>
+
+      <section id="history">
+        <h3>History</h3>
+        <input type="search" placeholder="Filter by directory or title" x-model="filter">
+        <template x-if="sessions === undefined">
+          <p class="hint">Loading…</p>
+        </template>
+        <template x-for="s in shownSessions" :key="s.id">
+          <button class="session" :disabled="stale || busy" @click="act({ type: 'resume', sessionId: s.id })">
+            <span class="title" x-text="s.title || 'untitled'"></span>
+            <span class="hint" x-text="s.dir + ' · ' + ago(s.modified)"></span>
+          </button>
+        </template>
+      </section>
+
+      <section id="workspaces">
+        <h3>Workspaces</h3>
+        <template x-for="w in state.workspaces" :key="w.id">
+          <div class="row line">
+            <span class="grow" x-text="w.title"></span>
+            <span class="hint" x-text="agentDir(w.agentId)"></span>
+          </div>
+        </template>
+      </section>
+    </main>
+  </template>
+</body>
+</html>

@@ -1,10 +1,11 @@
 /**
- * The running pi processes, one per active topic: limits per user and in
- * total, reaping of idle processes, orderly stops.
+ * The running pi processes, one per agent: limits per user and in total,
+ * reaping of idle processes, orderly stops.
  *
- * A process is busy while a run is in progress or a dialog waits for the user;
- * only idle processes are reaped or evicted. A stop closes stdin (pi's orderly
- * shutdown), then signals the process group if it lingers.
+ * A process is busy while a run is in progress and no dialog waits for the
+ * user (an open dialog does not keep the machine awake); only idle processes
+ * are reaped or evicted. A stop closes stdin (pi's orderly shutdown), then
+ * signals the process group if it lingers.
  */
 
 import type { Clock, Timer } from "./clock.ts";
@@ -50,7 +51,7 @@ export class SessionPool<P extends PoolProcess> {
     return this.entries.size;
   }
 
-  /** True when no process runs or waits for the user. */
+  /** True when no process is busy. */
   isQuiescent(): boolean {
     return [...this.entries.values()].every((e) => !e.busy);
   }

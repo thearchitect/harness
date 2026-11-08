@@ -5,10 +5,12 @@
 
 import type { RpcExtensionUIRequest, RpcExtensionUIResponse, RpcResponse } from "@earendil-works/pi-coding-agent";
 import { GrammyError } from "grammy";
-import type { Clock, Timer } from "../clock.ts";
-import type { RpcEvent, RpcHandlers, RpcRequest, RpcSpec } from "../rpc.ts";
-import type { PiProcess } from "../session.ts";
-import type { Tg } from "../tg.ts";
+import type { PiProcess } from "../core/agent.ts";
+import type { Clock, Timer } from "../core/clock.ts";
+import type { RpcEvent, RpcHandlers, RpcRequest, RpcSpec } from "../core/rpc.ts";
+import type { UserConfig } from "../config.ts";
+import type { Helper, HelperRun, History, LoginCallbacks, Outcome, Provider, SessionInfo } from "../helper.ts";
+import type { Tg } from "../telegram/tg.ts";
 
 /** Lets every pending promise continuation and I/O callback run. */
 export async function settle(rounds = 20): Promise<void> {
@@ -92,11 +94,7 @@ export class FakeTg {
         switch (method) {
           case "sendMessage":
           case "sendRichMessage":
-          case "copyMessage":
             call.result = { message_id: this.nextMessageId++ };
-            break;
-          case "createForumTopic":
-            call.result = { message_thread_id: this.nextThreadId++, name: args[1] };
             break;
           default:
             call.result = true;
@@ -105,6 +103,60 @@ export class FakeTg {
       },
     };
     return new Proxy({}, handler) as Tg;
+  }
+}
+
+/** A user helper answering from data the test sets; logins are driven by the test. */
+export class FakeHelper implements Helper {
+  sessions_: SessionInfo[] = [];
+  histories = new Map<string, History>();
+  providers_: Provider[] = [];
+  readonly logins: FakeLogin[] = [];
+  killedAll = false;
+
+  login(_user: UserConfig, args: ["login" | "logout", string], callbacks: LoginCallbacks): HelperRun {
+    const run = new FakeLogin(args, callbacks);
+    this.logins.push(run);
+    return run;
+  }
+
+  async providers(): Promise<Outcome<Provider[]>> {
+    return { ok: true, data: this.providers_ };
+  }
+
+  async sessions(): Promise<Outcome<SessionInfo[]>> {
+    return { ok: true, data: this.sessions_ };
+  }
+
+  async history(_user: UserConfig, _cwd: string, sessionId: string): Promise<Outcome<History>> {
+    return { ok: true, data: this.histories.get(sessionId) ?? { title: "", turns: [] } };
+  }
+
+  killAll(): void {
+    this.killedAll = true;
+  }
+}
+
+export class FakeLogin implements HelperRun {
+  readonly args: ["login" | "logout", string];
+  readonly callbacks: LoginCallbacks;
+  readonly result: Promise<Outcome<unknown>>;
+  cancelled = false;
+  private finish!: (outcome: Outcome<unknown>) => void;
+
+  constructor(args: ["login" | "logout", string], callbacks: LoginCallbacks) {
+    this.args = args;
+    this.callbacks = callbacks;
+    this.result = new Promise((resolve) => (this.finish = resolve));
+  }
+
+  cancel(): void {
+    this.cancelled = true;
+    this.finish({ ok: false, problem: "user helper exited (SIGKILL)" });
+  }
+
+  complete(): void {
+    this.finish({ ok: true, data: undefined });
   }
 }
 
@@ -157,9 +209,12 @@ export class FakePi implements PiProcess {
     this.exit();
   }
 
-  kill(): void {
+  kill(signal: NodeJS.Signals): void {
+    this.killedWith = signal;
     this.exit();
   }
+
+  killedWith: NodeJS.Signals | undefined;
 
   /** The process dies on its own. */
   crash(): void {

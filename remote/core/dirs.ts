@@ -1,13 +1,13 @@
 /**
- * Where an agent may work: its user's home or a directory inside it. /agent
- * without a path offers ~, the recent directories that still exist and the
- * subdirectories of ~; /agent <path> resolves the path inside ~.
+ * Where an agent may work: its user's home or a directory inside it. A new
+ * agent is offered ~, the recent directories that still exist and the
+ * subdirectories of ~ (the Mini App); `/new <path>` resolves the path inside ~.
  */
 
 import { existsSync, readdirSync, realpathSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { homeOf } from "./accounts.ts";
-import type { Config, UserConfig } from "./config.ts";
+import { homeOf } from "../accounts.ts";
+import type { Config, UserConfig } from "../config.ts";
 import type { StateStore } from "./state.ts";
 
 const SUBDIRS_LIMIT = 15;
@@ -46,6 +46,12 @@ export function resolveDir(config: Config, user: UserConfig, path: string): { di
       return { dir: real };
     }
   }
+}
+
+/** `~` or `~/sub/dir` for a directory inside the user's home. */
+export function displayDir(config: Config, user: UserConfig, cwd: string): string {
+  const home = homeOf(config, user);
+  return cwd === home ? "~" : cwd.startsWith(`${home}/`) ? `~/${cwd.slice(home.length + 1)}` : cwd;
 }
 
 function isInside(home: string, dir: string): boolean {

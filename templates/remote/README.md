@@ -2,8 +2,8 @@
 
 A [harness](https://github.com/thearchitect/harness) agent on a Fly.io
 machine, used through a Telegram bot: every whitelisted user works in their
-own home under their own uid; a topic of the private chat with the bot runs
-at most one agent. Created with `nix flake init -t github:thearchitect/harness#remote`.
+own home under their own uid; the private chat with the bot and every group
+they add it to are workspaces with at most one agent each. Created with `nix flake init -t github:thearchitect/harness#remote`.
 
 - `remote.yaml` — the bot, the users (whitelist), limits, initial pi settings
 - `.cage/` — secrets ([cage](https://github.com/themakers/cage)): the bot token
@@ -18,8 +18,9 @@ at most one agent. Created with `nix flake init -t github:thearchitect/harness#r
 
 Inside `nix develop` (flyctl, skopeo, cage):
 
-1. **Bot.** Create it with @BotFather; in its Mini App turn on *Threaded
-   Mode* (topics in private chats) and let users create topics.
+1. **Bot.** Create it with @BotFather. Bot Settings → Mini App: enable it
+   with the URL `https://<app>.fly.dev/app/` and make it the bot's main
+   Mini App (the status lines open it). Keep *Threaded Mode* off.
 2. **Configuration.** Edit `remote.yaml` (app URL, users with their numeric
    Telegram ids and SSH public keys) and `fly.toml` (`app`, region).
 3. **Secrets.** Edit `.cage/cage.yaml` (keys), then:
@@ -44,13 +45,24 @@ Inside `nix develop` (flyctl, skopeo, cage):
 
 ## Using it
 
-- A topic you create (or All) is a place: `/agent [path]` starts an agent
-  there, `/close` ends it; without an agent a place is for service commands.
-- A message plans; a message starting with `!` builds. Writing during a run
-  steers it; `/stop` or the draft's stop button aborts.
-- `/model`, `/thinking`, `/compact`; `/login`, `/secrets`, `/key`,
-  `/sessions`.
-- Write/edit confirmations come as buttons; a text instead of a button
-  rejects with that text as the reason.
+- **Workspaces.** The private chat with the bot, and every group you add it
+  to and make an admin (it reads only your messages there). Each holds at
+  most one agent.
+- **Agents.** `/new [path]` starts one in the workspace (without a path: the
+  Mini App's directory list); the agent there before goes to the
+  background and keeps working. `/detach` sends the agent to the
+  background, `/close` ends it (its session stays in the history). A
+  background agent writes to the private chat only when it needs you or is
+  done, with an *Attach here* button.
+- **Runs.** A message plans; a message starting with `!` builds (without
+  confirmations; planning never writes). Writing during a run steers it;
+  `/stop` or *Stop* on the last block aborts. Every block — thinking, a tool
+  call, the answer — is a message of its own and stays.
+- **Mini App.** Status lines (the banner, the agent's header, "No agent
+  here.") open it: the agent here (model, thinking, stop, detach, close),
+  your agents (here, move to, close), a new agent, the session history
+  (resume here), your workspaces. `/sessions`, `/model`, `/thinking` link to
+  it.
+- `/login`, `/secrets`, `/key` work in any workspace.
 
 Operations (build, test, deploy, secrets, users): `AGENTS.md`.

@@ -1,44 +1,44 @@
 /**
- * The user's account, through /login, /secrets, /key and /sessions in any
- * place: OAuth providers, their own cage store, the server SSH key, the
- * running agents. Everything happens at the bottom of that place: panels,
- * requests for input (with sound), results (silent).
+ * The user's account, through /login, /secrets and /key in any chat: OAuth
+ * providers, their own cage store, the server SSH key. Everything happens at
+ * the bottom of that chat: panels, requests for input (with sound), results
+ * (silent).
  *
  * Values typed for secrets and login codes are deleted from the chat as soon
  * as they are read.
  *
- * One login at a time: choosing a provider while a login is in progress
- * cancels it; a login that has not finished in LOGIN_TIMEOUT_MS is cancelled
- * (it would otherwise keep the machine awake waiting for a code).
+ * Nothing waits forever (it would keep the machine awake): one login at a
+ * time, a new one cancels the one in progress, a login ends after
+ * LOGIN_TIMEOUT_MS; a secret being typed is dropped after INPUT_TIMEOUT_MS or
+ * by the next account command; /stop cancels either.
  */
 
-import { publicKey } from "./accounts.ts";
+import { publicKey } from "../accounts.ts";
+import type { Config, UserConfig } from "../config.ts";
+import type { Clock, Timer } from "../core/clock.ts";
+import type { AuthEvent, AuthPrompt, Helper, HelperRun, Provider } from "../helper.ts";
+import { listSecrets, removeSecret, SECRET_NAME, setSecret } from "../secrets.ts";
 import { deleteSecretPanel, providersPanel, secretsPanel } from "./card.ts";
-import type { Clock, Timer } from "./clock.ts";
-import type { Config, UserConfig } from "./config.ts";
-import type { AuthEvent, AuthPrompt, LoginCallbacks, LoginRun, Provider } from "./login.ts";
 import type { Outbox } from "./outbox.ts";
 import { escapeHtml } from "./render.ts";
-import { listSecrets, removeSecret, SECRET_NAME, setSecret } from "./secrets.ts";
 
 export type AccountDeps = {
   config: Config;
   clock: Clock;
+  helper: Helper;
   log(line: string): void;
-  /** One line per open session of the user: directory and state. */
-  sessionsSummary(userId: number): string[];
   /** The user's secrets or login changed: their processes restart. */
   restartUser(userId: number): void;
-  startLogin(user: UserConfig, args: string[], callbacks: LoginCallbacks): LoginRun;
 };
 
 export const LOGIN_TIMEOUT_MS = 10 * 60_000;
+export const INPUT_TIMEOUT_MS = 10 * 60_000;
 
-type Login = { run: LoginRun; place: Outbox; timer: Timer; cancelled?: "replaced" | "timeout" | "stopped" };
+type Login = { run: HelperRun; place: Outbox; timer: Timer; cancelled?: "replaced" | "timeout" | "stopped" };
 
 type Awaiting =
-  | { kind: "secretName" }
-  | { kind: "secretValue"; name: string }
+  | { kind: "secretName"; timer: Timer }
+  | { kind: "secretValue"; name: string; timer: Timer }
   | { kind: "login"; prompt: AuthPrompt; resolve(value: string): void; reject(error: Error): void };
 
 export class Account {
@@ -64,10 +64,11 @@ export class Account {
     return this.awaiting !== undefined && this.place === place;
   }
 
-  /** A command: /login, /secrets, /key, /sessions. */
+  /** A command: /login, /secrets, /key; it drops a secret being typed. */
   async command(name: string, place: Outbox): Promise<void> {
-    const action = { login: "providers", secrets: "secrets", key: "key", sessions: "sessions" }[name];
+    const action = { login: "providers", secrets: "secrets", key: "key" }[name];
     if (action !== undefined) {
+      await this.dropInput("cancelled");
       await this.panelAction(action, undefined, place);
     } else {
       throw new Error(`not an account command: /${name}`);
@@ -90,11 +91,6 @@ export class Account {
         );
         return "Key";
       }
-      case "sessions": {
-        const lines = this.deps.sessionsSummary(this.user.telegramId);
-        await place.closePanel(lines.length > 0 ? lines.join("\n") : "No agents.");
-        return "Sessions";
-      }
       case "providers":
         return this.showProviders(place);
       case "login":
@@ -113,7 +109,8 @@ export class Account {
       case "secrets":
         return this.showSecrets(place);
       case "add":
-        this.awaiting = { kind: "secretName" };
+        await this.dropInput("cancelled");
+        this.awaiting = { kind: "secretName", timer: this.inputTimer() };
         await place.closePanel("New secret");
         await place.send({ html: "Name (A-Z, 0-9, _):" }, { role: "sticky", forceReply: "SECRET_NAME", silent: false });
         return "Name the secret";
@@ -163,7 +160,8 @@ export class Account {
         if (!SECRET_NAME.test(name)) {
           await place.send({ html: "Use A-Z, 0-9 and _ (a letter or _ first):" }, { silent: false });
         } else {
-          this.awaiting = { kind: "secretValue", name };
+          awaiting.timer.cancel();
+          this.awaiting = { kind: "secretValue", name, timer: this.inputTimer() };
           await place.closeSticky({ html: `Name: <code>${escapeHtml(name)}</code>` });
           await place.send({ html: `Value of <code>${escapeHtml(name)}</code> (the message is deleted at once):` }, { role: "sticky", forceReply: "value", silent: false });
         }
@@ -171,6 +169,7 @@ export class Account {
       }
       case "secretValue": {
         await place.delete(messageId);
+        awaiting.timer.cancel();
         this.awaiting = undefined;
         await place.closeSticky({ html: `Value of <code>${escapeHtml(awaiting.name)}</code> received.` });
         const serverKey = await publicKey(this.deps.config, this.user);
@@ -201,21 +200,39 @@ export class Account {
   async stop(): Promise<void> {
     if (this.login !== undefined) {
       await this.cancelLogin("stopped");
-    } else if (this.awaiting !== undefined) {
-      this.awaiting = undefined;
-      await this.place?.closeSticky({ html: "cancelled" });
     } else {
-      // nothing waits
+      await this.dropInput("cancelled");
     }
+  }
+
+  /** Ends every wait (the gateway stops). */
+  async shutdown(): Promise<void> {
+    if (this.login !== undefined) await this.cancelLogin("stopped");
+    await this.dropInput("interrupted");
   }
 
   /* ------------------------------------------------------------------------ */
 
+  private inputTimer(): Timer {
+    return this.deps.clock.after(INPUT_TIMEOUT_MS, () => void this.dropInput("timed out"));
+  }
+
+  /** Drops a secret being typed: its prompt closes with `outcome`. */
+  private async dropInput(outcome: string): Promise<void> {
+    const awaiting = this.awaiting;
+    if (awaiting === undefined || awaiting.kind === "login") {
+      return; // nothing typed, or a login prompt (the login owns it)
+    } else {
+      awaiting.timer.cancel();
+      this.awaiting = undefined;
+      await this.place?.closeSticky({ html: outcome });
+    }
+  }
+
   private async showProviders(place: Outbox): Promise<string> {
-    const run = this.deps.startLogin(this.user, ["list"], { prompt: () => Promise.reject(new Error("no prompts")), notify: () => undefined });
-    const result = await run.result;
+    const result = await this.deps.helper.providers(this.user);
     if (result.ok) {
-      this.providers = result.providers ?? [];
+      this.providers = result.data;
       await place.showPanel(providersPanel(this.providers));
       return "Choose a provider";
     } else {
@@ -239,7 +256,7 @@ export class Account {
     // Prompts and notifications of a cancelled login are dropped.
     let login: Login | undefined;
     const current = (): boolean => login !== undefined && this.login === login;
-    const run = this.deps.startLogin(this.user, [action, provider.id], {
+    const run = this.deps.helper.login(this.user, [action, provider.id], {
       prompt: (prompt) => (current() ? this.askLogin(prompt, place) : Promise.reject(new Error("cancelled"))),
       notify: (event) => {
         if (current()) void this.notifyLogin(event, place);

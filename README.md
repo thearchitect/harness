@@ -38,8 +38,8 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
 - `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `guidelines` (bullets in `<rules>`, in order)
-- `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (one pi RPC process per topic; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
-- `rpc-dialogs.ts` — the write/edit gate as plain select/input dialogs outside the TUI: the contract RPC clients (the Telegram gateway) render natively
+- `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (`core/`: agents, workspaces, pi processes; `telegram/`: chats; `app/`: the Mini App; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
+- `gate.ts` — the write/edit gate's pure parts: BUILD's review by profile (the server profile builds without asking) and the gate as plain select/input dialogs outside the TUI
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `cage`
 - `install/SKILL.md` — the install/upgrade skill
 - `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the `/deps` report, the double-load guard (registered by `index.ts`)
@@ -140,21 +140,28 @@ deployment template `nix flake init -t github:thearchitect/harness#remote`
 (its README walks through the setup).
 
 - **Model.** A whitelist of Telegram users (`remote.yaml`); each works under
-  a uid of their own in `/data/home/<name>`. A place — a topic the user
-  created, or All — either has no agent (service commands) or runs exactly
-  one: `/agent [path]` starts a pi session there (`pi --mode rpc
-  --session-id`, profile `server`), `/close` ends it. The bot never creates,
-  renames or deletes topics.
+  a uid of their own in `/data/home/<name>`. Three independent things: a
+  *session* (a pi session file), an *agent* (a session the gateway serves,
+  with its `pi --mode rpc --session-id` process when it runs, profile
+  `server`), a *workspace* (the private chat with the bot, or a group the
+  user added it to). A workspace holds at most one agent; other agents run
+  in the background and write to the private chat only when they need the
+  user or are done.
 - **Interaction.** The semantics of the TUI: a message plans, a message
-  starting with `!` builds; writing during a run steers it; `/stop` or the
-  draft's native stop aborts. Commands: `/agent`, `/stop`, `/model`,
-  `/thinking`, `/compact`, `/close`, `/login`, `/secrets`, `/key`,
-  `/sessions`; their choices are a panel at the bottom of the place. A pinned
-  status line (directory, model, thinking, state); a live draft of the run;
-  thinking and tool calls in collapsed blocks; the harness banner. Write/edit
-  confirmations carry the gate's own buttons and stay the last message; a
-  text instead of a button rejects with that text. Only the final message of
-  a run, dialogs and errors make a sound.
+  starting with `!` builds — without confirmations (the server profile
+  never asks; planning still never writes); writing during a run steers it;
+  `/stop` or *Stop* aborts. Every block of a run (thinking, a tool call, the
+  answer) is a message of its own, edited while it grows; the harness
+  banner closes the run. Commands: `/new [path]`, `/stop`, `/detach`,
+  `/close`, `/sessions`, `/model`, `/thinking`, `/login`, `/secrets`,
+  `/key`. Attaching an agent to a workspace shows its last five turns. Only
+  the final message of a run, dialogs and errors make a sound.
+- **Mini App.** Status lines link to it (`startapp=w<chat>`): the agent of
+  the workspace, all agents (here, move, close), a new agent, the session
+  history (resume), the workspaces. Static files without a build step
+  (Alpine.js), content-hashed and immutable; `index.html` revalidates by
+  ETag, so an open after a deploy gets the new build. Requests are signed
+  with Telegram's initData.
 - **Machine.** One Fly machine with a volume; the gateway answers the
   webhook and exits when idle, so the machine sleeps until the next message.
 - **Secrets.** The image carries only cage ciphertext; the machine's identity

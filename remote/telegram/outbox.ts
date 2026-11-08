@@ -1,29 +1,29 @@
 /**
- * Everything the gateway sends into one topic (or into All, without a topic),
- * in order, through one queue, and the invariant that keeps buttons
- * reachable: action buttons live only on the last message of the topic.
+ * Everything the gateway sends into one chat (a private chat with the bot or
+ * a group), in order, through one queue, and the invariant that keeps buttons
+ * reachable: action buttons live only on the last message of the chat.
  *
- * - A transient keyboard (a panel, banner buttons) loses its buttons as soon
- *   as anything else is posted below it, by the bot or by the user; until then
- *   it can be edited in place (panel navigation).
+ * - A transient keyboard (a panel) loses its buttons as soon as anything else
+ *   is posted below it, by the bot or by the user; until then it can be
+ *   edited in place (panel navigation).
  * - A sticky message (an open dialog, a request for input) is re-sent below
  *   every newer message, so it always stays the last one until it is closed.
- * - Pinned cards are edited in place and never move.
+ * - Plain messages may be edited later (the blocks of a run).
  *
- * Bot API failures are logged; a topic deleted by the user is reported once
- * through onThreadGone.
+ * Bot API failures are logged; a chat the bot can no longer write to (left,
+ * kicked, blocked) is reported once through onChatGone.
  */
 
 import type { ForceReply, InlineKeyboardButton, InlineKeyboardMarkup } from "grammy/types";
 import { plainFallback } from "./render.ts";
-import { describeError, isNotModified, isParseError, isThreadGone, type Tg } from "./tg.ts";
+import { describeError, isChatGone, isMessageGone, isNotModified, isParseError, type Tg } from "./tg.ts";
 
 export type Body = { html: string } | { markdown: string };
 export type Keyboard = InlineKeyboardButton[][];
 type Markup = InlineKeyboardMarkup | ForceReply;
 
 /** How a sent message takes part in the button invariant. */
-export type Role = "plain" | "transient" | "sticky" | "pinned";
+export type Role = "plain" | "transient" | "sticky";
 
 export type SendOptions = {
   role?: Role;
@@ -33,27 +33,24 @@ export type SendOptions = {
   forceReply?: string;
 };
 
-type Tracked = { messageId: number; body: Body; markup?: Markup; silent: boolean };
+type Tracked = { messageId: number; body: Body; markup?: Markup };
 
 export class Outbox {
+  readonly chatId: number;
   private readonly tg: Tg;
-  private readonly chatId: number;
-  /** The topic; undefined for All. */
-  readonly threadId: number | undefined;
   private readonly log: (line: string) => void;
-  private readonly onThreadGone: () => void;
+  private readonly onChatGone: () => void;
   private queue: Promise<unknown> = Promise.resolve();
   private transient: Tracked | undefined;
   private sticky: Tracked | undefined;
   private panelId: number | undefined;
   private gone = false;
 
-  constructor(tg: Tg, chatId: number, threadId: number | undefined, log: (line: string) => void, onThreadGone: () => void) {
+  constructor(tg: Tg, chatId: number, log: (line: string) => void, onChatGone: () => void) {
     this.tg = tg;
     this.chatId = chatId;
-    this.threadId = threadId;
     this.log = log;
-    this.onThreadGone = onThreadGone;
+    this.onChatGone = onChatGone;
   }
 
   /** Resolves when everything enqueued so far has been sent. */
@@ -68,54 +65,6 @@ export class Outbox {
   /** Sends a message; resolves with its id, or undefined when it could not be sent. */
   send(body: Body, options: SendOptions = {}): Promise<number | undefined> {
     return this.enqueue(() => this.sendNow(body, options));
-  }
-
-  private async sendNow(body: Body, options: SendOptions): Promise<number | undefined> {
-    {
-      const role = options.role ?? "plain";
-      const markup: Markup | undefined = options.forceReply !== undefined
-        ? ({ force_reply: true, input_field_placeholder: options.forceReply } satisfies ForceReply)
-        : options.keyboard !== undefined
-          ? ({ inline_keyboard: options.keyboard } satisfies InlineKeyboardMarkup)
-          : undefined;
-      const silent = options.silent ?? true;
-      if (role !== "pinned") {
-        await this.stripTransient();
-      } else {
-        // pinned cards do not move anything
-      }
-      if (role === "sticky" && this.sticky !== undefined) {
-        await this.stripMarkup(this.sticky);
-        this.sticky = undefined;
-      } else {
-        // no previous sticky to replace
-      }
-      const messageId = await this.post(body, markup, silent);
-      if (messageId === undefined) {
-        return undefined;
-      } else {
-        const tracked: Tracked = { messageId, body, markup, silent };
-        switch (role) {
-          case "plain":
-          case "pinned":
-            break;
-          case "transient":
-            this.transient = tracked;
-            break;
-          case "sticky":
-            this.sticky = tracked;
-            break;
-          default:
-            assertNever(role);
-        }
-        if (role !== "sticky" && role !== "pinned") {
-          await this.bumpSticky();
-        } else {
-          // the sticky message itself, or a pinned card: nothing to move
-        }
-        return messageId;
-      }
-    }
   }
 
   /** Replaces the open sticky message's content (and buttons) in place. */
@@ -145,7 +94,7 @@ export class Outbox {
     });
   }
 
-  /** The user posted into the topic: older buttons go, the open dialog moves below. */
+  /** The user posted into the chat: older buttons go, the open dialog moves below. */
   userPosted(): Promise<void> {
     return this.enqueue(async () => {
       await this.stripTransient();
@@ -153,14 +102,9 @@ export class Outbox {
     });
   }
 
-  /** Removes the buttons of the transient message, if any. */
-  dropTransient(): Promise<void> {
-    return this.enqueue(() => this.stripTransient());
-  }
-
-  /* Panels: the inline choices of a command, the place's
-   * transient message. Showing a panel again edits it in place while it is
-   * still the last message with buttons; otherwise a new one is posted. */
+  /* Panels: the inline choices of a command, the chat's transient message.
+   * Showing a panel again edits it in place while it is still the last
+   * message with buttons; otherwise a new one is posted. */
 
   /** The pressed message is the live panel. */
   ownsPanel(messageId: number | undefined): boolean {
@@ -200,35 +144,53 @@ export class Outbox {
     });
   }
 
-  /** Edits any message in place (pinned cards). */
-  edit(messageId: number, body: Body, keyboard?: Keyboard): Promise<void> {
-    return this.enqueue(() => this.editMessage(messageId, body, keyboard !== undefined ? { inline_keyboard: keyboard } : { inline_keyboard: [] }));
+  /** Edits a plain message in place (a block of a run): "gone" when the user deleted it. */
+  edit(messageId: number, body: Body, keyboard?: Keyboard): Promise<"ok" | "gone"> {
+    return this.enqueue(() => this.editMessage(messageId, body, { inline_keyboard: keyboard ?? [] }));
   }
 
   delete(messageId: number): Promise<void> {
     return this.enqueue(() => this.call("deleteMessage", () => this.tg.deleteMessage(this.chatId, messageId)).then(() => undefined));
   }
 
-  pin(messageId: number): Promise<void> {
-    return this.enqueue(() =>
-      this.call("pinChatMessage", () => this.tg.pinChatMessage(this.chatId, messageId, { disable_notification: true })).then(() => undefined),
-    );
-  }
-
-  unpin(messageId: number): Promise<void> {
-    return this.enqueue(() => this.call("unpinChatMessage", () => this.tg.unpinChatMessage(this.chatId, messageId)).then(() => undefined));
-  }
-
-  /** The live draft of a run (ephemeral; Telegram keeps it 30 s). */
-  draft(draftId: number, markdown: string): Promise<void> {
-    return this.enqueue(() =>
-      this.call("sendRichMessageDraft", () =>
-        this.tg.sendRichMessageDraft(this.chatId, draftId, { markdown }, { message_thread_id: this.threadId, can_stop: true }),
-      ).then(() => undefined),
-    );
-  }
-
   /* ------------------------------------------------------------------------ */
+
+  private async sendNow(body: Body, options: SendOptions): Promise<number | undefined> {
+    const role = options.role ?? "plain";
+    const markup: Markup | undefined = options.forceReply !== undefined
+      ? ({ force_reply: true, input_field_placeholder: options.forceReply } satisfies ForceReply)
+      : options.keyboard !== undefined
+        ? ({ inline_keyboard: options.keyboard } satisfies InlineKeyboardMarkup)
+        : undefined;
+    await this.stripTransient();
+    if (role === "sticky" && this.sticky !== undefined) {
+      await this.stripMarkup(this.sticky);
+      this.sticky = undefined;
+    } else {
+      // no previous sticky to replace
+    }
+    const messageId = await this.post(body, markup, options.silent ?? true);
+    if (messageId === undefined) {
+      return undefined;
+    } else {
+      const tracked: Tracked = { messageId, body, markup };
+      switch (role) {
+        case "plain":
+          await this.bumpSticky();
+          break;
+        case "transient":
+          this.transient = tracked;
+          await this.bumpSticky();
+          break;
+        case "sticky":
+          this.sticky = tracked;
+          break;
+        default:
+          assertNever(role);
+      }
+      return messageId;
+    }
+  }
 
   private enqueue<T>(step: () => Promise<T>): Promise<T> {
     const next = this.queue.then(step, step);
@@ -273,7 +235,7 @@ export class Outbox {
   }
 
   private async post(body: Body, markup: Markup | undefined, silent: boolean): Promise<number | undefined> {
-    const common = { message_thread_id: this.threadId, disable_notification: silent, reply_markup: markup };
+    const common = { disable_notification: silent, reply_markup: markup };
     if ("html" in body) {
       const sent = await this.call("sendMessage", () =>
         this.tg.sendMessage(this.chatId, body.html, { ...common, parse_mode: "HTML", link_preview_options: { is_disabled: true } }),
@@ -289,23 +251,32 @@ export class Outbox {
     }
   }
 
-  private async editMessage(messageId: number, body: Body, markup: Markup | undefined): Promise<void> {
+  private async editMessage(messageId: number, body: Body, markup: Markup | undefined): Promise<"ok" | "gone"> {
     const reply_markup = markup !== undefined && "inline_keyboard" in markup ? markup : undefined;
+    let gone = false;
+    const onGone = (): void => {
+      gone = true;
+    };
     if ("html" in body) {
-      await this.call("editMessageText", () =>
-        this.tg.editMessageText(this.chatId, messageId, body.html, { parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } }),
+      await this.call(
+        "editMessageText",
+        () => this.tg.editMessageText(this.chatId, messageId, body.html, { parse_mode: "HTML", reply_markup, link_preview_options: { is_disabled: true } }),
+        undefined,
+        onGone,
       );
     } else {
       await this.call(
         "editMessageText",
         () => this.tg.editMessageText(this.chatId, messageId, { markdown: body.markdown }, { reply_markup }),
         () => this.tg.editMessageText(this.chatId, messageId, plainFallback(body.markdown), { reply_markup }),
+        onGone,
       );
     }
+    return gone ? "gone" : "ok";
   }
 
   /** Runs a Bot API call; logs failures, retries once with the fallback on a parse error. */
-  private async call<T>(what: string, run: () => Promise<T>, fallback?: () => Promise<T>): Promise<T | undefined> {
+  private async call<T>(what: string, run: () => Promise<T>, fallback?: () => Promise<T>, onMessageGone?: () => void): Promise<T | undefined> {
     if (this.gone) return undefined;
     try {
       return await run();
@@ -314,11 +285,14 @@ export class Outbox {
         return undefined;
       } else if (fallback !== undefined && isParseError(error)) {
         this.log(`${what}: ${describeError(error)}; resending as plain text`);
-        return this.call(what, fallback);
-      } else if (isThreadGone(error)) {
+        return this.call(what, fallback, undefined, onMessageGone);
+      } else if (onMessageGone !== undefined && isMessageGone(error)) {
+        onMessageGone();
+        return undefined;
+      } else if (isChatGone(error)) {
         this.gone = true;
-        this.log(`topic ${this.threadId} is gone`);
-        this.onThreadGone();
+        this.log(`chat ${this.chatId} is gone: ${describeError(error)}`);
+        this.onChatGone();
         return undefined;
       } else {
         this.log(`${what} failed: ${describeError(error)}`);

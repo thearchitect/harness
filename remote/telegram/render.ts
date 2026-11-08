@@ -1,16 +1,17 @@
 /**
- * A run of the agent as Telegram rich markdown: thinking and every tool call
- * in collapsed <details> blocks, the answer text as is, the finished banner.
+ * The blocks of a run as Telegram rich markdown: a thinking block (live text,
+ * collapsed `Thinking` when done), a tool call (collapsed, its summary line
+ * says running / duration / failed), the answer text as is; the banner.
  *
- * Pure functions over the run's items; stream.ts decides when a part of the
- * run is shown as a draft and when it is committed as a message.
+ * Pure functions; blocks.ts decides which message shows which block when.
  */
 
 import type { InputRichMessage } from "grammy/types";
+import type { FinishedDetails } from "../core/agent.ts";
 
-export type Item =
-  | { kind: "thinking"; text: string }
-  | { kind: "text"; text: string }
+export type Block =
+  | { kind: "thinking"; text: string; done: boolean }
+  | { kind: "text"; text: string; done: boolean }
   | {
       kind: "tool";
       id: string;
@@ -22,26 +23,11 @@ export type Item =
       done: boolean;
     };
 
-/** harness's "per-message-mode-finished" entry (index.ts ModeDetails). */
-export type FinishedDetails = {
-  mode: "plan" | "normal";
-  model?: string;
-  effort?: string;
-  finishedAt?: number;
-  durationMs?: number;
-  costUsd?: number;
-  interrupted?: boolean;
-};
-
-export const FINISHED_ENTRY_TYPE = "per-message-mode-finished";
-
-/** Telegram's limit for one rich message is 32768 characters and 500 blocks; commits stay well below. */
-export const MESSAGE_LIMIT = 30_000;
-export const COMMIT_CHARS = 12_000;
-export const COMMIT_ITEMS = 60;
+/** Telegram's limit for one rich message is 32768 characters and 500 blocks; a page of a block stays well below. */
+export const PAGE_LIMIT = 12_000;
+const MESSAGE_LIMIT = 30_000;
 const RESULT_LIMIT = 3_000;
 const SUMMARY_LIMIT = 80;
-const DRAFT_TAIL = 3_500;
 
 const ANSI = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007]*(?:\u0007|\u001b\\)/g;
 
@@ -51,6 +37,11 @@ export function stripAnsi(text: string): string {
 
 export function escapeHtml(text: string): string {
   return text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
+/** A markdown link; `[` and `]` in the text are escaped. */
+export function link(text: string, url: string): string {
+  return `[${text.replace(/[[\]]/g, "\\$&")}](${url})`;
 }
 
 /** A fenced code block whose fence is longer than any backtick run inside. */
@@ -64,7 +55,7 @@ function truncate(text: string, limit: number): string {
   return text.length > limit ? `${text.slice(0, limit)}\n… ${text.length - limit} more chars` : text;
 }
 
-function oneLine(text: string, limit: number): string {
+export function oneLine(text: string, limit: number): string {
   const line = text.replace(/\s+/g, " ").trim();
   return line.length > limit ? `${line.slice(0, limit - 1)}…` : line;
 }
@@ -91,29 +82,32 @@ export function resultText(result: unknown): string {
   }
 }
 
-function renderItem(item: Item): string {
-  switch (item.kind) {
-    case "thinking":
-      return `<details><summary>Thinking</summary>\n\n${stripAnsi(item.text.trim())}\n\n</details>`;
+/**
+ * The pages of a block: one rich message each. A thinking or text block
+ * longer than PAGE_LIMIT continues on further pages; a tool call is one page
+ * (its arguments and result are truncated).
+ */
+export function renderBlock(block: Block): string[] {
+  switch (block.kind) {
+    case "thinking": {
+      const pages = splitText(stripAnsi(block.text.trim()), PAGE_LIMIT);
+      return pages.map((page, index) => {
+        const title = index === 0 ? "Thinking" : "Thinking (continued)";
+        return block.done ? `<details><summary>${title}</summary>\n\n${page}\n\n</details>` : `_${title}…_\n\n${page}`;
+      });
+    }
     case "text":
-      return stripAnsi(item.text.trim());
+      return splitText(stripAnsi(block.text.trim()), PAGE_LIMIT).filter((page) => page !== "");
     case "tool": {
-      const duration = item.durationMs !== undefined ? ` · ${formatDuration(item.durationMs)}` : "";
-      const status = !item.done ? " · running" : item.isError ? " · failed" : "";
-      const args = JSON.stringify(item.args ?? {}, null, 2);
-      const result = item.result !== undefined ? `\n\n${fence(truncate(stripAnsi(item.result), RESULT_LIMIT))}` : "";
-      return `<details><summary>${escapeHtml(toolSummary(item.name, item.args))}${duration}${status}</summary>\n\n${fence(truncate(args, RESULT_LIMIT), "json")}${result}\n\n</details>`;
+      const duration = block.durationMs !== undefined ? ` · ${formatDuration(block.durationMs)}` : "";
+      const status = !block.done ? " · running" : block.isError ? " · failed" : "";
+      const args = JSON.stringify(block.args ?? {}, null, 2);
+      const result = block.result !== undefined ? `\n\n${fence(truncate(stripAnsi(block.result), RESULT_LIMIT))}` : "";
+      return [`<details><summary>${escapeHtml(toolSummary(block.name, block.args))}${duration}${status}</summary>\n\n${fence(truncate(args, RESULT_LIMIT), "json")}${result}\n\n</details>`];
     }
     default:
-      return assertNever(item);
+      return assertNever(block);
   }
-}
-
-export function renderItems(items: readonly Item[]): string {
-  return items
-    .map(renderItem)
-    .filter((part) => part !== "")
-    .join("\n\n");
 }
 
 /** Splits a long text into parts of at most `limit` characters, at paragraph or line boundaries when possible. */
@@ -129,13 +123,6 @@ export function splitText(text: string, limit: number): string[] {
   }
   parts.push(rest);
   return parts;
-}
-
-/** The live draft: header, the tail of the uncommitted part of the run, the current activity. */
-export function renderDraft(header: string, items: readonly Item[], activity: string | undefined): string {
-  const body = renderItems(items);
-  const tail = body.length > DRAFT_TAIL ? `…\n\n${body.slice(body.length - DRAFT_TAIL).replace(/^[^\n]*\n/, "")}` : body;
-  return [`**${header}**`, tail, activity ? `_${activity}_` : ""].filter((part) => part !== "").join("\n\n");
 }
 
 /** Rich markdown that Telegram rejected, as one preformatted block of plain text. */
@@ -170,5 +157,5 @@ export function bannerLine(details: FinishedDetails): string {
 }
 
 function assertNever(value: never): never {
-  throw new Error(`unexpected item: ${JSON.stringify(value)}`);
+  throw new Error(`unexpected block: ${JSON.stringify(value)}`);
 }

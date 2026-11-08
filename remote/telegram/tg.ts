@@ -12,16 +12,19 @@ export type Tg = Pick<
   | "editMessageReplyMarkup"
   | "deleteMessage"
   | "sendRichMessage"
-  | "sendRichMessageDraft"
-  | "pinChatMessage"
-  | "unpinChatMessage"
   | "answerCallbackQuery"
+  | "leaveChat"
   | "getFile"
 >;
 
-/** The topic no longer exists (the user deleted it). */
-export function isThreadGone(error: unknown): boolean {
-  return error instanceof GrammyError && /thread not found|TOPIC_ID_INVALID|TOPIC_DELETED/i.test(error.description);
+/** The bot can no longer write to the chat: it left or was removed, or the user blocked it. */
+export function isChatGone(error: unknown): boolean {
+  return error instanceof GrammyError && (error.error_code === 403 || /chat not found/i.test(error.description));
+}
+
+/** The message to edit no longer exists (the user deleted it). */
+export function isMessageGone(error: unknown): boolean {
+  return error instanceof GrammyError && /message to edit not found|message can't be edited/i.test(error.description);
 }
 
 /** Telegram could not parse the message's markup. */
@@ -29,7 +32,7 @@ export function isParseError(error: unknown): boolean {
   return error instanceof GrammyError && error.error_code === 400 && /parse|markdown|entit|rich/i.test(error.description);
 }
 
-/** The edit changed nothing: a benign outcome of repeated card updates. */
+/** The edit changed nothing: a benign outcome of repeated edits. */
 export function isNotModified(error: unknown): boolean {
   return error instanceof GrammyError && /message is not modified/i.test(error.description);
 }

@@ -1,7 +1,7 @@
 /**
  * Tests with real processes and sockets: the RPC client against a fake pi,
- * the webhook endpoint, the user's cage store (the bundle's cage), the login
- * helper (pi's ModelRuntime).
+ * the HTTP endpoint, the user's cage store (the bundle's cage), the user
+ * helper (pi's ModelRuntime and SessionManager).
  */
 
 import assert from "node:assert/strict";
@@ -13,10 +13,11 @@ import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { homeOf, piSpec, prepareUser, publicKey, runAsUser } from "../accounts.ts";
 import type { Config } from "../config.ts";
-import { LoginRun } from "../login.ts";
-import { RpcProcess, type RpcEvent } from "../rpc.ts";
-import { startWebhookServer } from "../server.ts";
+import { RpcProcess, type RpcEvent } from "../core/rpc.ts";
+import { createHelper } from "../helper.ts";
+import { startServer } from "../server.ts";
 import { listSecrets, removeSecret, setSecret } from "../secrets.ts";
+import { FakeClock } from "./fakes.ts";
 
 const FAKE_PI = fileURLToPath(new URL("./fake-pi.ts", import.meta.url));
 const manifest = JSON.parse(readFileSync(process.env.HARNESS_MANIFEST ?? "", "utf8")) as { bin: Record<string, string> };
@@ -66,10 +67,18 @@ describe("rpc client", () => {
   });
 });
 
-describe("webhook endpoint", () => {
-  test("only POST /telegram with the secret is accepted", async () => {
+describe("http endpoint", () => {
+  test("only POST /telegram with the secret is accepted; the Mini App gets 503 until ready", async () => {
     const updates: unknown[] = [];
-    const server = await startWebhookServer({ port: 0, path: "/telegram", secret: "s3cret", onUpdate: (u) => updates.push(u), log: () => undefined });
+    let ready = false;
+    const server = await startServer({
+      port: 0,
+      webhookPath: "/telegram",
+      webhookSecret: "s3cret",
+      onUpdate: (u) => updates.push(u),
+      app: () => (ready ? (_request, response) => response.writeHead(204).end() : undefined),
+      log: () => undefined,
+    });
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const post = (path: string, secret?: string): Promise<number> =>
       fetch(`${base}${path}`, {
@@ -84,6 +93,9 @@ describe("webhook endpoint", () => {
     assert.deepEqual(updates, []);
     assert.equal(await post("/telegram", "s3cret"), 200);
     assert.deepEqual(updates, [{ update_id: 1 }]);
+    assert.equal((await fetch(`${base}/app/`)).status, 503);
+    ready = true;
+    assert.equal((await fetch(`${base}/app/api/state`)).status, 204);
     server.close();
   });
 });
@@ -130,17 +142,52 @@ describe("accounts, secrets and login (runAs self)", () => {
     assert.deepEqual(await listSecrets(config, user), { names: [] });
   });
 
-  test("login helper lists the OAuth providers of pi", async () => {
-    const run = new LoginRun(config, user, ["list"], { prompt: () => Promise.reject(new Error("none")), notify: () => undefined });
-    const result = await run.result;
-    assert.equal(result.ok, true, JSON.stringify(result));
-    assert.ok(result.ok && (result.providers ?? []).some((p) => p.id === "openai-codex" && !p.loggedIn));
+  const clock = new FakeClock();
+  const helper = createHelper(config, clock);
+
+  test("user helper: the OAuth providers of pi", async () => {
+    const result = await helper.providers(user);
+    assert.ok(result.ok, JSON.stringify(result));
+    assert.ok(result.data.some((p) => p.id === "openai-codex" && !p.loggedIn));
+  });
+
+  test("user helper: sessions and the last turns of one, without thinking and tools", async () => {
+    const home = homeOf(config, user);
+    const module = import.meta.resolve("@earendil-works/pi-coding-agent");
+    const script = `
+      const { SessionManager } = await import(${JSON.stringify(module)});
+      const s = SessionManager.create(${JSON.stringify(home)});
+      const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+      const assistant = (content) => ({ role: "assistant", content, api: "x", provider: "x", model: "x", usage, stopReason: "stop", timestamp: Date.now() });
+      s.appendMessage({ role: "user", content: "first question", timestamp: Date.now() });
+      s.appendMessage(assistant([{ type: "thinking", thinking: "hidden" }, { type: "toolCall", id: "t", name: "bash", arguments: {} }]));
+      s.appendMessage({ role: "toolResult", toolCallId: "t", toolName: "bash", content: [{ type: "text", text: "tool output" }], isError: false, timestamp: Date.now() });
+      s.appendMessage(assistant([{ type: "text", text: "first answer" }]));
+      s.appendMessage({ role: "user", content: [{ type: "text", text: "second" }], timestamp: Date.now() });
+      s.appendMessage(assistant([{ type: "text", text: "second answer" }]));
+      process.stdout.write(s.getSessionId());
+    `;
+    const created = await runAsUser(config, user, process.execPath, ["--input-type=module", "-e", script]);
+    assert.equal(created.code, 0, created.stderr);
+    const sessionId = created.stdout.trim();
+    const sessions = await helper.sessions(user);
+    assert.ok(sessions.ok, JSON.stringify(sessions));
+    assert.deepEqual(sessions.data.map((s) => [s.id, s.cwd, s.title]), [[sessionId, home, "first question"]]);
+    const history = await helper.history(user, home, sessionId, 5);
+    assert.deepEqual(history, { ok: true, data: { title: "first question", turns: [{ prompt: "first question", answer: "first answer" }, { prompt: "second", answer: "second answer" }] } });
+    assert.deepEqual(await helper.history(user, home, sessionId, 1), { ok: true, data: { title: "first question", turns: [{ prompt: "second", answer: "second answer" }] } });
+  });
+
+  test("user helper: a query past its deadline is killed", async () => {
+    const pending = helper.sessions(user);
+    await clock.advance(30_000);
+    assert.deepEqual(await pending, { ok: false, problem: "sessions took longer than 30 s" });
   });
 
   test("cancelling a login waiting for the user ends its helper", async () => {
     let prompted!: () => void;
     const asked = new Promise<void>((resolve) => (prompted = resolve));
-    const run = new LoginRun(config, user, ["login", "openai-codex"], {
+    const run = helper.login(user, ["login", "openai-codex"], {
       prompt: () => {
         prompted();
         return new Promise<string>(() => undefined); // the user never answers

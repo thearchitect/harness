@@ -1,7 +1,9 @@
 # harness-telegram: the Telegram gateway of remote/ (sources run by Node
-# directly), with the bundle's node_modules (grammy, yaml, pi's RPC types and
-# ModelRuntime for the login helper). It starts pi through the bundle's
-# launcher, whose path comes from its configuration (lib.mkRemoteImage).
+# directly) and its Mini App (remote/app: static files, no build step), with
+# the bundle's node_modules (grammy, yaml, alpinejs, pi's RPC types,
+# ModelRuntime and SessionManager for the user helper). It starts pi through
+# the bundle's launcher, whose path comes from its configuration
+# (lib.mkRemoteImage).
 {
   lib,
   stdenvNoCC,
@@ -21,7 +23,6 @@ stdenvNoCC.mkDerivation {
           ../remote/tsconfig.json
         ]
       ))
-      ../rpc-dialogs.ts
       ../package.json # "type": "module" for the .ts sources
     ];
   };
@@ -30,7 +31,7 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     lib=$out/lib/harness-telegram
     mkdir -p $lib $out/bin
-    cp -r remote rpc-dialogs.ts package.json $lib/
+    cp -r remote package.json $lib/
     ln -s ${bundle.passthru.npmTools}/node_modules $lib/node_modules
     cat > $out/bin/harness-telegram <<EOF
     #!${runtimeShell}

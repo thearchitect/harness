@@ -46,11 +46,14 @@ The gateway's code and tests live in harness: `nix/test.sh result`, or
    - `flyctl logs -a <app>` shows `listening`, `webhook …` and `<user>: ready`
      for every user, no `fatal`;
    - `curl -s -o /dev/null -w '%{http_code}' -X POST https://<app>.fly.dev/telegram`
-     answers 401 (no secret);
+     answers 401 (no secret); `curl -sI https://<app>.fly.dev/app/` answers
+     200 with `Cache-Control: no-cache` and an `ETag`; `/app/api/state`
+     without initData answers 401;
    - `flyctl ssh console -a <app>`: pi processes run under the users' uids,
      `/proc/<pid>/environ` of a pi process has no `TELEGRAM_*`, one user
      cannot list another's home.
-3. In Telegram: `/agent` in a topic, a message, a `!` message, `/stop`.
+3. In Telegram: `/new <dir>`, a message, a `!` message, `/stop`; a status
+   line opens the Mini App.
 
 ## Publish
 
@@ -63,7 +66,9 @@ The gateway's code and tests live in harness: `nix/test.sh result`, or
 - The machine sleeps when idle and wakes on the next Telegram message.
 - A change of the state format (`state.json` version) is not migrated: stop
   the agents, `rm /data/gateway/state.json` over `flyctl ssh`, deploy; users
-  start their agents again with `/agent` (pi sessions stay on disk).
+  start their agents again (`/new`, or resume from the Mini App's history).
+- The bot's main Mini App (BotFather → Bot Settings → Mini App) points at
+  `https://<app>.fly.dev/app/`; Threaded Mode stays off.
 
 ## Secrets
 
@@ -86,4 +91,11 @@ into a temporary file that is removed right after use.
    `server-<name>`, `cage encrypt`, commit, deploy: their keys reach their
    agents.
 3. Removing a user: drop them from `remote.yaml` and `cage.yaml`; their home
-   stays on the volume until deleted by hand.
+   stays on the volume until deleted by hand. On its next start the gateway
+   drops their workspaces and leaves their groups.
+
+## TODO
+
+- Topics and threads: when Telegram's topics in private chats and groups
+  (or Slack-level threads) are good enough, a topic becomes a workspace of
+  its own (one agent per topic) on top of the chat-level workspaces.
