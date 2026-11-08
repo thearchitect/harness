@@ -45,7 +45,7 @@ let
       fileset = lib.fileset.unions [
         ../index.ts
         ../deps.ts
-        ../rpc-dialogs.ts
+        ../gate.ts
         ../lsp
         ../tool_project_tree.ts
         ../workarounds.ts

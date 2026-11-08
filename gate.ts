@@ -1,12 +1,31 @@
 /**
- * harness - dialogs outside the TUI (RPC clients).
+ * harness - the write/edit gate's pure parts, kept apart from index.ts for
+ * their tests (gate.test.ts):
  *
- * In RPC mode pi forwards extension dialogs as plain select/input requests.
- * The write/edit gate is the one dialog harness asks there; its title and
- * option labels are a contract with the clients that render it natively
- * (remote/dialogs.ts of the Telegram gateway), so both sides import them from
- * here instead of repeating the strings.
+ * - buildChangeReview: what BUILD does with a change outside the scratch
+ *   space, by profile (PLAN refuses such changes in every profile);
+ * - askGateViaDialogs: the gate outside the TUI. In RPC mode pi forwards
+ *   extension dialogs as plain select/input requests: one select, and a
+ *   comment only for the options that take one.
  */
+
+import type { Profile } from "./deps.ts";
+
+/**
+ * BUILD's review of a change outside the scratch space: the desktop asks the
+ * user (and cannot without a dialog-capable UI); the server profile (remote/)
+ * builds unattended, nobody reviews there.
+ */
+export function buildChangeReview(profile: Profile, hasUI: boolean): "allow" | "ask" | "no-ui" {
+  switch (profile) {
+    case "server":
+      return "allow";
+    case "desktop":
+      return hasUI ? "ask" : "no-ui";
+    default:
+      throw new Error(`unknown profile: ${String(profile satisfies never)}`);
+  }
+}
 
 /** First line of the gate dialog's select title; the change details follow on the next lines. */
 export const GATE_TITLE = "Allow file change?";

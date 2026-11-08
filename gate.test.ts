@@ -1,6 +1,6 @@
 /**
- * Tests of the write/edit gate dialog outside the TUI (RPC clients) and of
- * the bundled MCP servers per profile.
+ * Tests of the write/edit gate (BUILD review by profile, the dialog outside
+ * the TUI) and of the bundled MCP servers per profile.
  *   node --test gate.test.ts
  */
 
@@ -9,12 +9,13 @@ import { describe, test } from "node:test";
 import { bundledMcpServers, readProfile, type Manifest } from "./deps.ts";
 import {
   askGateViaDialogs,
+  buildChangeReview,
   GATE_COMMENT_PROMPTS,
   GATE_OPTIONS,
   GATE_TITLE,
   type DialogUI,
   type GateDecision,
-} from "./rpc-dialogs.ts";
+} from "./gate.ts";
 
 type Recorded = { selects: { title: string; options: string[] }[]; inputs: string[] };
 
@@ -39,6 +40,18 @@ async function decide(select: string | undefined, input?: string): Promise<{ dec
   const decision = await askGateViaDialogs(ui, ["edit src/x.ts", "+ new line"]);
   return { decision, recorded };
 }
+
+describe("BUILD review by profile", () => {
+  test("the server profile allows without asking, with or without a UI", () => {
+    assert.equal(buildChangeReview("server", true), "allow");
+    assert.equal(buildChangeReview("server", false), "allow");
+  });
+
+  test("the desktop asks, and cannot without a dialog-capable UI", () => {
+    assert.equal(buildChangeReview("desktop", true), "ask");
+    assert.equal(buildChangeReview("desktop", false), "no-ui");
+  });
+});
 
 describe("gate dialog outside the TUI", () => {
   test("one select with the contract title, details and options", async () => {

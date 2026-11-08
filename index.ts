@@ -68,7 +68,7 @@ import { fileURLToPath } from "node:url";
 import { ensureThinkingBlocksVisible } from "./workarounds.ts";
 import { assembleSystemPrompt, systemPromptProblem } from "./prompt.ts";
 import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest, readProfile, type Profile } from "./deps.ts";
-import { askGateViaDialogs, type GateDecision } from "./rpc-dialogs.ts";
+import { askGateViaDialogs, buildChangeReview, type GateDecision } from "./gate.ts";
 import { AGENT_WORKSPACE_DIR, registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
 import { registerProjectTree } from "./tool_project_tree.ts";
 
@@ -695,7 +695,7 @@ async function askGateDecision(
  * █ ▀▀█ █▀▀▀█   █     █   █ ▀▄█ █ ▀▀█
  *  ▀▀▀  ▀   ▀   ▀   ▀▀▀▀▀ ▀   ▀  ▀▀▀
  * ----------------------------------------------------------------------------
- * Plan mode blocks write/edit outside /tmp and the session workspace; build mode asks for UI confirmation (madness bypasses).
+ * Plan mode blocks write/edit outside /tmp and the session workspace; build mode asks for UI confirmation (madness bypasses; the server profile does not ask).
  * ========================================================================== */
 async function canonicalizeProspectivePath(path: string): Promise<string> {
   let cursor = resolve(path);
@@ -1042,27 +1042,36 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     },
   });
 
-  pi.registerCommand("madness", {
-    description: "Toggle full write/edit permission bypass",
-    handler: async (
-      _args: string,
-      ctx: ExtensionCommandContext,
-    ): Promise<void> => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("Madness requires dialog-capable UI (TUI or RPC).", "error");
-        return;
-      }
+  switch (profile) {
+    case "desktop":
+      pi.registerCommand("madness", {
+        description: "Toggle full write/edit permission bypass",
+        handler: async (
+          _args: string,
+          ctx: ExtensionCommandContext,
+        ): Promise<void> => {
+          if (!ctx.hasUI) {
+            ctx.ui.notify("Madness requires dialog-capable UI (TUI or RPC).", "error");
+            return;
+          }
 
-      toggleMadness(ctx);
-    },
-  });
-
-  pi.registerShortcut("ctrl+\\", {
-    description: "Toggle madness mode",
-    handler: (ctx: ExtensionContext): void => {
-      toggleMadness(ctx);
-    },
-  });
+          toggleMadness(ctx);
+        },
+      });
+      pi.registerShortcut("ctrl+\\", {
+        description: "Toggle madness mode",
+        handler: (ctx: ExtensionContext): void => {
+          toggleMadness(ctx);
+        },
+      });
+      break;
+    case "server":
+      // BUILD never asks there and PLAN must keep refusing: madness would
+      // only add writes in PLAN.
+      break;
+    default:
+      throw new Error(`unknown profile: ${String(profile satisfies never)}`);
+  }
 
 /* ============================================================================
  * ▄▀▀▀▀ █     ▄▀▀▀▄ ▄▀▀▀▀ █   █       █▀▀▀▄ ▄▀▀▀▄ ▄▀▀▀▀ █   █
@@ -1611,6 +1620,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       }
     }
 
+    const buildReview = buildChangeReview(profile, ctx.hasUI);
     if (reviewed.length === 0) {
       return { kind: "allowed" };
     } else if (mode === "plan") {
@@ -1619,7 +1629,9 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
         terminate: false,
         reason: `PLAN allows ${request.tool} only inside ${tempRoot} or your session workspace (${workspaceRoot ?? "unavailable"}). Use a disposable copy there.`,
       };
-    } else if (!ctx.hasUI) {
+    } else if (buildReview === "allow") {
+      return { kind: "allowed" };
+    } else if (buildReview === "no-ui") {
       return {
         kind: "blocked",
         terminate: false,
