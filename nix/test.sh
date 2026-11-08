@@ -5,15 +5,15 @@
 # through the checkout's node_modules, pointed at the bundle's as pi-dev does;
 # the server tests drive the bundle's language servers on the fixtures in
 # lsp/testdata and need git, go and cargo in PATH (the projects' toolchains
-# are never part of the bundle). CI:
-#   nix shell nixpkgs#nodejs nixpkgs#git nixpkgs#go nixpkgs#cargo nixpkgs#rustc --command nix/test.sh result
+# are never part of the bundle); the gateway's tests need zip and unzip. CI:
+#   nix shell nixpkgs#nodejs nixpkgs#git nixpkgs#go nixpkgs#cargo nixpkgs#rustc nixpkgs#zip nixpkgs#unzip --command nix/test.sh result
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 BUNDLE="$(readlink -f "${1:-result}")"
 export HARNESS_MANIFEST="$BUNDLE/share/harness/manifest.json"
 [[ -f "$HARNESS_MANIFEST" ]] || { echo "no manifest at $HARNESS_MANIFEST" >&2; exit 1; }
-for tool in node git go cargo; do
+for tool in node git go cargo zip unzip; do
   command -v "$tool" >/dev/null || { echo "test: $tool is not in PATH" >&2; exit 1; }
 done
 
@@ -28,6 +28,7 @@ fi
 
 cd "$ROOT"
 node --test tool_project_tree.test.ts
+node --test tool_send_file.test.ts
 node --test gate.test.ts
 # The Telegram gateway (remote/): type check, then its tests (cage, ssh-keygen
 # and the login helper run for real, in a throwaway home).

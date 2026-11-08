@@ -7,7 +7,8 @@
 
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -24,14 +25,27 @@ import { StateStore } from "../core/state.ts";
 import { startServer } from "../server.ts";
 import { Router } from "../telegram/router.ts";
 import { Workbench } from "../workbench.ts";
-import { FakeClock, FakeHelper, FakePi, FakeTg, settle } from "./fakes.ts";
+import { FakeClock, FakeHelper, FakePi, FakeTelemetry, FakeTg, ok, settle } from "./fakes.ts";
 
 const ARTEM = 11;
 const STRANGER = 99;
 const GROUP = -500;
 const TOKEN = "123:abc";
 
-type World = { router: Router; wb: Workbench; tg: FakeTg; clock: FakeClock; pis: FakePi[]; store: StateStore; helper: FakeHelper; home: string; dataDir: string; config: Config };
+type World = {
+  router: Router;
+  wb: Workbench;
+  tg: FakeTg;
+  clock: FakeClock;
+  pis: FakePi[];
+  store: StateStore;
+  helper: FakeHelper;
+  home: string;
+  dataDir: string;
+  config: Config;
+  t: FakeTelemetry;
+  downloads: Map<string, Buffer>;
+};
 
 let world: World;
 let updateId = 1;
@@ -39,7 +53,7 @@ let messageId = 1000;
 
 function makeWorld(): World {
   const dataDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
-  const user: UserConfig = { name: "artem", telegramId: ARTEM, uid: 1001, gid: 1001, git: { name: "A", email: "a@x" }, publicKeys: [] };
+  const user: UserConfig = { name: "artem", telegramId: ARTEM, uid: 1001, gid: 1001, git: { name: "A", email: "a@x" }, publicKeys: [], admin: true };
   const config: Config = {
     telegram: { tokenVariable: "T", webhookSecretVariable: "W", publicUrl: "https://x/telegram", listenPort: 1 },
     runAs: "self",
@@ -47,8 +61,10 @@ function makeWorld(): World {
     paths: { pi: "pi", cage: "cage", envsDir: join(dataDir, "envs"), machineIdentity: "" },
     users: [user],
     limits: { sessionsPerUser: 3, sessionsTotal: 4, idleMinutes: 30, idleShutdownMinutes: 15 },
+    telemetry: { retentionDays: 30 },
     defaultSettings: {},
   };
+  const t = new FakeTelemetry();
   const home = homeOf(config, user);
   for (const dir of ["proj", "zeta"]) mkdirSync(join(home, dir), { recursive: true });
   const clock = new FakeClock();
@@ -64,7 +80,8 @@ function makeWorld(): World {
     clock,
     helper,
     botUsername: "bot",
-    log: () => undefined,
+    t,
+    resources: () => ({ memFreeMb: 100 }),
     spawn: (spec, handlers) => {
       const pi = new FakePi(spec, handlers);
       pis.push(pi);
@@ -72,8 +89,16 @@ function makeWorld(): World {
     },
     spec: (_user, sessionId, cwd) => ({ command: "pi", args: ["--session-id", sessionId], cwd, env: {} }),
   });
-  const router = new Router({ workbench: wb, log: () => undefined, download: async () => Buffer.from("file"), activity: () => undefined });
-  return { router, wb, tg, clock, pis, store, helper, home, dataDir, config };
+  const downloads = new Map<string, Buffer>();
+  const router = new Router({
+    workbench: wb,
+    clock,
+    t,
+    download: async (fileId) => downloads.get(fileId) ?? Buffer.from(`content of ${fileId}`),
+    journal: () => [{ ts: "2026-11-08T00:00:00.000Z", level: "error", kind: "agent.exit", message: "boom" }],
+    activity: () => undefined,
+  });
+  return { router, wb, tg, clock, pis, store, helper, home, dataDir, config, t, downloads };
 }
 
 function send(update: Omit<Update, "update_id">): Promise<void> {
@@ -145,19 +170,21 @@ describe("gateway", () => {
   });
   afterEach(() => rmSync(world.dataDir, { recursive: true, force: true }));
 
-  test("strangers are ignored; /start gets no answer; the private chat becomes a workspace", async () => {
+  test("strangers are ignored (journaled); /start answers with the status; the private chat becomes a workspace", async () => {
     await text("hi", ARTEM, STRANGER);
-    await text("/start");
     assert.deepEqual(world.tg.calls, []);
+    assert.ok(world.t.kinds("warn").includes("update.stranger"));
+    await text("/start");
+    assert.deepEqual(sent(), [{ chat: ARTEM, text: NO_AGENT_LINE(ARTEM), loud: false, keyboard: [] }]);
     assert.deepEqual(world.store.workspace(ARTEM), { chatId: ARTEM, kind: "private", owner: ARTEM, title: "Direct" });
   });
 
-  test("no agent: one silent link to the Mini App; /new without a path links to its New section", async () => {
+  test("no agent: one silent link to the Mini App; /new without a path links to its Files screen", async () => {
     await text("fix the bug");
     await text("/new");
     assert.deepEqual(sent(), [
       { chat: ARTEM, text: NO_AGENT_LINE(ARTEM), loud: false, keyboard: [] },
-      { chat: ARTEM, text: `[Choose a directory…](https://t.me/bot?startapp=w${ARTEM}_new&mode=compact)`, loud: false, keyboard: [] },
+      { chat: ARTEM, text: `[Choose a directory…](https://t.me/bot?startapp=w${ARTEM}_files&mode=compact)`, loud: false, keyboard: [] },
     ]);
     assert.deepEqual(world.pis, []);
   });
@@ -191,7 +218,9 @@ describe("gateway", () => {
     ]);
     assert.deepEqual(loud(), [`[~/proj · planning finished · 5s · $0.01 · v4](https://t.me/bot?startapp=w${ARTEM}&mode=compact)`]);
     assert.ok(sent().some((s) => s.text === "The plan." && !s.loud), "the answer block stays, silently");
-    assert.ok(!world.tg.methods().some((m) => /Draft|Reaction|ChatAction|ForumTopic|pin/i.test(m)));
+    assert.ok(!world.tg.methods().some((m) => /Draft|Reaction|ChatAction|ForumTopic/i.test(m)));
+    const answerId = world.tg.calls.find((c) => c.method === "sendRichMessage" && (c.args[1] as { markdown: string }).markdown === "The plan.")?.result as { message_id: number };
+    assert.deepEqual(world.tg.of("pinChatMessage"), [[ARTEM, answerId.message_id, { disable_notification: true }]], "the final answer is pinned");
   });
 
   test("Stop on the last block aborts the run", async () => {
@@ -324,6 +353,195 @@ describe("gateway", () => {
     assert.equal(sent().at(-1)?.text, "Pick", "the open dialog moved below");
     assert.equal(world.wb.isQuiescent(), true, "an open dialog keeps nothing awake");
   });
+
+  test("send_file: a document where the agent is, with its comment, with sound, pinned; in the background under the header", async () => {
+    writeFileSync(join(world.home, "proj", "report.txt"), "the report");
+    await text("/new proj");
+    const pi = world.pis[0];
+    assert.ok(pi !== undefined);
+    await text("make a report");
+    const details = { path: join(world.home, "proj", "report.txt"), name: "report.txt", size: 10, comment: "Q3 <report>" };
+    pi.emit({ type: "tool_execution_end", toolCallId: "f", toolName: "send_file", result: { details }, isError: false });
+    await world.wb.drain();
+    const [doc] = world.tg.of("sendDocument");
+    assert.equal(doc?.[0], ARTEM);
+    assert.deepEqual(doc?.[2], { caption: "Q3 &lt;report&gt;", parse_mode: "HTML", disable_notification: false });
+    const docId = (world.tg.calls.find((c) => c.method === "sendDocument")?.result as { message_id: number }).message_id;
+    assert.ok(world.tg.of("pinChatMessage").some((args) => args[1] === docId));
+
+    await text("/detach");
+    pi.emit({ type: "tool_execution_end", toolCallId: "g", toolName: "send_file", result: { details: { ...details, path: join(world.home, "nope.txt") } }, isError: false });
+    await world.wb.drain();
+    assert.match(loud().at(-1) ?? "", /could not send report\.txt/);
+    assert.ok(world.t.kinds("error").includes("file.send"));
+  });
+
+  test("the service message about the bot's own pin is deleted; others' pins stay", async () => {
+    await world.wb.outbox(ARTEM).pin(55);
+    const pinned = (id: number) =>
+      send({ message: { message_id: messageId++, date: 0, chat: chat(ARTEM), from: { id: 1, is_bot: true, first_name: "bot" }, pinned_message: { message_id: id, date: 0, chat: chat(ARTEM) } } } as Omit<Update, "update_id">);
+    await pinned(55);
+    await pinned(56);
+    await world.wb.outbox(ARTEM).flush();
+    assert.deepEqual(world.tg.of("deleteMessage"), [[ARTEM, messageId - 2]]);
+  });
+
+  test("/diff: the changes (tracked and untracked) as a .diff document; no changes; not a repository; never to the model", async () => {
+    const repo = join(world.home, "proj");
+    const git = (...args: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@x", ...args], { cwd: repo });
+    git("init", "-q");
+    writeFileSync(join(repo, "a.txt"), "one\n");
+    git("add", ".");
+    git("commit", "-qm", "init");
+    await text("/new proj");
+    await text("/diff");
+    await world.wb.outbox(ARTEM).flush();
+    assert.equal(sent().at(-1)?.text, "No changes in ~/proj.");
+    writeFileSync(join(repo, "a.txt"), "two\n");
+    writeFileSync(join(repo, "b.txt"), "new\n");
+    await text("/diff");
+    await world.wb.outbox(ARTEM).flush();
+    const doc = world.tg.of("sendDocument").at(-1);
+    assert.equal((doc?.[2] as { caption: string }).caption, "~/proj · 2 files");
+    const patch = ((doc?.[1] as { fileData: Buffer }).fileData).toString("utf8");
+    assert.match(patch, /^-one\n\+two$/m);
+    assert.match(patch, /^\+\+\+ b\/b\.txt$/m);
+    await text("/new zeta");
+    await text("/diff");
+    await world.wb.outbox(ARTEM).flush();
+    assert.equal(sent().at(-1)?.text, "~/zeta is not a git repository.");
+    assert.ok(world.pis.every((pi) => !pi.prompts().some((p) => p.startsWith("/diff"))));
+  });
+
+  test("/status: the agent here (model, state, context, cost) and the other agents", async () => {
+    await text("/new proj");
+    const pi = world.pis[0];
+    assert.ok(pi !== undefined);
+    pi.respond = (command) =>
+      command.type === "get_session_stats" ? ok("get_session_stats", { cost: 0.456, contextUsage: { percent: 30.4 } }) : command.type === "prompt" ? ok("prompt", { disposition: "started" }) : ok(command.type);
+    await text("task");
+    await world.clock.advance(72_000);
+    await text("/detach");
+    await text("/new zeta");
+    await text("/status");
+    await world.wb.outbox(ARTEM).flush();
+    assert.equal(sent().at(-1)?.text, [
+      `[~/zeta · new session](https://t.me/bot?startapp=w${ARTEM}&mode=compact)`,
+      "deepseek-v4-pro · high · idle",
+      "1 more agent: ~/proj (running, background)",
+    ].join("\n"));
+    await text("/close");
+    await press("s:closeyes", ARTEM, world.tg.sentId(/^Close the agent/));
+    await press(`t:${pi.spec.args[1]}`);
+    await text("/status");
+    await world.wb.outbox(ARTEM).flush();
+    assert.match(sent().at(-1)?.text ?? "", /\n\S+ · high · running 1m 12s · context 30% · \$0\.46$/);
+  });
+
+  test("files of a message and of the message it replies to are saved to ~/tmp and listed first", async () => {
+    await text("/new proj");
+    const pi = world.pis[0];
+    assert.ok(pi !== undefined);
+    const original = { message_id: 900, date: 0, chat: chat(ARTEM), from: { id: ARTEM, is_bot: false, first_name: "A" }, document: { file_id: "old", file_unique_id: "o", file_name: "data.csv", file_size: 2048 } };
+    await send({
+      message: {
+        message_id: 901,
+        date: 0,
+        chat: chat(ARTEM),
+        from: { id: ARTEM, is_bot: false, first_name: "A" },
+        caption: "compare these",
+        document: { file_id: "new", file_unique_id: "n", file_name: "report.pdf", file_size: 1_300_000 },
+        reply_to_message: original,
+      },
+    } as Omit<Update, "update_id">);
+    const prompt = pi.prompts().at(-1) ?? "";
+    const dir = join(world.home, "tmp");
+    assert.equal(prompt, [
+      "Attached files:",
+      `- ${dir}/${ARTEM}-901/report.pdf (1.2 MB)`,
+      `- ${dir}/${ARTEM}-900/data.csv (2 KB, from the message you replied to)`,
+      "",
+      "compare these",
+    ].join("\n"));
+    assert.equal(readFileSync(`${dir}/${ARTEM}-901/report.pdf`, "utf8"), "content of new");
+  });
+
+  test("an album is one prompt once 1.5 s pass without a new part; files over 20 MB are listed as not downloaded", async () => {
+    await text("/new proj");
+    const pi = world.pis[0];
+    assert.ok(pi !== undefined);
+    const part = (id: number, photo: { file_id: string; file_size: number }, caption?: string) =>
+      send({
+        message: { message_id: id, date: 0, chat: chat(ARTEM), from: { id: ARTEM, is_bot: false, first_name: "A" }, media_group_id: "g", photo: [{ ...photo, file_unique_id: photo.file_id, width: 1, height: 1 }], ...(caption !== undefined ? { caption } : {}) },
+      } as Omit<Update, "update_id">);
+    const first = part(910, { file_id: "p1", file_size: 1000 }, "two shots");
+    await world.clock.advance(1_000);
+    const second = part(911, { file_id: "p2", file_size: 30 * 1024 * 1024 });
+    await world.clock.advance(1_499);
+    assert.deepEqual(pi.prompts(), [], "still collecting");
+    await world.clock.advance(1);
+    await Promise.all([first, second]);
+    const prompt = pi.prompts().at(-1) ?? "";
+    assert.match(prompt, /^Attached files:\n- \S+\/11-910\/photo-910\.jpg \(1000 B\)\n- photo-911\.jpg \(30\.0 MB, not downloaded: over Telegram's 20 MB limit for bots\)\n\ntwo shots$/);
+    const images = (pi.requests.filter((r) => r.type === "prompt").at(-1) as { images?: unknown[] }).images;
+    assert.equal(images?.length, 1);
+  });
+
+  test("voice: the transcript grows in one reply, ends as Voice: …, and the prompt says it is the transcript of the file", async () => {
+    await text("/new proj");
+    const pi = world.pis[0];
+    assert.ok(pi !== undefined);
+    const voice = send({
+      message: { message_id: 920, date: 0, chat: chat(ARTEM), from: { id: ARTEM, is_bot: false, first_name: "A" }, voice: { file_id: "v", file_unique_id: "v", duration: 42, file_size: 5000 } },
+    } as Omit<Update, "update_id">);
+    const transcription = await world.helper.nextTranscription();
+    await world.wb.drain();
+    assert.equal(transcription.file, join(world.home, "tmp", `${ARTEM}-920`, "voice.oga"));
+    assert.equal(world.wb.isQuiescent(), false, "a transcription keeps the machine awake");
+    const progress = world.tg.calls.find((c) => c.method === "sendMessage" && c.args[1] === "Transcribing…");
+    assert.deepEqual((progress?.args[2] as { reply_parameters?: unknown }).reply_parameters, { message_id: 920, allow_sending_without_reply: true });
+    transcription.onDelta("Привет, ");
+    await world.clock.advance(3_000);
+    await world.wb.outbox(ARTEM).flush();
+    assert.equal(world.tg.of("editMessageText").at(-1)?.[2], "Transcribing…\nПривет, ");
+    transcription.onDelta("мир");
+    transcription.finish({ ok: true, data: "Привет, мир" });
+    await voice;
+    await world.wb.drain();
+    assert.equal(world.tg.of("editMessageText").at(-1)?.[2], "Voice: Привет, мир");
+    assert.equal(pi.prompts().at(-1), [
+      "Attached files:",
+      `- ${join(world.home, "tmp", `${ARTEM}-920`, "voice.oga")} (5 KB, voice message, 0:42)`,
+      "",
+      "This message was spoken: its text below is the transcript of the attached voice.oga. Work with the text; the audio needs no processing.",
+      "",
+      "Привет, мир",
+    ].join("\n"));
+    assert.equal(world.wb.isQuiescent(), false, "the run started by the voice runs");
+  });
+
+  test("voice without an OpenAI login: an error with sound, nothing to the agent", async () => {
+    await text("/new proj");
+    const voice = send({
+      message: { message_id: 930, date: 0, chat: chat(ARTEM), from: { id: ARTEM, is_bot: false, first_name: "A" }, voice: { file_id: "v", file_unique_id: "v", duration: 3, file_size: 100 } },
+    } as Omit<Update, "update_id">);
+    (await world.helper.nextTranscription()).finish({ ok: false, problem: "no OpenAI login" });
+    await voice;
+    await world.wb.drain();
+    assert.equal(loud().at(-1), "Error: Voice needs an OpenAI login: /login → OpenAI Codex.");
+    assert.deepEqual(world.pis[0]?.prompts(), []);
+  });
+
+  test("/logs: admins get the journal as a document; for others it is just a command for the agent", async () => {
+    await text("/logs 2");
+    await world.wb.outbox(ARTEM).flush();
+    const doc = world.tg.of("sendDocument").at(-1);
+    assert.equal((doc?.[2] as { caption: string }).caption, "1 events, 1 errors");
+    assert.match((doc?.[1] as { filename: string }).filename, /^gateway-\d{8}T\d{4}-\d{8}T\d{4}\.jsonl$/);
+    (world.config.users[0] as { admin: boolean }).admin = false;
+    await text("/logs");
+    assert.equal(sent().at(-1)?.text, NO_AGENT_LINE(ARTEM));
+  });
 });
 
 describe("mini app api", () => {
@@ -356,8 +574,8 @@ describe("mini app api", () => {
     writeFileSync(join(assetsDir, "index.html"), "{{app.js}}");
     writeFileSync(join(assetsDir, "app.js"), "x");
     const assets = new Assets({ index: join(assetsDir, "index.html"), assets: { "app.js": join(assetsDir, "app.js") } });
-    const app = createApp({ workbench: world.wb, helper: world.helper, assets, botToken: TOKEN, clock: world.clock, log: () => undefined, activity: () => undefined });
-    server = await startServer({ port: 0, webhookPath: "/telegram", webhookSecret: "s", onUpdate: () => undefined, app: () => app, log: () => undefined });
+    const app = createApp({ workbench: world.wb, helper: world.helper, assets, botToken: TOKEN, clock: world.clock, t: world.t, activity: () => undefined });
+    server = await startServer({ port: 0, webhookPath: "/telegram", webhookSecret: "s", onUpdate: () => undefined, app: () => app, t: world.t });
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     await text("/start");
   });
@@ -395,5 +613,56 @@ describe("mini app api", () => {
     const closed = await api(`/app/api/action?ws=${GROUP}`, ARTEM, { type: "close", agentId: first });
     assert.equal(closed.status, 200);
     assert.equal(world.store.workspace(GROUP)?.agent, undefined);
+  });
+
+  test("Files: list (directories first), never outside ~, a new folder, downloads as a document (a folder as a zip)", async () => {
+    writeFileSync(join(world.home, "proj", "a.txt"), "aaa");
+    writeFileSync(join(world.home, ".hidden"), "");
+    const listed = (await api("/app/api/files?path=~")).json as unknown as { path: string; entries: { name: string; kind: string; hidden: boolean }[] };
+    assert.equal(listed.path, "~");
+    assert.deepEqual(listed.entries.map((e) => [e.name, e.kind, e.hidden]), [["proj", "dir", false], ["zeta", "dir", false], [".hidden", "file", true]]);
+    const outside = await api("/app/api/files?path=../..");
+    assert.equal(outside.status, 409);
+    assert.match(outside.json.problem ?? "", /outside your home/);
+    assert.equal((await api(`/app/api/action?ws=${ARTEM}`, ARTEM, { type: "mkdir", path: "~/proj", name: "new" })).status, 200);
+    assert.equal((await api(`/app/api/action?ws=${ARTEM}`, ARTEM, { type: "mkdir", path: "~/proj", name: "../x" })).status, 409);
+    assert.deepEqual(((await api("/app/api/files?path=~/proj")).json as unknown as { entries: { name: string }[] }).entries.map((e) => e.name), ["new", "a.txt"]);
+    assert.equal((await api(`/app/api/action?ws=${ARTEM}`, ARTEM, { type: "download", path: "~/proj" })).status, 200);
+    assert.equal((await api(`/app/api/action?ws=${ARTEM}`, ARTEM, { type: "download", path: "~/proj/a.txt" })).status, 200);
+    await world.wb.drain();
+    const [zip, file] = world.tg.of("sendDocument");
+    assert.equal((zip?.[1] as { filename: string }).filename, "proj.zip");
+    const zipPath = join(world.dataDir, "proj.zip");
+    writeFileSync(zipPath, (zip?.[1] as { fileData: Buffer }).fileData);
+    assert.match(execFileSync("unzip", ["-l", zipPath]).toString("utf8"), /proj\/a\.txt/);
+    assert.equal((file?.[1] as { fileData: Buffer }).fileData.toString("utf8"), "aaa");
+    assert.deepEqual(file?.[2], { caption: "~/proj/a.txt", parse_mode: "HTML", disable_notification: true });
+  });
+
+  test("Models: favorites saved; switching the model here applies the favorite's effort", async () => {
+    world.helper.modelSettings = {
+      available: [{ provider: "deepseek", id: "deepseek-flash", name: "Flash", levels: ["off", "high", "max"] }],
+      favorites: [],
+      patterns: [],
+      default: null,
+    };
+    const saved = await api("/app/api/settings/models", ARTEM, { favorites: [{ provider: "deepseek", id: "deepseek-flash", effort: "max" }], default: { provider: "deepseek", id: "deepseek-flash" } });
+    assert.equal(saved.status, 200);
+    assert.deepEqual(world.helper.saved.at(-1), { favorites: [{ provider: "deepseek", id: "deepseek-flash", effort: "max" }], default: { provider: "deepseek", id: "deepseek-flash" } });
+    const started = await api(`/app/api/action?ws=${ARTEM}`, ARTEM, { type: "new", dir: "~/proj" });
+    const agentId = started.json.state?.agents[0]?.id ?? "";
+    await api(`/app/api/action?ws=${ARTEM}`, ARTEM, { type: "model", agentId, provider: "deepseek", id: "deepseek-flash" });
+    const requests = (world.pis[0]?.requests ?? []).filter((r) => r.type === "set_model" || r.type === "set_thinking_level");
+    assert.deepEqual(requests, [
+      { type: "set_model", provider: "deepseek", modelId: "deepseek-flash" },
+      { type: "set_thinking_level", level: "max" },
+    ]);
+  });
+
+  test("errors of the page are journaled (and alerted) with a valid initData only", async () => {
+    const unsigned = await fetch(`${base}/app/api/telemetry`, { method: "POST", body: JSON.stringify({ message: "x" }) });
+    assert.equal(unsigned.status, 401);
+    assert.equal((await api("/app/api/telemetry", ARTEM, { message: "TypeError: boom", stack: "at app.js:1" })).status, 200);
+    assert.deepEqual(world.t.events.filter((e) => e.kind === "app.error").map((e) => e.fields.message), ["TypeError: boom"]);
   });
 });

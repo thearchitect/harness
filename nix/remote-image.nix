@@ -4,14 +4,16 @@
 #     pkgs;                 # nixpkgs of the image's system
 #     config;               # remote.yaml: Telegram, users, limits, default pi settings
 #     envs;                 # cage store envs: machine.cage (required), user-<name>.cage
-#     extraPackages ? [ ];  # tools for the agents (gh, glab, toolchains)
+#     extraPackages ? [ ];  # tools for the agents beyond the image's own
 #     name ? "harness-remote";
 #     tag ? "latest";
 #   }
 #
 # The image holds the harness bundle, the Telegram gateway, cage, a base
-# userland and the deployment's configuration and encrypted secrets: plaintext
-# never enters it. /etc/passwd lists the configured users with their homes on
+# userland, the agents' tools (agentTools below) and the deployment's
+# configuration and encrypted secrets: plaintext never enters it. Prebuilt
+# Linux binaries the agents install into their homes (mise, npm, uv) run
+# through nix-ld at /lib64/ld-linux-x86-64.so.2. /etc/passwd lists the configured users with their homes on
 # the volume (/data/home/<name>); the gateway runs as root and starts every
 # user's pi under their uid.
 self:
@@ -28,6 +30,12 @@ let
   bundle = self.packages.${system}.default;
   telegram = self.packages.${system}.harness-telegram;
   inherit (bundle.passthru) cage;
+
+  # What the agents find installed (skills/server/SKILL.md lists it) and the
+  # libraries nix-ld offers prebuilt binaries.
+  remoteTools = import ./remote-tools.nix pkgs;
+  agentTools = remoteTools.tools;
+  inherit (remoteTools) nixLdLibraries;
 
   # remote.yaml → the gateway's config.json (with the image's paths), passwd,
   # group, and the env files the image carries. Built, not evaluated: no IFD.
@@ -92,6 +100,7 @@ pkgs.dockerTools.streamLayeredImage {
       gzip
       which
       procps
+      util-linux # runuser: operator commands as a user (move-secrets.sh)
       less
       git
       openssh
@@ -100,11 +109,13 @@ pkgs.dockerTools.streamLayeredImage {
       cacert
       tzdata
     ])
+    ++ agentTools
     ++ extraPackages;
   extraCommands = ''
-    mkdir -p tmp root data run/harness usr/bin
+    mkdir -p tmp root data run/harness usr/bin lib64
     chmod 1777 tmp
     ln -sf ${pkgs.coreutils}/bin/env usr/bin/env
+    ln -sf ${pkgs.nix-ld}/libexec/nix-ld lib64/ld-linux-x86-64.so.2
   '';
   config = {
     Cmd = [
@@ -116,6 +127,12 @@ pkgs.dockerTools.streamLayeredImage {
       "SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       "LANG=C.UTF-8"
       "TZDIR=${pkgs.tzdata}/share/zoneinfo"
+      "NIX_LD=${pkgs.stdenv.cc.bintools.dynamicLinker}"
+      "NIX_LD_LIBRARY_PATH=${pkgs.lib.makeLibraryPath nixLdLibraries}"
+      # mise installs prebuilt runtimes, never builds them from source
+      "MISE_NODE_COMPILE=0"
+      "MISE_PYTHON_COMPILE=0"
+      "HARNESS_REVISION=${self.shortRev or self.dirtyShortRev or "unknown"}"
     ];
     ExposedPorts."8080/tcp" = { };
   };

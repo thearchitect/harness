@@ -14,6 +14,7 @@
   libxcb,
   writeText,
   writeShellScriptBin,
+  runCommand,
   herdr,
   gopls,
   rust-analyzer,
@@ -48,6 +49,7 @@ let
         ../gate.ts
         ../lsp
         ../tool_project_tree.ts
+        ../tool_send_file.ts
         ../workarounds.ts
         ../prompt.ts
         ../prompt.yaml
@@ -149,6 +151,13 @@ let
   serverPiPackages = lib.remove "pi-ask-user" piPackages;
   packageFlags = packages: lib.concatMapStringsSep " " (p: "-e ${nodeModules}/${p}") packages;
 
+  # The cage skill is cage's own (`cage skill`): it always matches the bundled cage.
+  cageSkill = runCommand "cage-skill" { } ''
+    mkdir -p $out/cage
+    ${cage}/bin/cage skill > $out/cage/SKILL.md
+    grep -q '^name: cage$' $out/cage/SKILL.md
+  '';
+
   # Read by deps.ts: absolute paths and versions of everything it registers or reports.
   manifest = writeText "harness-manifest.json" (
     builtins.toJSON {
@@ -182,6 +191,10 @@ let
         chrome-devtools-mcp = "${nodeModules}/.bin/chrome-devtools-mcp";
         herdr = lib.getExe herdr;
         cage = "${cage}/bin/cage"; # cage sets no meta.mainProgram
+      };
+      # Skills generated from bundled tools (index.ts registers them).
+      skills = {
+        cage = "${cageSkill}/cage/SKILL.md";
       };
     }
   );

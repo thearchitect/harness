@@ -7,7 +7,7 @@
 
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -30,7 +30,11 @@ import { appLink, parseStartParam } from "../telegram/links.ts";
 import { Outbox } from "../telegram/outbox.ts";
 import { bannerLine, fence, PAGE_LIMIT, renderBlock, splitText, stripAnsi, toolSummary } from "../telegram/render.ts";
 import type { Config } from "../config.ts";
-import { FakeClock, FakeHelper, FakePi, FakeTg, ok, settle } from "./fakes.ts";
+import { Alerts, ALERTS_PER_MINUTE, DEDUPE_MS, type Event, Journal } from "../telemetry.ts";
+import { FakeClock, FakeHelper, FakePi, FakeTelemetry, FakeTg, ok, settle } from "./fakes.ts";
+
+/** The telemetry part of AgentDeps, unobserved. */
+const quiet = { t: new FakeTelemetry(), context: () => ({}), resources: () => ({}) };
 
 const VALID = `
 telegram: { tokenVariable: T, webhookSecretVariable: W, publicUrl: "https://x.fly.dev/telegram", listenPort: 8080 }
@@ -125,8 +129,9 @@ describe("render", () => {
 
 describe("links and history", () => {
   test("Mini App links carry the workspace (negative for groups) and the section", () => {
-    assert.equal(appLink("bot", -1001234, "model"), "https://t.me/bot?startapp=w-1001234_model&mode=compact");
-    assert.deepEqual(parseStartParam("w-1001234_model"), { chatId: -1001234, section: "model" });
+    assert.equal(appLink("bot", -1001234, "models"), "https://t.me/bot?startapp=w-1001234_models&mode=compact");
+    assert.deepEqual(parseStartParam("w-1001234_models"), { chatId: -1001234, section: "models" });
+    assert.deepEqual(parseStartParam("w5_files"), { chatId: 5, section: "files" });
     assert.deepEqual(parseStartParam("w42"), { chatId: 42, section: undefined });
     assert.equal(parseStartParam("x42"), undefined);
   });
@@ -261,7 +266,7 @@ describe("idle shutdown", () => {
 });
 
 function outbox(tg: FakeTg, gone: () => void = () => undefined): Outbox {
-  return new Outbox(tg.api, 7, () => undefined, gone);
+  return new Outbox(tg.api, 7, new FakeTelemetry(), gone);
 }
 
 describe("outbox", () => {
@@ -434,9 +439,9 @@ describe("dialogs", () => {
   test("a move closes the dialog where it was and sends it again with the header and extra buttons", async () => {
     const tg = new FakeTg();
     const clock = new FakeClock();
-    const dialogs = new Dialogs({ clock, respond: () => undefined }, "s1", { outbox: new Outbox(tg.api, 7, () => undefined, () => undefined) });
+    const dialogs = new Dialogs({ clock, respond: () => undefined }, "s1", { outbox: new Outbox(tg.api, 7, new FakeTelemetry(), () => undefined) });
     await dialogs.handle({ type: "extension_ui_request", id: "a", method: "select", title: "Pick", options: ["x"] });
-    await dialogs.moveTo({ outbox: new Outbox(tg.api, 11, () => undefined, () => undefined), header: "~/p · s", extra: [[{ text: "Attach here", callback_data: "t:s1" }]] }, "moved to background");
+    await dialogs.moveTo({ outbox: new Outbox(tg.api, 11, new FakeTelemetry(), () => undefined), header: "~/p · s", extra: [[{ text: "Attach here", callback_data: "t:s1" }]] }, "moved to background");
     assert.deepEqual(tg.of("editMessageText").at(-1)?.slice(0, 3), [7, 100, "Pick\n\nmoved to background"]);
     const resent = tg.of("sendMessage").at(-1);
     assert.equal(resent?.[0], 11);
@@ -446,7 +451,7 @@ describe("dialogs", () => {
 });
 
 describe("account", () => {
-  const user = { name: "artem", telegramId: 1, uid: 1001, gid: 1001, git: { name: "A", email: "a@x" }, publicKeys: [] };
+  const user = { name: "artem", telegramId: 1, uid: 1001, gid: 1001, git: { name: "A", email: "a@x" }, publicKeys: [], admin: false };
 
   function setup(): { account: Account; clock: FakeClock; tg: FakeTg; box: Outbox; helper: FakeHelper } {
     const clock = new FakeClock();
@@ -456,7 +461,7 @@ describe("account", () => {
       { id: "openai", name: "OpenAI", loggedIn: false },
       { id: "openai-codex", name: "OpenAI Codex (legacy)", loggedIn: false },
     ];
-    const account = new Account({ config: {} as Config, clock, helper, log: () => undefined, restartUser: () => undefined }, user);
+    const account = new Account({ config: {} as Config, clock, helper, t: new FakeTelemetry(), restartUser: () => undefined }, user);
     return { account, clock, tg, box: outbox(tg), helper };
   }
 
@@ -537,7 +542,7 @@ function agentWorld(respond?: FakePi["respond"]) {
 describe("agent deadlines and watchdog", () => {
   test("pi that does not answer get_state within 60 s is killed", async () => {
     const w = agentWorld((command) => (command.type === "get_state" ? new Promise(() => undefined) : ok(command.type)));
-    const agent = new Agent({ clock: w.clock, pool: w.pool, spawn: w.spawn, log: () => undefined, exited: () => undefined }, 1, "s", "/h", "", () => ({ command: "pi", args: [], cwd: "/h", env: {} }));
+    const agent = new Agent({ clock: w.clock, pool: w.pool, spawn: w.spawn, ...quiet, exited: () => undefined }, 1, "s", "/h", "", () => ({ command: "pi", args: [], cwd: "/h", env: {} }));
     agent.listener = w.listener;
     const started = agent.start();
     await w.clock.advance(START_TIMEOUT_MS - 1);
@@ -550,7 +555,7 @@ describe("agent deadlines and watchdog", () => {
 
   test("an RPC request without an answer within 60 s kills pi", async () => {
     const w = agentWorld((command) => (command.type === "set_model" ? new Promise(() => undefined) : command.type === "get_state" ? ok("get_state", {}) : ok(command.type)));
-    const agent = new Agent({ clock: w.clock, pool: w.pool, spawn: w.spawn, log: () => undefined, exited: () => undefined }, 1, "s", "/h", "", () => ({ command: "pi", args: [], cwd: "/h", env: {} }));
+    const agent = new Agent({ clock: w.clock, pool: w.pool, spawn: w.spawn, ...quiet, exited: () => undefined }, 1, "s", "/h", "", () => ({ command: "pi", args: [], cwd: "/h", env: {} }));
     agent.listener = w.listener;
     const set = agent.setModel("p", "m");
     await w.clock.advance(REQUEST_TIMEOUT_MS);
@@ -560,7 +565,7 @@ describe("agent deadlines and watchdog", () => {
 
   test("model silence: abort at 2:00 not 1:59, SIGKILL a minute later; a tool runs up to 60 min; an open dialog suspends it", async () => {
     const w = agentWorld();
-    const agent = new Agent({ clock: w.clock, pool: w.pool, spawn: w.spawn, log: () => undefined, exited: () => undefined }, 1, "s", "/h", "", () => ({ command: "pi", args: [], cwd: "/h", env: {} }));
+    const agent = new Agent({ clock: w.clock, pool: w.pool, spawn: w.spawn, ...quiet, exited: () => undefined }, 1, "s", "/h", "", () => ({ command: "pi", args: [], cwd: "/h", env: {} }));
     agent.listener = w.listener;
     await agent.prompt({ text: "go" });
     await settle();
@@ -595,7 +600,7 @@ describe("agents", () => {
     store.addWorkspace({ chatId: 1, kind: "private", owner: 1, title: "Direct" });
     store.addWorkspace({ chatId: -5, kind: "group", owner: 1, title: "work" });
     const gone: string[] = [];
-    const agents = new Agents({ clock: w.clock, pool: w.pool, spawn: w.spawn, log: () => undefined, store, spec: () => ({ command: "pi", args: [], cwd: "/h", env: {} }), gone: (a) => gone.push(a.sessionId) });
+    const agents = new Agents({ clock: w.clock, pool: w.pool, spawn: w.spawn, ...quiet, store, spec: () => ({ command: "pi", args: [], cwd: "/h", env: {} }), gone: (a) => gone.push(a.sessionId) });
     return { ...w, store, agents, gone, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
   }
 
@@ -707,5 +712,96 @@ describe("mini app", () => {
     assert.equal(serve(second, "/app/", { "if-none-match": `"${first.build}"` }).status, 200);
     assert.equal(serve(second, url).status, 404);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+/* Telemetry ------------------------------------------------------------------ */
+
+describe("journal", () => {
+  const DAY = 24 * 60 * 60_000;
+  const at = (iso: string): FakeClock => {
+    const clock = new FakeClock();
+    void clock.advance(Date.parse(iso) - clock.now());
+    return clock;
+  };
+
+  test("one JSON line per event in the file of its UTC day; files past the retention go when the day changes", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "journal-test-"));
+    writeFileSync(join(dir, "2026-10-01.jsonl"), "");
+    writeFileSync(join(dir, "2026-10-20.jsonl"), "");
+    const clock = at("2026-11-07T23:59:59.000Z");
+    await settle();
+    const lines: string[] = [];
+    const journal = new Journal({ dir, clock, retentionDays: 30, stderr: (line) => lines.push(line) });
+    journal.info("a", { user: "artem" });
+    assert.deepEqual(readdirSync(dir).sort(), ["2026-10-20.jsonl", "2026-11-07.jsonl"], "older than 30 days: removed");
+    await clock.advance(1_000);
+    journal.warn("b");
+    assert.deepEqual(readdirSync(dir).sort(), ["2026-10-20.jsonl", "2026-11-07.jsonl", "2026-11-08.jsonl"]);
+    assert.deepEqual(JSON.parse(readFileSync(join(dir, "2026-11-07.jsonl"), "utf8")), { ts: "2026-11-07T23:59:59.000Z", level: "info", kind: "a", user: "artem" });
+    assert.equal(lines[0], '2026-11-07T23:59:59.000Z info a {"user":"artem"}');
+    assert.deepEqual(journal.read(Date.parse("2026-11-07T00:00:00Z"), Date.parse("2026-11-09T00:00:00Z")).map((e) => e.kind), ["a", "b"]);
+    assert.deepEqual(journal.read(Date.parse("2026-11-08T00:00:00Z"), Date.parse("2026-11-09T00:00:00Z")).map((e) => e.kind), ["b"]);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("known secrets are masked everywhere, also inside nested text", () => {
+    const dir = mkdtempSync(join(tmpdir(), "journal-test-"));
+    const lines: string[] = [];
+    const journal = new Journal({ dir, clock: new FakeClock(), retentionDays: 30, stderr: (line) => lines.push(line) });
+    journal.addSecret("123456:bot-token");
+    journal.error("pi.stderr", { line: 'fetch https://api.telegram.org/bot123456:bot-token/getMe "123456:bot-token"' });
+    const file = readdirSync(dir)[0] ?? "";
+    assert.ok(!readFileSync(join(dir, file), "utf8").includes("bot-token"));
+    assert.ok(!lines.join("\n").includes("bot-token"));
+    assert.match(readFileSync(join(dir, file), "utf8"), /bot\*\*\*\/getMe/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("the previous run: clean when it journaled its stop, otherwise with its last error", () => {
+    const dir = mkdtempSync(join(tmpdir(), "journal-test-"));
+    const journal = new Journal({ dir, clock: new FakeClock(), retentionDays: 30, stderr: () => undefined });
+    assert.equal(journal.previousRun(), undefined);
+    journal.info("gateway.start");
+    journal.info("gateway.stop");
+    assert.deepEqual(journal.previousRun(), { clean: true });
+    journal.info("gateway.start");
+    journal.error("agent.exit", { message: "pi exited unexpectedly" });
+    const previous = journal.previousRun();
+    assert.equal(previous?.clean, false);
+    assert.equal(previous?.lastError?.kind, "agent.exit");
+    rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("alerts", () => {
+  const event = (kind: string, message: string, user?: string): Event => ({ ts: "t", level: "error", kind, message, ...(user !== undefined ? { user, dir: "~/proj" } : {}) });
+
+  test("queued until the admins can be reached; the same alert again only after 10 minutes (not 9:59)", async () => {
+    const clock = new FakeClock();
+    const alerts = new Alerts(clock);
+    const sent: string[] = [];
+    alerts.alert(event("agent.exit", "pi exited unexpectedly", "oksana"));
+    alerts.ready(async (text) => void sent.push(text));
+    assert.deepEqual(sent, ["error · oksana · ~/proj · agent.exit: pi exited unexpectedly"]);
+    await clock.advance(DEDUPE_MS - 1);
+    alerts.alert(event("agent.exit", "pi exited unexpectedly", "oksana"));
+    assert.equal(sent.length, 1);
+    await clock.advance(1);
+    alerts.alert(event("agent.exit", "pi exited unexpectedly", "oksana"));
+    assert.equal(sent.length, 2);
+  });
+
+  test("at most 10 a minute; the rest summed up when the minute ends", async () => {
+    const clock = new FakeClock();
+    const alerts = new Alerts(clock);
+    const sent: string[] = [];
+    alerts.ready(async (text) => void sent.push(text));
+    for (let i = 0; i < ALERTS_PER_MINUTE + 3; i++) alerts.alert(event("tg.call", `failure ${i}`));
+    assert.equal(sent.length, ALERTS_PER_MINUTE);
+    await clock.advance(60_000);
+    assert.equal(sent.at(-1), "+3 more errors, see /logs");
+    alerts.alert(event("tg.call", "a new one"));
+    assert.equal(sent.at(-1), "error · tg.call: a new one");
   });
 });

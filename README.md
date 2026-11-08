@@ -36,11 +36,12 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `index.ts` — the extension: PLAN/BUILD modes, mutation gates (one review per change set, shared by `write`/`edit` and the code tools), `/-`, sequential `write`/`edit`/`bash` (a batch containing one runs in order, so dependent calls see its effect), system prompt per run, UI
 - `lsp/` — code intelligence: a facade over the bundle's language servers (see below)
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
+- `tool_send_file.ts` — `send_file` (server profile only): a file to the user in Telegram, delivered by `remote/`
 - `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `guidelines` (bullets in `<rules>`, in order)
 - `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (`core/`: agents, workspaces, pi processes; `telegram/`: chats; `app/`: the Mini App; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
 - `gate.ts` — the write/edit gate's pure parts: BUILD's review by profile (the server profile builds without asking) and the gate as plain select/input dialogs outside the TUI
-- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `cage`
+- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `server` (server profile only); the `cage` skill is cage's own `cage skill`, generated at build time (manifest `skills`)
 - `install/SKILL.md` — the install/upgrade skill
 - `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the `/deps` report, the double-load guard (registered by `index.ts`)
 - `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition (called by `index.ts` at `// WORKAROUND Wn`)
@@ -152,18 +153,42 @@ deployment template `nix flake init -t github:thearchitect/harness#remote`
   never asks; planning still never writes); writing during a run steers it;
   `/stop` or *Stop* aborts. Every block of a run (thinking, a tool call, the
   answer) is a message of its own, edited while it grows; the harness
-  banner closes the run. Commands: `/new [path]`, `/stop`, `/detach`,
-  `/close`, `/sessions`, `/model`, `/thinking`, `/login`, `/secrets`,
-  `/key`. Attaching an agent to a workspace shows its last five turns. Only
-  the final message of a run, dialogs and errors make a sound.
-- **Mini App.** Status lines link to it (`startapp=w<chat>`): the agent of
-  the workspace, all agents (here, move, close), a new agent, the session
-  history (resume), the workspaces. Static files without a build step
+  banner closes the run and the final answer is pinned. Commands:
+  `/new [path]`, `/status` (also `/start`), `/stop`, `/diff` (the changes of
+  the agent's directory as a file, never to the model), `/detach`, `/close`,
+  `/sessions`, `/model`, `/thinking`, `/login`, `/secrets`, `/key`; `/logs`
+  for admins. Attaching an agent to a workspace shows its last five turns.
+  Only the final message of a run, files from the agent, dialogs and errors
+  make a sound.
+- **Files.** Files of a message and of the message it replies to are saved
+  to `~/tmp/<chat>-<message>/` and listed at the top of the prompt; photos
+  also go to the model as images; an album is one prompt. Voice messages
+  are transcribed with OpenAI `gpt-4o-transcribe` under the user's OpenAI
+  login, the transcript growing in one reply; the prompt says the text is
+  the transcript of the attached file. The `send_file` tool (server profile
+  only, `tool_send_file.ts`) sends a file back, pinned.
+- **Tools.** The `server` skill (server profile only) tells the model what
+  the image has (gh, glab, go, rust, zig, python with pydicom, ffmpeg,
+  ImageMagick, exiftool, dcmtk, …) and how to install more into the home
+  (mise, uv, npm, cargo, go; prebuilt binaries run through nix-ld) and to
+  wire credentials through cage. The `cage` skill is generated from `cage
+  skill` at build time.
+- **Mini App.** Status lines link to it (`startapp=w<chat>[_files|_models]`):
+  the agent of the workspace, all agents (here, move, close), the
+  workspaces, the session history (resume); the *Files* screen (browse ~,
+  new folder, download, start an agent) and the *Models* screen (pi's
+  `enabledModels` as favorites, `modelThinkingLevels` as their effort, the
+  default model). Static files without a build step
   (Alpine.js), content-hashed and immutable; `index.html` revalidates by
   ETag, so an open after a deploy gets the new build. Requests are signed
   with Telegram's initData.
 - **Machine.** One Fly machine with a volume; the gateway answers the
   webhook and exits when idle, so the machine sleeps until the next message.
+- **Telemetry.** Every event is a JSON line in a daily journal on the volume
+  (`/data/gateway/log`, 30 days by default; no message texts or secret
+  values) and on stderr; errors go to the admins (`admin: true`) in
+  Telegram, deduplicated and rate-limited; a run that died is reported at
+  the next start; `/logs` and the template's `logs.sh` read the journal.
 - **Secrets.** The image carries only cage ciphertext; the machine's identity
   is its single Fly secret. The bot token and webhook secret stay inside the
   gateway; each pi process gets only its user's variables (the deployment's

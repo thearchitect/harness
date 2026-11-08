@@ -36,7 +36,8 @@ envs:
   machine:
     files: [telegram.env]
     recipients: [fly-machine]
-  # The pi processes of alice (her API keys).
+  # The pi processes of alice: her API keys (and alice:user.env, the secrets
+  # she set in Telegram, once move-secrets.sh moved some here).
   user-alice:
     files: [alice:llm.env]
     recipients: [alice, server-alice]

@@ -32,9 +32,14 @@ export function providersPanel(providers: { id: string; name: string; loggedIn: 
   };
 }
 
-export function secretsPanel(names: string[]): { html: string; keyboard: Keyboard } {
+/** The user's own secrets (tap to delete) and, read-only, those the deployment sets. */
+export function secretsPanel(names: string[], deployment: string[]): { html: string; keyboard: Keyboard } {
+  const lines = [
+    names.length > 0 ? "Secrets (tap to delete):" : "No secrets.",
+    ...(deployment.length > 0 ? [`Set by the deployment: ${deployment.map((n) => `<code>${escapeHtml(n)}</code>`).join(", ")}`] : []),
+  ];
   return {
-    html: names.length > 0 ? "Secrets (tap to delete):" : "No secrets.",
+    html: lines.join("\n"),
     keyboard: [
       ...names.map((name) => [{ text: name, callback_data: `a:del:${name}` }]),
       [{ text: "Add", callback_data: "a:add" }, { text: "Cancel", callback_data: "a:dismiss" }],

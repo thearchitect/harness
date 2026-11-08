@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <title>harness</title>
   <script src="https://telegram.org/js/telegram-web-app.js?64"></script>
   <link rel="stylesheet" href="{{app.css}}">
@@ -14,19 +14,22 @@
     <p class="problem" x-text="problem"></p>
   </template>
 
-  <template x-if="state">
+  <template x-if="state && screen === 'main'">
     <main>
+      <header class="bar">
+        <h2 class="grow" x-text="state.workspace.title"></h2>
+        <nav>
+          <a href="#" @click.prevent="open('files')">Files</a>
+          <a href="#" @click.prevent="open('models')">Models</a>
+        </nav>
+      </header>
+
       <section id="here">
-        <h2 x-text="state.workspace.title"></h2>
         <template x-if="here">
           <div class="card">
-            <div class="row">
-              <div class="grow">
-                <div class="title" x-text="here.dir + ' · ' + here.title"></div>
-                <div class="hint" x-text="statusText(here)"></div>
-              </div>
-            </div>
-            <div class="fields" id="model">
+            <div class="title" x-text="here.dir + ' · ' + here.title"></div>
+            <div class="hint" x-text="statusText(here)"></div>
+            <div class="fields">
               <label>Model
                 <select :disabled="stale || busy" @focus="loadModels(here.id)" @change="act({ type: 'model', agentId: here.id, provider: $event.target.value.split('/')[0], id: $event.target.value.split('/').slice(1).join('/') })">
                   <option x-text="here.model ?? 'not started'" :value="here.model ?? ''" selected></option>
@@ -35,7 +38,7 @@
                   </template>
                 </select>
               </label>
-              <label id="thinking">Thinking
+              <label>Thinking
                 <select :disabled="stale || busy" @focus="loadLevels(here.id)" @change="act({ type: 'thinking', agentId: here.id, level: $event.target.value })">
                   <option x-text="here.thinking ?? '—'" :value="here.thinking ?? ''" selected></option>
                   <template x-for="l in (levels[here.id] ?? []).filter((l) => l !== here.thinking)" :key="l">
@@ -52,11 +55,14 @@
           </div>
         </template>
         <template x-if="!here">
-          <p class="hint">No agent here.</p>
+          <div class="card row">
+            <span class="grow hint">No agent here.</span>
+            <button @click="open('files')">New agent…</button>
+          </div>
         </template>
       </section>
 
-      <section id="sessions" x-show="others.length > 0">
+      <section id="agents" x-show="others.length > 0">
         <h3>Agents</h3>
         <template x-for="a in others" :key="a.id">
           <div class="card">
@@ -76,19 +82,17 @@
         </template>
       </section>
 
-      <section id="new">
-        <h3>New agent</h3>
-        <div class="card row">
-          <select class="grow" x-model="dir" :disabled="stale || busy">
-            <template x-for="d in state.dirs" :key="d">
-              <option :value="d" x-text="d"></option>
-            </template>
-          </select>
-          <button :disabled="stale || busy || !dir" @click="act({ type: 'new', dir })">Start</button>
-        </div>
+      <section id="workspaces">
+        <h3>Workspaces</h3>
+        <template x-for="w in state.workspaces" :key="w.id">
+          <div class="row line">
+            <span class="grow" x-text="w.title"></span>
+            <span class="hint" x-text="agentDir(w.agentId)"></span>
+          </div>
+        </template>
       </section>
 
-      <section id="history">
+      <section id="sessions">
         <h3>History</h3>
         <input type="search" placeholder="Filter by directory or title" x-model="filter">
         <template x-if="sessions === undefined">
@@ -101,16 +105,95 @@
           </button>
         </template>
       </section>
+    </main>
+  </template>
 
-      <section id="workspaces">
-        <h3>Workspaces</h3>
-        <template x-for="w in state.workspaces" :key="w.id">
+  <template x-if="state && screen === 'files'">
+    <main>
+      <header class="bar">
+        <a href="#" @click.prevent="back()">‹ Back</a>
+        <h2 class="grow">Files</h2>
+        <label class="toggle"><input type="checkbox" x-model="showHidden"> hidden</label>
+      </header>
+      <nav class="crumbs">
+        <template x-for="(c, i) in crumbs" :key="c.path">
+          <span><a href="#" @click.prevent="browse(c.path)" x-text="c.name"></a><span x-show="i < crumbs.length - 1"> / </span></span>
+        </template>
+      </nav>
+      <div class="actions">
+        <button :disabled="stale || busy" @click="act({ type: 'new', dir: dir.path }).then((ok) => ok && back())">Start agent here</button>
+        <button :disabled="busy" @click="download(dir.path)">Download</button>
+      </div>
+      <div class="card row">
+        <input class="grow" type="text" placeholder="New folder" x-model="folderName" @keydown.enter="newFolder()">
+        <button :disabled="busy || folderName.trim() === ''" @click="newFolder()">Create</button>
+      </div>
+      <template x-if="dir.loading">
+        <p class="hint">Loading…</p>
+      </template>
+      <div class="list">
+        <template x-for="e in dir.entries.filter((e) => showHidden || !e.hidden)" :key="e.name">
           <div class="row line">
-            <span class="grow" x-text="w.title"></span>
-            <span class="hint" x-text="agentDir(w.agentId)"></span>
+            <template x-if="e.kind === 'dir'">
+              <a href="#" class="grow" @click.prevent="browse(dir.path + '/' + e.name)" x-text="e.name + '/'"></a>
+            </template>
+            <template x-if="e.kind !== 'dir'">
+              <span class="grow" x-text="e.name"></span>
+            </template>
+            <span class="hint" x-show="e.kind === 'file'" x-text="size(e.size)"></span>
+            <a href="#" class="icon" title="Download" @click.prevent="download(dir.path + '/' + e.name)">↓</a>
           </div>
         </template>
-      </section>
+      </div>
+      <p class="hint" x-show="dir.truncated">Only the first 500 entries are shown.</p>
+    </main>
+  </template>
+
+  <template x-if="state && screen === 'models'">
+    <main>
+      <header class="bar">
+        <a href="#" @click.prevent="back()">‹ Back</a>
+        <h2 class="grow">Models</h2>
+      </header>
+      <template x-if="settings === undefined">
+        <p class="hint">Loading…</p>
+      </template>
+      <template x-if="settings">
+        <div>
+          <p class="hint">Favorites are what agents switch between; each keeps its thinking level. New agents start on the default.</p>
+          <template x-for="f in settings.favorites" :key="f.provider + '/' + f.id">
+            <div class="card">
+              <div class="row">
+                <span class="grow title" x-text="f.provider + '/' + f.id"></span>
+                <label class="toggle"><input type="radio" name="default" :checked="isDefault(f)" @change="setDefault(f)"> default</label>
+              </div>
+              <div class="row">
+                <label class="grow">Thinking
+                  <select @change="f.effort = $event.target.value || undefined; saveSettings()">
+                    <option value="" :selected="f.effort === undefined">pi's default</option>
+                    <template x-for="l in levelsOf(f)" :key="l">
+                      <option :value="l" x-text="l" :selected="f.effort === l"></option>
+                    </template>
+                  </select>
+                </label>
+                <button class="destructive" @click="removeFavorite(f)">Remove</button>
+              </div>
+            </div>
+          </template>
+          <template x-if="settings.patterns.length > 0">
+            <p class="hint" x-text="'Also enabled by pattern: ' + settings.patterns.join(', ')"></p>
+          </template>
+          <div class="card row">
+            <select class="grow" x-model="adding">
+              <option value="">Add a model…</option>
+              <template x-for="m in settings.available.filter((m) => !settings.favorites.some((f) => f.provider === m.provider && f.id === m.id))" :key="m.provider + '/' + m.id">
+                <option :value="m.provider + '/' + m.id" x-text="m.provider + '/' + m.id"></option>
+              </template>
+            </select>
+            <button :disabled="!adding || busy" @click="addFavorite()">Add</button>
+          </div>
+        </div>
+      </template>
     </main>
   </template>
 </body>

@@ -15,7 +15,15 @@ export type Tg = Pick<
   | "answerCallbackQuery"
   | "leaveChat"
   | "getFile"
+  | "sendDocument"
+  | "pinChatMessage"
+  | "setMyCommands"
 >;
+
+/** The bot may not pin messages in this chat (a group without the right). */
+export function isPinDenied(error: unknown): boolean {
+  return error instanceof GrammyError && /not enough rights|CHAT_ADMIN_REQUIRED|rights to pin/i.test(error.description);
+}
 
 /** The bot can no longer write to the chat: it left or was removed, or the user blocked it. */
 export function isChatGone(error: unknown): boolean {

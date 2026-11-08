@@ -7,10 +7,15 @@
  *                       login <provider> | logout <provider>
  *                       sessions
  *                       history <cwd> <sessionId> <turns>
+ *                       models                      (run under cage: API keys)
+ *                       models-save <json>          {favorites:[{provider,id,effort}],default}
+ *                       transcribe <file>           OpenAI speech to text, streamed
  *
  * helper → gateway: {"type":"providers","list":[{id,name,loggedIn}]}
  *                   {"type":"sessions","list":[{id,cwd,title,modified}]}
  *                   {"type":"history","title":"…","turns":[{prompt,answer}]}
+ *                   {"type":"models","models":ModelSettings}
+ *                   {"type":"delta","text":"…"} … {"type":"transcript","text":"…"}
  *                   {"type":"prompt","id":"1","prompt":AuthPrompt}
  *                   {"type":"notify","event":AuthEvent}
  *                   {"type":"done","ok":true} | {"type":"done","ok":false,"error":"…"}
@@ -19,8 +24,10 @@
  * The gateway ends a run (a cancelled login, a deadline) by killing the helper.
  */
 
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { type Api, getSupportedThinkingLevels, type Model } from "@earendil-works/pi-ai";
 import { ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
 type Incoming = { type: "answer"; id: string; value: string };
@@ -95,6 +102,104 @@ function history(cwd: string, sessionId: string, count: number): { title: string
   }
 }
 
+/** The model whose thinking levels a favorite may use: its supported levels, "off" first. */
+function levelsOf(model: Model<Api>): string[] {
+  return getSupportedThinkingLevels(model);
+}
+
+type Favorite = { provider: string; id: string; effort?: string };
+
+async function models(agentDir: string): Promise<object> {
+  const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), refreshOnCreate: false });
+  const settings = SettingsManager.create(homedir(), agentDir);
+  const available = (await runtime.getAvailable()).map((m) => ({ provider: m.provider, id: m.id, name: m.name, levels: levelsOf(m) }));
+  const enabled = settings.getEnabledModels() ?? [];
+  const exact = enabled.filter((entry) => /^[^*?[\]]+\/[^*?[\]]+$/.test(entry));
+  const levels = settings.getAllModelThinkingLevels();
+  return {
+    available,
+    favorites: exact.map((entry): Favorite => {
+      const slash = entry.indexOf("/");
+      const provider = entry.slice(0, slash);
+      const id = entry.slice(slash + 1);
+      return { provider, id, ...(levels[entry] !== undefined ? { effort: levels[entry] } : {}) };
+    }),
+    patterns: enabled.filter((entry) => !exact.includes(entry)),
+    default: settings.getDefaultProvider() !== undefined && settings.getDefaultModel() !== undefined ? { provider: settings.getDefaultProvider(), id: settings.getDefaultModel() } : null,
+  };
+}
+
+async function saveModels(agentDir: string, json: string): Promise<void> {
+  const wanted = JSON.parse(json) as { favorites: Favorite[]; default: { provider: string; id: string } | null };
+  const settings = SettingsManager.create(homedir(), agentDir);
+  const before = settings.getEnabledModels() ?? [];
+  const patterns = before.filter((entry) => !/^[^*?[\]]+\/[^*?[\]]+$/.test(entry));
+  const keys = wanted.favorites.map((f) => `${f.provider}/${f.id}`);
+  for (const entry of before) {
+    const slash = entry.indexOf("/");
+    if (slash > 0 && !keys.includes(entry)) settings.removeModelThinkingLevel(entry.slice(0, slash), entry.slice(slash + 1));
+  }
+  for (const favorite of wanted.favorites) {
+    if (favorite.effort !== undefined) {
+      settings.setModelThinkingLevel(favorite.provider, favorite.id, favorite.effort as never);
+    } else {
+      settings.removeModelThinkingLevel(favorite.provider, favorite.id);
+    }
+  }
+  settings.setEnabledModels(keys.length > 0 || patterns.length > 0 ? [...keys, ...patterns] : undefined);
+  if (wanted.default !== null) settings.setDefaultModelAndProvider(wanted.default.provider, wanted.default.id);
+  await settings.flush();
+}
+
+/** OpenAI speech to text (gpt-4o-transcribe), streamed, with the user's OpenAI login. */
+async function transcribe(agentDir: string, file: string): Promise<void> {
+  const runtime = await ModelRuntime.create({ authPath: join(agentDir, "auth.json"), refreshOnCreate: false });
+  let token: string | undefined;
+  for (const provider of ["openai-codex", "openai"]) {
+    const auth = await runtime.getAuth(provider).catch(() => undefined);
+    if (auth?.auth.apiKey !== undefined) {
+      token = auth.auth.apiKey;
+      break;
+    }
+  }
+  if (token === undefined) throw new Error("no OpenAI login");
+  const form = new FormData();
+  form.set("model", process.env.HARNESS_TRANSCRIBE_MODEL ?? "gpt-4o-transcribe");
+  form.set("stream", "true");
+  form.set("file", new Blob([readFileSync(file)], { type: "audio/ogg" }), basename(file));
+  const response = await fetch(process.env.HARNESS_TRANSCRIBE_URL ?? "https://api.openai.com/v1/audio/transcriptions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+  if (!response.ok || response.body === null) {
+    throw new Error(`transcription failed: HTTP ${response.status} ${(await response.text()).slice(0, 300)}`);
+  }
+  let text = "";
+  let pending = "";
+  const decoder = new TextDecoder();
+  for await (const chunk of response.body) {
+    pending += decoder.decode(chunk as Uint8Array, { stream: true });
+    const lines = pending.split("\n");
+    pending = lines.pop() ?? "";
+    for (const line of lines) {
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (data === "" || data === "[DONE]") continue;
+      const event = JSON.parse(data) as { type?: string; delta?: string; text?: string };
+      if (event.type === "transcript.text.delta" && event.delta !== undefined) {
+        text += event.delta;
+        send({ type: "delta", text: event.delta });
+      } else if (event.type === "transcript.text.done" && event.text !== undefined) {
+        text = event.text;
+      } else {
+        // other events carry nothing to show
+      }
+    }
+  }
+  send({ type: "transcript", text: text.trim() });
+}
+
 async function main(): Promise<void> {
   const [mode, ...args] = process.argv.slice(2);
   const agentDir = join(homedir(), ".pi", "agent");
@@ -112,6 +217,21 @@ async function main(): Promise<void> {
       const [cwd, sessionId, turns] = args;
       if (cwd === undefined || sessionId === undefined || turns === undefined) throw new Error("usage: history <cwd> <sessionId> <turns>");
       send({ type: "history", ...history(cwd, sessionId, Number(turns)) });
+      return;
+    }
+    case "models":
+      send({ type: "models", models: await models(agentDir) });
+      return;
+    case "models-save": {
+      const [json] = args;
+      if (json === undefined) throw new Error("usage: models-save <json>");
+      await saveModels(agentDir, json);
+      return;
+    }
+    case "transcribe": {
+      const [file] = args;
+      if (file === undefined) throw new Error("usage: transcribe <file>");
+      await transcribe(agentDir, file);
       return;
     }
     case "providers":

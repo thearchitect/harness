@@ -20,9 +20,17 @@ go to harness.
   `[http_service]` for the webhook.
 - `bootstrap.sh` — one-time Fly setup (app, volume, machine secret, deploy
   token). `deploy.sh` — build and deploy the committed tree.
-- On the machine: `/data/home/<name>` (homes, 0700, one uid each),
-  `/data/gateway/state.json` (which place runs which agent),
-  `/etc/harness-remote/config.json` (`remote.yaml` + image paths).
+  `move-secrets.sh` — a user's Telegram secrets into this repository.
+  `logs.sh` — the gateway's journal.
+- On the machine: `/data/home/<name>` (homes, 0700, one uid each; tools the
+  agents install with mise/uv/npm/cargo/go live there),
+  `/data/gateway/state.json` (which chat runs which agent),
+  `/data/gateway/log/` (the journal), `/etc/harness-remote/config.json`
+  (`remote.yaml` + image paths).
+- In the image for the agents: gh, glab, go, rust, zig, gcc, python3 with
+  pydicom/numpy/pillow, uv, node, ffmpeg, ImageMagick, exiftool, dcmtk, zip,
+  mise; prebuilt binaries run through nix-ld. More: `extraPackages` in
+  `flake.nix` (the image must stay under Fly's 8 GB).
 
 ## Build
 
@@ -43,8 +51,8 @@ The gateway's code and tests live in harness: `nix/test.sh result`, or
 
 1. `nix build .#image` — configuration and secrets layout are valid.
 2. After a deploy:
-   - `flyctl logs -a <app>` shows `listening`, `webhook …` and `<user>: ready`
-     for every user, no `fatal`;
+   - `./logs.sh --since 1h` shows `gateway.start`, `gateway.webhook`,
+     `account.ready` for every user, `gateway.ready`, and no `error`;
    - `curl -s -o /dev/null -w '%{http_code}' -X POST https://<app>.fly.dev/telegram`
      answers 401 (no secret); `curl -sI https://<app>.fly.dev/app/` answers
      200 with `Cache-Control: no-cache` and an `ETag`; `/app/api/state`
@@ -52,8 +60,9 @@ The gateway's code and tests live in harness: `nix/test.sh result`, or
    - `flyctl ssh console -a <app>`: pi processes run under the users' uids,
      `/proc/<pid>/environ` of a pi process has no `TELEGRAM_*`, one user
      cannot list another's home.
-3. In Telegram: `/new <dir>`, a message, a `!` message, `/stop`; a status
-   line opens the Mini App.
+3. In Telegram: `/new <dir>`, a message, a `!` message, `/stop`, `/status`,
+   `/diff`, a voice message, a file; a status line opens the Mini App (Files,
+   Models). An admin gets errors in the private chat and `/logs`.
 
 ## Publish
 
@@ -79,6 +88,13 @@ into a temporary file that is removed right after use.
 - Change a value: `cage set -stdin <file> <NAME> < value-file`, then commit
   `.cage/store`.
 - Add a recipient (a key): edit `cage.yaml`, `cage encrypt`, commit.
+- A user's own secrets (Telegram `/secrets`, `~/.cage` on the server) into
+  this repository: `nix develop -c cage run @root - ./move-secrets.sh <name>
+  [KEY...]`. It imports them into `<name>:user.env` (adding the file to the
+  env `user-<name>`), commits and pushes; the deploy that follows starts with
+  the gateway removing those names from the user's store, so every variable
+  lives in one place (cage refuses a name from two files). Until that deploy
+  the user's own copies keep working.
 - The machine identity (`ops:fly-machine-identity`) is the only Fly secret;
   after rotating it, rerun `bootstrap.sh` and deploy.
 
@@ -93,6 +109,37 @@ into a temporary file that is removed right after use.
 3. Removing a user: drop them from `remote.yaml` and `cage.yaml`; their home
    stays on the volume until deleted by hand. On its next start the gateway
    drops their workspaces and leaves their groups.
+
+## Telemetry
+
+The gateway journals every event as one JSON line to
+`/data/gateway/log/YYYY-MM-DD.jsonl` (UTC days, `telemetry.retentionDays`
+of `remote.yaml`, 30 by default) and a short line to stderr (`flyctl logs`).
+No message texts, transcripts, file contents or secret values; the bot token
+and webhook secret are masked.
+
+- Reading: `nix develop -c cage run @root - ./logs.sh [--since 24h|7d]
+  [--level error] [--user NAME] [--kind PREFIX]`; an admin also gets
+  `/logs [hours]` as a file in Telegram.
+- Alerts: every `error` goes to the admins (`admin: true` in `remote.yaml`)
+  in their private chat with the bot, with sound; the same one again after 10
+  minutes at the earliest, at most 10 a minute (the rest as `+N more
+  errors`). A run that ended without `gateway.stop` (crash, OOM, kill) is
+  reported at the next start as `gateway.previous_failed`.
+- Kinds: `gateway.*` (start with image and revision, webhook, ready,
+  resources every minute, stopping/stop with the reason, crash, fatal,
+  previous_failed), `update` (type, user, chat, command), `update.*`
+  (stranger, failed), `agent.*` (new, attach, detach, close, start with ms,
+  exit with stderr and memory when unexpected, killed, no_room), `run.*`
+  (start, end with ms/cost/model/aborted, silent), `pi.*` (stderr,
+  extension_error), `rpc.*`, `tg.*` (call failures, chat_gone, pin_denied),
+  `file.*` (send, receive), `voice.transcribe`, `files.*` (diff, mkdir,
+  download), `models.save`, `account.*` (ready, prepare, login,
+  secret_set, secrets_moved), `workspace.*`, `webhook.rejected`,
+  `app.*` (action, rejected, error from the page, failed).
+- Recipes: why pi died — `--kind agent.exit --level error` (stderr tail and
+  `memFreeMb`); what led to a hang — `--user NAME --since 2h`; cost of a
+  week — `--since 7d --kind run.end | jq -s 'map(.costUsd // 0) | add'`.
 
 ## TODO
 

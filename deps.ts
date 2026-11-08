@@ -54,6 +54,8 @@ export type Manifest = {
   bin: Record<BinId, string>;
   /** Package directories: pi, the bundled pi packages, and typescript (the API lsp/ loads). */
   packages: Record<string, string>;
+  /** SKILL.md files generated from bundled tools (cage: `cage skill`). */
+  skills: Record<string, string>;
 };
 
 /** The manifest the launcher points at, or the reason it is unusable. */

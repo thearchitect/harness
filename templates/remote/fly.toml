@@ -11,7 +11,7 @@ kill_timeout = 30
 [[mounts]]
   source = "data"
   destination = "/data"
-  initial_size = "10gb"
+  initial_size = "20gb"
 
 # The machine's cage identity (bootstrap.sh), written as a file at boot.
 [[files]]
@@ -30,6 +30,7 @@ kill_timeout = 30
   # An idle exit (code 0) leaves the machine stopped; a crash restarts it.
   policy = "on-failure"
 
+# Builds (go, rust) and up to 4 pi processes (≈300 MB each).
 [[vm]]
-  size = "shared-cpu-1x"
-  memory = "2gb"
+  size = "shared-cpu-2x"
+  memory = "4gb"

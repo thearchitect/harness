@@ -14,9 +14,11 @@
  * kicked, blocked) is reported once through onChatGone.
  */
 
+import { InputFile } from "grammy";
 import type { ForceReply, InlineKeyboardButton, InlineKeyboardMarkup } from "grammy/types";
+import type { Telemetry } from "../telemetry.ts";
 import { plainFallback } from "./render.ts";
-import { describeError, isChatGone, isMessageGone, isNotModified, isParseError, type Tg } from "./tg.ts";
+import { describeError, isChatGone, isMessageGone, isNotModified, isParseError, isPinDenied, type Tg } from "./tg.ts";
 
 export type Body = { html: string } | { markdown: string };
 export type Keyboard = InlineKeyboardButton[][];
@@ -31,14 +33,23 @@ export type SendOptions = {
   keyboard?: Keyboard;
   /** Ask for a text reply (sticky messages only). */
   forceReply?: string;
+  /** Sent as a reply to this message of the chat. */
+  replyTo?: number;
 };
+
+/** A file to send: its name in the chat and its content. */
+export type OutFile = { name: string; data: Buffer };
 
 type Tracked = { messageId: number; body: Body; markup?: Markup };
 
 export class Outbox {
   readonly chatId: number;
   private readonly tg: Tg;
-  private readonly log: (line: string) => void;
+  private readonly t: Telemetry;
+  private readonly pinned = new Set<number>();
+  private pinDeniedReported = false;
+  /** Called once when the bot may not pin messages here. */
+  onPinDenied: () => void = () => undefined;
   private readonly onChatGone: () => void;
   private queue: Promise<unknown> = Promise.resolve();
   private transient: Tracked | undefined;
@@ -46,10 +57,10 @@ export class Outbox {
   private panelId: number | undefined;
   private gone = false;
 
-  constructor(tg: Tg, chatId: number, log: (line: string) => void, onChatGone: () => void) {
+  constructor(tg: Tg, chatId: number, t: Telemetry, onChatGone: () => void) {
     this.tg = tg;
     this.chatId = chatId;
-    this.log = log;
+    this.t = t;
     this.onChatGone = onChatGone;
   }
 
@@ -72,7 +83,7 @@ export class Outbox {
     return this.enqueue(async () => {
       const sticky = this.sticky;
       if (sticky === undefined) {
-        this.log("editSticky without a sticky message");
+        this.t.warn("tg.sticky", { chat: this.chatId, message: "editSticky without a sticky message" });
       } else {
         sticky.body = body;
         sticky.markup = keyboard !== undefined ? { inline_keyboard: keyboard } : sticky.markup;
@@ -86,7 +97,7 @@ export class Outbox {
     return this.enqueue(async () => {
       const sticky = this.sticky;
       if (sticky === undefined) {
-        this.log("closeSticky without a sticky message");
+        this.t.warn("tg.sticky", { chat: this.chatId, message: "closeSticky without a sticky message" });
       } else {
         this.sticky = undefined;
         await this.editMessage(sticky.messageId, finalBody, { inline_keyboard: [] });
@@ -153,6 +164,54 @@ export class Outbox {
     return this.enqueue(() => this.call("deleteMessage", () => this.tg.deleteMessage(this.chatId, messageId)).then(() => undefined));
   }
 
+  /** Sends a file (a plain message: older buttons go, an open dialog moves below); resolves with its id. */
+  sendDocument(file: OutFile, caption: string | undefined, options: { silent?: boolean } = {}): Promise<number | undefined> {
+    return this.enqueue(async () => {
+      await this.stripTransient();
+      const sent = await this.call("sendDocument", () =>
+        this.tg.sendDocument(this.chatId, new InputFile(file.data, file.name), {
+          ...(caption !== undefined && caption !== "" ? { caption, parse_mode: "HTML" as const } : {}),
+          disable_notification: options.silent ?? true,
+        }),
+      );
+      await this.bumpSticky();
+      return sent?.message_id;
+    });
+  }
+
+  /**
+   * Pins one of the bot's messages without a notification. The service
+   * message Telegram adds about it is recognised by isOwnPin and deleted by
+   * the router. Pinning without the right to (a group) is reported once
+   * through onPinDenied.
+   */
+  pin(messageId: number): Promise<void> {
+    return this.enqueue(async () => {
+      this.pinned.add(messageId);
+      try {
+        await this.tg.pinChatMessage(this.chatId, messageId, { disable_notification: true });
+      } catch (error) {
+        this.pinned.delete(messageId);
+        if (isPinDenied(error)) {
+          this.t.warn("tg.pin_denied", { chat: this.chatId, message: describeError(error) });
+          if (!this.pinDeniedReported) {
+            this.pinDeniedReported = true;
+            this.onPinDenied();
+          }
+        } else if (isChatGone(error)) {
+          this.t.warn("tg.chat_gone", { chat: this.chatId, method: "pinChatMessage", message: describeError(error) });
+        } else {
+          this.t.error("tg.call", { chat: this.chatId, method: "pinChatMessage", message: describeError(error) });
+        }
+      }
+    });
+  }
+
+  /** The pinned message is one the bot pinned itself. */
+  isOwnPin(messageId: number): boolean {
+    return this.pinned.has(messageId);
+  }
+
   /* ------------------------------------------------------------------------ */
 
   private async sendNow(body: Body, options: SendOptions): Promise<number | undefined> {
@@ -169,7 +228,7 @@ export class Outbox {
     } else {
       // no previous sticky to replace
     }
-    const messageId = await this.post(body, markup, options.silent ?? true);
+    const messageId = await this.post(body, markup, options.silent ?? true, options.replyTo);
     if (messageId === undefined) {
       return undefined;
     } else {
@@ -234,8 +293,12 @@ export class Outbox {
     }
   }
 
-  private async post(body: Body, markup: Markup | undefined, silent: boolean): Promise<number | undefined> {
-    const common = { disable_notification: silent, reply_markup: markup };
+  private async post(body: Body, markup: Markup | undefined, silent: boolean, replyTo?: number): Promise<number | undefined> {
+    const common = {
+      disable_notification: silent,
+      reply_markup: markup,
+      ...(replyTo !== undefined ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {}),
+    };
     if ("html" in body) {
       const sent = await this.call("sendMessage", () =>
         this.tg.sendMessage(this.chatId, body.html, { ...common, parse_mode: "HTML", link_preview_options: { is_disabled: true } }),
@@ -284,18 +347,18 @@ export class Outbox {
       if (isNotModified(error)) {
         return undefined;
       } else if (fallback !== undefined && isParseError(error)) {
-        this.log(`${what}: ${describeError(error)}; resending as plain text`);
+        this.t.warn("tg.parse", { chat: this.chatId, method: what, message: describeError(error) });
         return this.call(what, fallback, undefined, onMessageGone);
       } else if (onMessageGone !== undefined && isMessageGone(error)) {
         onMessageGone();
         return undefined;
       } else if (isChatGone(error)) {
         this.gone = true;
-        this.log(`chat ${this.chatId} is gone: ${describeError(error)}`);
+        this.t.warn("tg.chat_gone", { chat: this.chatId, method: what, message: describeError(error) });
         this.onChatGone();
         return undefined;
       } else {
-        this.log(`${what} failed: ${describeError(error)}`);
+        this.t.error("tg.call", { chat: this.chatId, method: what, message: describeError(error) });
         return undefined;
       }
     }

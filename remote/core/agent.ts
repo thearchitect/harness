@@ -18,6 +18,7 @@
  */
 
 import type { RpcExtensionUIRequest, RpcExtensionUIResponse, RpcResponse } from "@earendil-works/pi-coding-agent";
+import type { Fields, Telemetry } from "../telemetry.ts";
 import type { Clock, Timer } from "./clock.ts";
 import type { PoolProcess, SessionPool } from "./pool.ts";
 import type { RpcEvent, RpcHandlers, RpcRequest, RpcSpec } from "./rpc.ts";
@@ -69,14 +70,18 @@ export type AgentDeps = {
   clock: Clock;
   pool: SessionPool<PiProcess>;
   spawn(spec: RpcSpec, handlers: RpcHandlers): PiProcess;
-  log(line: string): void;
+  t: Telemetry;
+  /** Fields naming the agent in telemetry (user, dir). */
+  context(agent: Agent): Fields;
+  /** A snapshot of the machine's resources (attached to unexpected exits: OOM). */
+  resources(): Fields;
   /** The process of an agent ended (after its listener heard of it): the registry decides whether the agent goes on. */
   exited(agent: Agent): void;
 };
 
 export type UserInput = { text: string; images?: { data: string; mimeType: string }[] };
 
-type Run = { build: boolean; banner?: FinishedDetails; lastText: string; activeTools: number };
+type Run = { build: boolean; banner?: FinishedDetails; lastText: string; activeTools: number; startedAt: number };
 
 export class Agent {
   readonly sessionId: string;
@@ -125,6 +130,23 @@ export class Agent {
     return this.run !== undefined;
   }
 
+  /** When the current run started (epoch ms), if one runs. */
+  get runStartedAt(): number | undefined {
+    return this.run?.startedAt;
+  }
+
+  /** Context fill and cost of the session, from pi (only when the process runs). */
+  async stats(): Promise<{ contextPercent?: number; costUsd?: number } | undefined> {
+    const proc = this.proc;
+    if (proc === undefined) {
+      return undefined;
+    } else {
+      const response = await this.request(proc, { type: "get_session_stats" });
+      const data = response?.success === true ? (response as { data?: { cost?: number; contextUsage?: { percent?: number | null } } }).data : undefined;
+      return data === undefined ? undefined : { contextPercent: data.contextUsage?.percent ?? undefined, costUsd: data.cost };
+    }
+  }
+
   get currentModel(): string | undefined {
     return this.model;
   }
@@ -147,7 +169,8 @@ export class Agent {
     } else if (input.text.startsWith("/")) {
       void this.request(proc, { type: "prompt", message: input.text, images }).then(() => this.listener?.changed());
     } else {
-      const run: Run = { build: input.text.startsWith("!"), lastText: "", activeTools: 0 };
+      const run: Run = { build: input.text.startsWith("!"), lastText: "", activeTools: 0, startedAt: this.deps.clock.now() };
+      this.event("info", "run.start", { mode: run.build ? "build" : "plan" });
       this.run = run; // from now on, messages steer it
       this.updateBusy();
       this.listener?.runStarted(run.build);
@@ -252,12 +275,16 @@ export class Agent {
 
   private async startProcess(): Promise<PiProcess | { problem: string }> {
     const room = this.deps.pool.makeRoom(this.userId);
-    if (!room.ok) return { problem: room.reason };
+    if (!room.ok) {
+      this.event("warn", "agent.no_room", { message: room.reason });
+      return { problem: room.reason };
+    }
     this.killed = undefined;
+    const startedAt = this.deps.clock.now();
     const proc = this.deps.spawn(this.spec(), {
       onEvent: (event) => this.onEvent(event),
       onUiRequest: (request) => this.onUiRequest(request),
-      onLog: (line) => this.deps.log(`${this.sessionId.slice(0, 8)}: pi: ${line}`),
+      onLog: (line) => this.event("info", "pi.stderr", { line: line.slice(0, 2000) }),
     });
     this.proc = proc;
     // Registered before the pool's own exit handler: at exit, a process still
@@ -271,10 +298,13 @@ export class Agent {
       const data = (state as { data?: { model?: { provider: string; id: string }; thinkingLevel?: string } }).data;
       this.model = data?.model !== undefined ? `${data.model.provider}/${data.model.id}` : undefined;
       this.thinking = data?.thinkingLevel;
+      this.event("info", "agent.start", { ms: this.deps.clock.now() - startedAt, model: this.model });
       this.listener?.changed();
       return proc;
     } else {
-      return { problem: `pi did not start: ${(state as { error?: string }).error ?? "get_state failed"}` };
+      const message = `pi did not start: ${(state as { error?: string }).error ?? "get_state failed"}`;
+      this.event("error", "agent.start_failed", { message });
+      return { problem: message };
     }
   }
 
@@ -282,7 +312,9 @@ export class Agent {
   private async request(proc: PiProcess, command: RpcRequest): Promise<RpcResponse | undefined> {
     const response = await this.timed(proc, proc.request(command), REQUEST_TIMEOUT_MS, `pi did not answer ${command.type}`);
     if (response !== undefined && !response.success) {
-      this.listener?.problem(`${command.type}: ${(response as { error?: string }).error ?? "failed"}`);
+      const message = `${command.type}: ${(response as { error?: string }).error ?? "failed"}`;
+      this.event("warn", "rpc.failed", { message });
+      this.listener?.problem(message);
     } else {
       // answered, or reported by timed()
     }
@@ -301,7 +333,7 @@ export class Agent {
         return outcome;
       }
     } catch (error) {
-      this.deps.log(`${this.sessionId.slice(0, 8)}: ${what}: ${(error as Error).message}`);
+      this.event("warn", "rpc.rejected", { message: `${what}: ${(error as Error).message}` });
       return undefined;
     } finally {
       timer?.cancel();
@@ -311,6 +343,7 @@ export class Agent {
   private kill(proc: PiProcess, reason: string): void {
     if (this.proc === proc && this.killed === undefined) {
       this.killed = reason;
+      this.event("error", "agent.killed", { message: reason });
       proc.kill("SIGKILL");
     } else {
       // already gone or already being killed
@@ -336,6 +369,13 @@ export class Agent {
         return;
       case "agent_settled":
         if (run !== undefined) {
+          this.event("info", "run.end", {
+            mode: run.build ? "build" : "plan",
+            ms: this.deps.clock.now() - run.startedAt,
+            aborted: event.aborted,
+            costUsd: run.banner?.costUsd,
+            model: run.banner?.model,
+          });
           this.endRun();
           this.listener?.settled({ aborted: event.aborted, banner: run.banner, lastText: run.lastText });
           this.listener?.changed();
@@ -344,6 +384,7 @@ export class Agent {
         }
         return;
       case "extension_error":
+        this.event("error", "pi.extension_error", { message: `${event.event}: ${event.error}` });
         this.listener?.problem(`extension error (${event.event}): ${event.error}`);
         return;
       case "tool_execution_start":
@@ -396,6 +437,11 @@ export class Agent {
     if (this.proc !== proc) return; // an older process
     const unexpected = this.deps.pool.get(this.sessionId) === proc;
     const problem = this.killed ?? (unexpected ? `pi exited unexpectedly\n${proc.stderrTail().slice(-10).join("\n")}` : undefined);
+    if (unexpected && this.killed === undefined) {
+      this.event("error", "agent.exit", { message: "pi exited unexpectedly", stderr: proc.stderrTail().slice(-20), ...this.deps.resources() });
+    } else {
+      this.event("info", "agent.exit", { killed: this.killed !== undefined });
+    }
     this.proc = undefined;
     this.endRun();
     this.pendingUi.clear();
@@ -425,12 +471,17 @@ export class Agent {
     this.watchdog = this.deps.clock.after(limit, () => {
       const proc = this.proc;
       if (proc === undefined || this.run !== run) return;
+      this.event("error", "run.silent", { message: `no output for ${limit / 60_000} min: run aborted`, phase: run.activeTools > 0 ? "tool" : "model" });
       this.listener?.problem(`No output for ${limit / 60_000} min: run aborted.`);
       void this.request(proc, { type: "abort" });
       this.watchdog = this.deps.clock.after(ABORT_GRACE_MS, () => {
         if (this.run === run) this.kill(proc, "the aborted run did not stop: pi killed");
       });
     });
+  }
+
+  private event(level: "info" | "warn" | "error", kind: string, fields: Fields): void {
+    this.deps.t[level](kind, { ...this.deps.context(this), agent: this.sessionId.slice(0, 8), ...fields });
   }
 
   private cancelWatchdog(): void {

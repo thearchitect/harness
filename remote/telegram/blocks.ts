@@ -88,10 +88,17 @@ export class BlockStream {
     }
   }
 
-  /** The run settled: every block in its final state, no Stop; then the banner, with sound. */
-  async finish(banner: string): Promise<void> {
+  /**
+   * The run settled: every block in its final state, no Stop; then the banner,
+   * with sound. Resolves with the message to pin: the last page of the final
+   * answer, or the banner when the run ended without text.
+   */
+  async finish(banner: string): Promise<number | undefined> {
     await this.end();
-    await this.outbox.send({ markdown: banner }, { silent: false });
+    const bannerId = await this.outbox.send({ markdown: banner }, { silent: false });
+    const last = this.shown.at(-1);
+    const answer = last?.block.kind === "text" ? last.pages.filter((p) => p.messageId !== undefined).at(-1)?.messageId : undefined;
+    return answer ?? bannerId;
   }
 
   /** The run continues elsewhere, or the process is gone: final states, no Stop; an optional silent note. */

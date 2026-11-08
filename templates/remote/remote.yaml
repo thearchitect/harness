@@ -19,12 +19,18 @@ users:
     # The user's own SSH public keys: recipients of their cage secrets.
     publicKeys:
       - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleExampleExampleExampleExampleExample alice@laptop
+    # Admins get the gateway's errors in real time and /logs.
+    admin: true
 
 limits:
   sessionsPerUser: 2 # pi processes of one user at a time
   sessionsTotal: 4 # pi processes on the machine (≈300 MB each)
   idleMinutes: 30 # an idle pi process stops after this
   idleShutdownMinutes: 15 # the machine stops when nothing happens for this long
+
+# The gateway's journal: /data/gateway/log/YYYY-MM-DD.jsonl (logs.sh, /logs).
+telemetry:
+  retentionDays: 30
 
 # ~/.pi/agent/settings.json of a new user (an existing file is never touched).
 defaultSettings:

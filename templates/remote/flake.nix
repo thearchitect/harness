@@ -31,6 +31,7 @@
           pkgs.flyctl
           pkgs.skopeo
           pkgs.jq
+          pkgs.yq-go
         ];
       };
     };

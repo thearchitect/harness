@@ -21,18 +21,31 @@ export function homeOf(config: Config, user: UserConfig): string {
   return join(config.dataDir, "home", user.name);
 }
 
-/** Environment of every process the gateway starts for the user. */
+/**
+ * Variables of the image passed through to the user's processes: nix-ld (so
+ * prebuilt binaries installed by mise and others run), mise's settings, and
+ * the speech-to-text endpoint and model when the deployment overrides them.
+ */
+const PASSED = /^(NIX_LD|NIX_LD_LIBRARY_PATH|MISE_[A-Z_]+|SSL_CERT_FILE|TZ|HARNESS_TRANSCRIBE_(URL|MODEL))$/;
+
+/**
+ * Environment of every process the gateway starts for the user. Tools the user
+ * installs (mise, uv, npm, cargo, go) land in their home, ahead of the image.
+ */
 export function userEnv(config: Config, user: UserConfig): Record<string, string> {
   const home = homeOf(config, user);
+  const passed = Object.fromEntries(Object.entries(process.env).filter((e): e is [string, string] => PASSED.test(e[0]) && e[1] !== undefined));
+  const own = [".local/bin", ".local/share/mise/shims", ".cargo/bin", "go/bin"].map((dir) => join(home, dir));
   return {
-    PATH: process.env.PATH ?? "/usr/bin:/bin",
+    ...passed,
+    PATH: [...own, process.env.PATH ?? "/usr/bin:/bin"].join(":"),
+    NPM_CONFIG_PREFIX: join(home, ".local"),
+    UV_TOOL_BIN_DIR: join(home, ".local", "bin"),
     HOME: home,
     USER: user.name,
     LOGNAME: user.name,
     SHELL: "/bin/bash",
     LANG: "C.UTF-8",
-    ...(process.env.SSL_CERT_FILE !== undefined ? { SSL_CERT_FILE: process.env.SSL_CERT_FILE } : {}),
-    ...(process.env.TZ !== undefined ? { TZ: process.env.TZ } : {}),
     HARNESS_PROFILE: "server",
     GIT_AUTHOR_NAME: user.git.name,
     GIT_AUTHOR_EMAIL: user.git.email,
@@ -89,6 +102,64 @@ export function runAsUser(config: Config, user: UserConfig, command: string, arg
     child.on("error", (error) => resolve({ code: null, stdout, stderr: `${stderr}${error.message}` }));
     child.on("close", (code) => resolve({ code, stdout, stderr }));
     child.stdin.end(input ?? "");
+  });
+}
+
+export type ExecResult = { code: number | null; signal: NodeJS.Signals | null; stdout: Buffer; stderr: string; problem?: string };
+
+/**
+ * Runs a command as the user with a deadline and a cap on its output: past
+ * `timeoutMs` or `maxBytes` of stdout the process is killed and `problem`
+ * says why. Binary-safe stdout.
+ */
+export function execAsUser(
+  config: Config,
+  user: UserConfig,
+  command: string,
+  args: string[],
+  options: { cwd?: string; timeoutMs: number; maxBytes: number; input?: Buffer | string; withSecrets?: boolean },
+): Promise<ExecResult> {
+  const envFiles = options.withSecrets === true ? userEnvFiles(config, user) : [];
+  const [cmd, argv] = envFiles.length > 0 ? [config.paths.cage, ["run", "-raw", "-no-mask", ...envFiles, "-", command, ...args]] : [command, args];
+  return new Promise((resolve) => {
+    const child = spawn(cmd, argv, {
+      cwd: options.cwd ?? homeOf(config, user),
+      env: userEnv(config, user),
+      ...identity(config, user),
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const chunks: Buffer[] = [];
+    let size = 0;
+    let stderr = "";
+    let problem: string | undefined;
+    const stop = (why: string): void => {
+      if (problem === undefined) {
+        problem = why;
+        child.kill("SIGKILL");
+      } else {
+        // already stopping
+      }
+    };
+    const timer = setTimeout(() => stop(`took longer than ${options.timeoutMs / 1000} s`), options.timeoutMs);
+    child.stdout.on("data", (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > options.maxBytes) {
+        stop(`larger than ${options.maxBytes} bytes`);
+      } else {
+        chunks.push(chunk);
+      }
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr = (stderr + chunk).slice(-8000)));
+    child.stdin.on("error", () => undefined); // exited before reading its input: the result says why
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      resolve({ code: null, signal: null, stdout: Buffer.alloc(0), stderr, problem: error.message });
+    });
+    child.on("close", (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, stdout: Buffer.concat(chunks), stderr, ...(problem !== undefined ? { problem } : {}) });
+    });
+    child.stdin.end(options.input ?? "");
   });
 }
 

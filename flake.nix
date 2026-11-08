@@ -64,6 +64,20 @@
             envs = ./nix/testdata/remote-envs;
             tag = "check";
           };
+          # The agents' tools run, prebuilt binaries run through nix-ld.
+          remote-tools = (import ./nix/remote-tools.nix pkgs).check;
+          # Fly unpacks images of at most 8 GB: the image's closure stays under 7.
+          remote-image-size =
+            let
+              image = self.checks.${pkgs.stdenv.hostPlatform.system}.remote-image;
+              closure = pkgs.closureInfo { rootPaths = [ image ]; };
+            in
+            pkgs.runCommand "remote-image-size" { } ''
+              bytes=$(du -scb $(cat ${closure}/store-paths) | tail -1 | cut -f1)
+              echo "image closure: $((bytes / 1048576)) MB"
+              [ "$bytes" -lt $((7 * 1024 * 1024 * 1024)) ]
+              echo "$bytes" > $out
+            '';
         }
       );
 

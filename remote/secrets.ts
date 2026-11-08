@@ -10,7 +10,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { homeOf, runAsUser } from "./accounts.ts";
+import { homeOf, runAsUser, userEnv } from "./accounts.ts";
 import type { Config, UserConfig } from "./config.ts";
 
 export const SECRET_NAME = /^[A-Z_][A-Z0-9_]{0,47}$/;
@@ -83,6 +83,51 @@ export async function setSecret(config: Config, user: UserConfig, serverKey: str
     if (!store.ok) return store;
     const set = await cage(config, user, ["set", "-stdin", FILE, name], `${line}\n`);
     return set.ok ? { ok: true } : set;
+  }
+}
+
+/**
+ * Names of the variables the deployment sets for the user (its
+ * `user-<name>.cage`, decrypted by `cage run` as the user). Only the names
+ * leave the child process: it prints the keys of its environment, minus those
+ * the gateway set itself.
+ */
+export async function deploymentSecretNames(config: Config, user: UserConfig): Promise<{ names: string[] } | { problem: string }> {
+  const file = join(config.paths.envsDir, `user-${user.name}.cage`);
+  if (!existsSync(file)) {
+    return { names: [] };
+  } else {
+    const base = new Set(Object.keys(userEnv(config, user)));
+    const printKeys = "process.stdout.write(JSON.stringify(Object.keys(process.env)))";
+    const result = await runAsUser(config, user, config.paths.cage, ["run", "-raw", "-no-mask", file, "-", process.execPath, "-e", printKeys]);
+    if (result.code !== 0) {
+      return { problem: result.stderr.trim().split("\n").slice(-3).join("\n") || `cage exited with ${result.code}` };
+    } else {
+      return { names: (JSON.parse(result.stdout) as string[]).filter((name) => !base.has(name)).sort() };
+    }
+  }
+}
+
+/**
+ * The variables that moved to the deployment's secrets (move-secrets.sh in
+ * the deployment repository) leave the user's store, once the deployment
+ * that sets them runs: a variable lives in one place at a time (cage refuses
+ * the same name from two files). Resolves with the names removed.
+ */
+export async function dropMovedSecrets(config: Config, user: UserConfig): Promise<{ moved: string[] } | { problem: string }> {
+  const own = await listSecrets(config, user);
+  const deployment = await deploymentSecretNames(config, user);
+  if ("problem" in own) {
+    return own;
+  } else if ("problem" in deployment) {
+    return deployment;
+  } else {
+    const moved = own.names.filter((name) => deployment.names.includes(name));
+    for (const name of moved) {
+      const removed = await removeSecret(config, user, name);
+      if (!removed.ok) return { problem: `${name}: ${removed.problem}` };
+    }
+    return { moved };
   }
 }
 

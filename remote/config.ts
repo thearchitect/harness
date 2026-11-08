@@ -16,6 +16,8 @@ export type UserConfig = {
   gid: number;
   git: { name: string; email: string };
   publicKeys: string[];
+  /** Gets the gateway's errors in real time and the /logs command. */
+  admin: boolean;
 };
 
 export type Limits = {
@@ -43,6 +45,7 @@ export type Config = {
   };
   users: UserConfig[];
   limits: Limits;
+  telemetry: { retentionDays: number };
   defaultSettings: Record<string, unknown>;
 };
 
@@ -89,6 +92,7 @@ export function parseConfig(text: string, isRoot: boolean): { config: Config } |
         gid: uid, // every user has a group of their own, with the uid's number
         git: { name: git.string("name"), email: git.string("email") },
         publicKeys: user.stringArray("publicKeys"),
+        admin: user.optionalBoolean("admin", false),
       };
     }),
     limits: (() => {
@@ -99,6 +103,10 @@ export function parseConfig(text: string, isRoot: boolean): { config: Config } |
         idleMinutes: limits.integer("idleMinutes", 1, 24 * 60),
         idleShutdownMinutes: limits.integer("idleShutdownMinutes", 1, 24 * 60),
       };
+    })(),
+    telemetry: (() => {
+      const telemetry = r.optionalObject("telemetry");
+      return { retentionDays: telemetry.optionalInteger("retentionDays", 1, 3650, 30) };
     })(),
     defaultSettings: r.record("defaultSettings"),
   };
@@ -199,8 +207,28 @@ class Reader {
     }
   }
 
+  optionalInteger(key: string, min: number, max: number, fallback: number): number {
+    return this.value[key] === undefined ? fallback : this.integer(key, min, max);
+  }
+
+  optionalBoolean(key: string, fallback: boolean): boolean {
+    const v = this.value[key];
+    if (v === undefined) {
+      return fallback;
+    } else if (typeof v === "boolean") {
+      return v;
+    } else {
+      this.bad(key, "true or false");
+      return fallback;
+    }
+  }
+
   object(key: string): Reader {
     return new Reader(this.value[key], this.problems, this.at(key));
+  }
+
+  optionalObject(key: string): Reader {
+    return new Reader(this.value[key] ?? {}, this.problems, this.at(key));
   }
 
   record(key: string): Record<string, unknown> {

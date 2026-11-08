@@ -12,6 +12,8 @@ they add it to are workspaces with at most one agent each. Created with `nix fla
   wakes it
 - `bootstrap.sh` — creates the Fly app, volume, machine secret, deploy token
 - `deploy.sh` — builds the image (`nix build .#image`) and deploys it
+- `move-secrets.sh` — moves a user's Telegram secrets into `.cage`
+- `logs.sh` — the gateway's journal
 - `.github/workflows/deploy.yml` — deploys every push to master
 
 ## Setup
@@ -57,12 +59,24 @@ Inside `nix develop` (flyctl, skopeo, cage):
 - **Runs.** A message plans; a message starting with `!` builds (without
   confirmations; planning never writes). Writing during a run steers it;
   `/stop` or *Stop* on the last block aborts. Every block — thinking, a tool
-  call, the answer — is a message of its own and stays.
+  call, the answer — is a message of its own and stays; the final answer is
+  pinned. `/status` (and `/start`) shows the agent and the others; `/diff`
+  sends the changes of the agent's directory as a file.
+- **Files.** Files you send (and those of the message you reply to) land in
+  `~/tmp/<chat>-<message>/` and are listed to the agent. A voice message is
+  transcribed (OpenAI, your `/login` → OpenAI Codex), the transcript shows in
+  the chat and goes to the agent. The agent sends files back with a comment
+  (`send_file`, pinned); folders as a zip.
 - **Mini App.** Status lines (the banner, the agent's header, "No agent
   here.") open it: the agent here (model, thinking, stop, detach, close),
-  your agents (here, move to, close), a new agent, the session history
-  (resume here), your workspaces. `/sessions`, `/model`, `/thinking` link to
-  it.
-- `/login`, `/secrets`, `/key` work in any workspace.
+  your agents (here, move to, close), your workspaces, the session history
+  (resume here); *Files* (browse ~, new folder, download, start an agent
+  there) and *Models* (favorites with their thinking level, the default for
+  new agents). `/sessions`, `/model`, `/thinking` link to it.
+- **Tools.** The agents have gh, glab, go, rust, zig, python (pydicom),
+  ffmpeg, ImageMagick, exiftool, dcmtk and more, and install others into
+  their home (mise, uv, npm, cargo, go install).
+- `/login`, `/secrets`, `/key` work in any workspace; admins also get errors
+  in real time and `/logs`.
 
 Operations (build, test, deploy, secrets, users): `AGENTS.md`.

@@ -17,7 +17,8 @@ import { publicKey } from "../accounts.ts";
 import type { Config, UserConfig } from "../config.ts";
 import type { Clock, Timer } from "../core/clock.ts";
 import type { AuthEvent, AuthPrompt, Helper, HelperRun, Provider } from "../helper.ts";
-import { listSecrets, removeSecret, SECRET_NAME, setSecret } from "../secrets.ts";
+import { deploymentSecretNames, listSecrets, removeSecret, SECRET_NAME, setSecret } from "../secrets.ts";
+import type { Telemetry } from "../telemetry.ts";
 import { deleteSecretPanel, providersPanel, secretsPanel } from "./card.ts";
 import type { Outbox } from "./outbox.ts";
 import { escapeHtml } from "./render.ts";
@@ -26,7 +27,7 @@ export type AccountDeps = {
   config: Config;
   clock: Clock;
   helper: Helper;
-  log(line: string): void;
+  t: Telemetry;
   /** The user's secrets or login changed: their processes restart. */
   restartUser(userId: number): void;
 };
@@ -173,9 +174,13 @@ export class Account {
         this.awaiting = undefined;
         await place.closeSticky({ html: `Value of <code>${escapeHtml(awaiting.name)}</code> received.` });
         const serverKey = await publicKey(this.deps.config, this.user);
+        const deployment = await deploymentSecretNames(this.deps.config, this.user);
         const saved = serverKey === undefined
           ? { ok: false as const, problem: "the server SSH key does not exist yet" }
-          : await setSecret(this.deps.config, this.user, serverKey, awaiting.name, text);
+          : "names" in deployment && deployment.names.includes(awaiting.name)
+            ? { ok: false as const, problem: `${awaiting.name} is set by the deployment` }
+            : await setSecret(this.deps.config, this.user, serverKey, awaiting.name, text);
+        this.deps.t.info("account.secret_set", { user: this.user.name, name: awaiting.name, ok: saved.ok, ...(saved.ok ? {} : { message: saved.problem }) });
         if (saved.ok) {
           this.deps.restartUser(this.user.telegramId);
           await place.send({ html: `${escapeHtml(awaiting.name)} saved; agents get it on their next start.` });
@@ -243,8 +248,9 @@ export class Account {
 
   private async showSecrets(place: Outbox): Promise<string> {
     const listed = await listSecrets(this.deps.config, this.user);
+    const deployment = await deploymentSecretNames(this.deps.config, this.user);
     if ("names" in listed) {
-      await place.showPanel(secretsPanel(listed.names));
+      await place.showPanel(secretsPanel(listed.names, "names" in deployment ? deployment.names : []));
       return listed.names.length > 0 ? "Your secrets" : "No secrets yet";
     } else {
       await place.closePanel(`Error: ${escapeHtml(listed.problem)}`);
@@ -277,9 +283,11 @@ export class Account {
       // no prompt left open
     }
     if (result.ok) {
+      this.deps.t.info("account.login", { user: this.user.name, action, provider: provider.id });
       this.deps.restartUser(this.user.telegramId);
       await place.send({ html: action === "login" ? `Logged in to ${escapeHtml(provider.name)}.` : `Logged out of ${escapeHtml(provider.name)}.` });
     } else {
+      this.deps.t.warn("account.login_failed", { user: this.user.name, action, provider: provider.id, message: result.problem });
       await place.send({ html: `Error: ${escapeHtml(provider.name)}: ${escapeHtml(result.problem)}` }, { silent: false });
     }
   }
@@ -302,6 +310,7 @@ export class Account {
     } else {
       // no prompt open
     }
+    this.deps.t.info("account.login_cancelled", { user: this.user.name, reason });
     switch (reason) {
       case "timeout":
         await login.place.send({ html: "Login timed out." });

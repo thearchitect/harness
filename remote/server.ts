@@ -14,6 +14,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { Update } from "grammy/types";
+import type { Telemetry } from "./telemetry.ts";
 
 const BODY_LIMIT = 1024 * 1024;
 
@@ -26,7 +27,7 @@ export type ServerOptions = {
   onUpdate(update: Update): void;
   /** The Mini App, when the gateway is ready. */
   app(): AppHandler | undefined;
-  log(line: string): void;
+  t: Telemetry;
 };
 
 /** Reads a request body of at most BODY_LIMIT bytes; undefined when it is larger (413 sent). */
@@ -68,7 +69,7 @@ export function startServer(options: ServerOptions): Promise<Server> {
       const header = request.headers["x-telegram-bot-api-secret-token"];
       const given = Buffer.from(typeof header === "string" ? header : "");
       if (given.length !== expected.length || !timingSafeEqual(given, expected)) {
-        options.log(`webhook: rejected a request without the secret from ${request.socket.remoteAddress ?? "?"}`);
+        options.t.warn("webhook.rejected", { remote: request.headers["fly-client-ip"] ?? request.socket.remoteAddress });
         response.writeHead(401).end();
       } else {
         void readBody(request, response).then((body) => {

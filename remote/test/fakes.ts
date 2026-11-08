@@ -9,7 +9,8 @@ import type { PiProcess } from "../core/agent.ts";
 import type { Clock, Timer } from "../core/clock.ts";
 import type { RpcEvent, RpcHandlers, RpcRequest, RpcSpec } from "../core/rpc.ts";
 import type { UserConfig } from "../config.ts";
-import type { Helper, HelperRun, History, LoginCallbacks, Outcome, Provider, SessionInfo } from "../helper.ts";
+import type { Favorite, Helper, HelperRun, History, LoginCallbacks, ModelRef, ModelSettings, Outcome, Provider, SessionInfo } from "../helper.ts";
+import type { Fields, Telemetry } from "../telemetry.ts";
 import type { Tg } from "../telegram/tg.ts";
 
 /** Lets every pending promise continuation and I/O callback run. */
@@ -94,7 +95,11 @@ export class FakeTg {
         switch (method) {
           case "sendMessage":
           case "sendRichMessage":
+          case "sendDocument":
             call.result = { message_id: this.nextMessageId++ };
+            break;
+          case "getFile":
+            call.result = { file_id: args[0], file_path: `files/${String(args[0])}` };
             break;
           default:
             call.result = true;
@@ -132,8 +137,73 @@ export class FakeHelper implements Helper {
     return { ok: true, data: this.histories.get(sessionId) ?? { title: "", turns: [] } };
   }
 
+  modelSettings: ModelSettings = { available: [], favorites: [], patterns: [], default: null };
+  readonly saved: { favorites: Favorite[]; default: ModelRef | null }[] = [];
+
+  async models(): Promise<Outcome<ModelSettings>> {
+    return { ok: true, data: structuredClone(this.modelSettings) };
+  }
+
+  async saveModels(_user: UserConfig, favorites: Favorite[], defaultModel: ModelRef | null): Promise<Outcome<unknown>> {
+    this.saved.push({ favorites, default: defaultModel });
+    this.modelSettings = { ...this.modelSettings, favorites, default: defaultModel };
+    return { ok: true, data: undefined };
+  }
+
+  /** Transcriptions in progress, driven by the test. */
+  readonly transcriptions: FakeTranscription[] = [];
+
+  private waitingForTranscription: ((t: FakeTranscription) => void)[] = [];
+
+  transcribe(_user: UserConfig, file: string, onDelta: (text: string) => void): Promise<Outcome<string>> {
+    const transcription = new FakeTranscription(file, onDelta);
+    this.transcriptions.push(transcription);
+    for (const resolve of this.waitingForTranscription.splice(0)) resolve(transcription);
+    return transcription.result;
+  }
+
+  /** Resolves with the next transcription the gateway starts (or the last one, if it started already). */
+  nextTranscription(): Promise<FakeTranscription> {
+    const started = this.transcriptions.at(-1);
+    return started !== undefined ? Promise.resolve(started) : new Promise((resolve) => this.waitingForTranscription.push(resolve));
+  }
+
   killAll(): void {
     this.killedAll = true;
+  }
+}
+
+export class FakeTranscription {
+  readonly file: string;
+  readonly onDelta: (text: string) => void;
+  readonly result: Promise<Outcome<string>>;
+  finish!: (outcome: Outcome<string>) => void;
+
+  constructor(file: string, onDelta: (text: string) => void) {
+    this.file = file;
+    this.onDelta = onDelta;
+    this.result = new Promise((resolve) => (this.finish = resolve));
+  }
+}
+
+/** Telemetry that records events (and errors separately). */
+export class FakeTelemetry implements Telemetry {
+  readonly events: { level: string; kind: string; fields: Fields }[] = [];
+
+  info(kind: string, fields: Fields = {}): void {
+    this.events.push({ level: "info", kind, fields });
+  }
+
+  warn(kind: string, fields: Fields = {}): void {
+    this.events.push({ level: "warn", kind, fields });
+  }
+
+  error(kind: string, fields: Fields = {}): void {
+    this.events.push({ level: "error", kind, fields });
+  }
+
+  kinds(level?: string): string[] {
+    return this.events.filter((e) => level === undefined || e.level === level).map((e) => e.kind);
   }
 }
 

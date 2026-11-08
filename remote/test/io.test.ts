@@ -5,19 +5,20 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { homeOf, piSpec, prepareUser, publicKey, runAsUser } from "../accounts.ts";
+import { execAsUser, homeOf, piSpec, prepareUser, publicKey, runAsUser } from "../accounts.ts";
 import type { Config } from "../config.ts";
 import { RpcProcess, type RpcEvent } from "../core/rpc.ts";
 import { createHelper } from "../helper.ts";
 import { startServer } from "../server.ts";
-import { listSecrets, removeSecret, setSecret } from "../secrets.ts";
-import { FakeClock } from "./fakes.ts";
+import { deploymentSecretNames, dropMovedSecrets, listSecrets, removeSecret, setSecret } from "../secrets.ts";
+import { FakeClock, FakeTelemetry } from "./fakes.ts";
 
 const FAKE_PI = fileURLToPath(new URL("./fake-pi.ts", import.meta.url));
 const manifest = JSON.parse(readFileSync(process.env.HARNESS_MANIFEST ?? "", "utf8")) as { bin: Record<string, string> };
@@ -77,7 +78,7 @@ describe("http endpoint", () => {
       webhookSecret: "s3cret",
       onUpdate: (u) => updates.push(u),
       app: () => (ready ? (_request, response) => response.writeHead(204).end() : undefined),
-      log: () => undefined,
+      t: new FakeTelemetry(),
     });
     const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
     const post = (path: string, secret?: string): Promise<number> =>
@@ -103,7 +104,7 @@ describe("http endpoint", () => {
 describe("accounts, secrets and login (runAs self)", () => {
   const dataDir = mkdtempSync(join(tmpdir(), "harness-remote-"));
   after(() => rmSync(dataDir, { recursive: true, force: true }));
-  const user = { name: "tester", telegramId: 1, uid: 1000, gid: 1000, git: { name: "T", email: "t@x" }, publicKeys: [] };
+  const user = { name: "tester", telegramId: 1, uid: 1000, gid: 1000, git: { name: "T", email: "t@x" }, publicKeys: [], admin: false };
   const config: Config = {
     telegram: { tokenVariable: "T", webhookSecretVariable: "W", publicUrl: "https://x/telegram", listenPort: 1 },
     runAs: "self",
@@ -111,6 +112,7 @@ describe("accounts, secrets and login (runAs self)", () => {
     paths: { pi: "/bin/pi", cage: manifest.bin.cage ?? "", envsDir: join(dataDir, "envs"), machineIdentity: "" },
     users: [user],
     limits: { sessionsPerUser: 1, sessionsTotal: 1, idleMinutes: 1, idleShutdownMinutes: 1 },
+    telemetry: { retentionDays: 30 },
     defaultSettings: { defaultProvider: "deepseek" },
   };
 
@@ -198,5 +200,66 @@ describe("accounts, secrets and login (runAs self)", () => {
     run.cancel();
     const result = await run.result;
     assert.equal(result.ok, false);
+  });
+
+  test("secrets moved to the deployment leave the user's store; the deployment's names are known without their values", async () => {
+    const key = (await publicKey(config, user)) ?? "";
+    assert.deepEqual(await setSecret(config, user, key, "GH_TOKEN", "ghp_x"), { ok: true });
+    assert.deepEqual(await setSecret(config, user, key, "OWN", "mine"), { ok: true });
+    assert.deepEqual(await deploymentSecretNames(config, user), { names: [] }, "no deployment file");
+    // The deployment's file: an env encrypted to the user's key (as move-secrets.sh makes it).
+    mkdirSync(config.paths.envsDir, { recursive: true });
+    copyFileSync(join(homeOf(config, user), ".cage", "store", "envs", "harness.cage"), join(config.paths.envsDir, `user-${user.name}.cage`));
+    assert.deepEqual(await deploymentSecretNames(config, user), { names: ["GH_TOKEN", "OWN"] });
+    assert.deepEqual(await removeSecret(config, user, "OWN"), { ok: true });
+    assert.deepEqual(await dropMovedSecrets(config, user), { moved: ["GH_TOKEN"] });
+    assert.deepEqual(await listSecrets(config, user), { names: [] });
+    rmSync(config.paths.envsDir, { recursive: true, force: true });
+  });
+
+  test("user helper: model settings round trip through pi's settings.json (patterns kept)", async () => {
+    await runAsUser(config, user, "sh", ["-c", `echo '{"enabledModels":["anthropic/*"]}' > .pi/agent/settings.json`]);
+    const saved = await helper.saveModels(user, [{ provider: "deepseek", id: "deepseek-flash", effort: "max" }, { provider: "deepseek", id: "deepseek-v4-pro" }], { provider: "deepseek", id: "deepseek-flash" });
+    assert.ok(saved.ok, JSON.stringify(saved));
+    const settings = await helper.models(user);
+    assert.ok(settings.ok, JSON.stringify(settings));
+    assert.deepEqual(settings.data.favorites, [{ provider: "deepseek", id: "deepseek-flash", effort: "max" }, { provider: "deepseek", id: "deepseek-v4-pro" }]);
+    assert.deepEqual(settings.data.patterns, ["anthropic/*"]);
+    assert.deepEqual(settings.data.default, { provider: "deepseek", id: "deepseek-flash" });
+  });
+
+  test("user helper: speech to text streams deltas from the endpoint with the user's OpenAI login", async () => {
+    let authorization = "";
+    const server = createServer((request, response) => {
+      authorization = String(request.headers.authorization);
+      request.resume();
+      request.on("end", () => {
+        response.writeHead(200, { "Content-Type": "text/event-stream" });
+        response.write('data: {"type":"transcript.text.delta","delta":"Привет, "}\n\n');
+        response.write('data: {"type":"transcript.text.delta","delta":"мир"}\n\n');
+        response.end('data: {"type":"transcript.text.done","text":"Привет, мир"}\n\n');
+      });
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    process.env.HARNESS_TRANSCRIBE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/audio/transcriptions`;
+    try {
+      const auth = { "openai-codex": { type: "oauth", access: "tok-1", refresh: "r", expires: Date.now() + 3_600_000, accountId: "acc" } };
+      await runAsUser(config, user, "sh", ["-c", "umask 077; cat > .pi/agent/auth.json; printf voice > note.oga"], JSON.stringify(auth));
+      const deltas: string[] = [];
+      const result = await helper.transcribe(user, join(homeOf(config, user), "note.oga"), (text) => deltas.push(text));
+      assert.deepEqual(result, { ok: true, data: "Привет, мир" });
+      assert.deepEqual(deltas, ["Привет, ", "мир"]);
+      assert.equal(authorization, "Bearer tok-1");
+    } finally {
+      delete process.env.HARNESS_TRANSCRIBE_URL;
+      server.close();
+    }
+  });
+
+  test("execAsUser: a deadline and an output cap kill the command and say why", async () => {
+    const slow = await execAsUser(config, user, "sleep", ["5"], { timeoutMs: 50, maxBytes: 100 });
+    assert.equal(slow.problem, "took longer than 0.05 s");
+    const big = await execAsUser(config, user, "head", ["-c", "4096", "/dev/zero"], { timeoutMs: 5_000, maxBytes: 1_000 });
+    assert.equal(big.problem, "larger than 1000 bytes");
   });
 });

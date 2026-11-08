@@ -13,7 +13,7 @@ import type { StateStore } from "./state.ts";
 const SUBDIRS_LIMIT = 15;
 
 /** Absolute directories to offer: ~, recent ones, then the subdirectories of ~ (no hidden ones). */
-export function dirChoices(config: Config, store: StateStore, user: UserConfig, log: (line: string) => void): string[] {
+export function dirChoices(config: Config, store: StateStore, user: UserConfig, onProblem: (message: string) => void): string[] {
   const home = homeOf(config, user);
   const recent = store.user(user.telegramId).recentDirs.filter((dir) => dir !== home && isInside(home, dir) && isDirectory(dir));
   let subdirs: string[] = [];
@@ -25,25 +25,40 @@ export function dirChoices(config: Config, store: StateStore, user: UserConfig, 
       .sort()
       .slice(0, SUBDIRS_LIMIT);
   } catch (error) {
-    log(`${user.name}: cannot list ${home}: ${(error as Error).message}`);
+    onProblem(`cannot list ${home}: ${(error as Error).message}`);
   }
   return [home, ...recent, ...subdirs];
 }
 
-/** A path relative to ~ (`proj`, `~/proj`, `~`), resolved through symlinks; it must stay inside ~. */
+/** A directory relative to ~ (`proj`, `~/proj`, `~`), resolved through symlinks; it must stay inside ~. */
 export function resolveDir(config: Config, user: UserConfig, path: string): { dir: string } | { problem: string } {
+  const resolved = resolvePath(config, user, path);
+  if ("problem" in resolved) {
+    return resolved;
+  } else if (resolved.kind !== "dir") {
+    return { problem: `${path} is not a directory.` };
+  } else {
+    return { dir: resolved.path };
+  }
+}
+
+/** A file or directory relative to ~ (or absolute inside it), resolved through symlinks; it must stay inside ~. */
+export function resolvePath(config: Config, user: UserConfig, path: string): { path: string; kind: "dir" | "file" } | { problem: string } {
   const home = homeOf(config, user);
   const candidate = resolve(home, path.trim().replace(/^~\/?/, ""));
   if (!existsSync(candidate)) {
     return { problem: `${path} does not exist.` };
   } else {
     const real = realpathSync(candidate);
+    const stat = statSync(real);
     if (!isInside(home, real)) {
       return { problem: `${path} is outside your home.` };
-    } else if (!statSync(real).isDirectory()) {
-      return { problem: `${path} is not a directory.` };
+    } else if (stat.isDirectory()) {
+      return { path: real, kind: "dir" };
+    } else if (stat.isFile()) {
+      return { path: real, kind: "file" };
     } else {
-      return { dir: real };
+      return { problem: `${path} is neither a file nor a directory.` };
     }
   }
 }

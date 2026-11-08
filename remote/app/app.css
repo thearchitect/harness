@@ -5,6 +5,57 @@
   font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/* An app, not a page: no zoom by double tap, no text inflation. */
+html {
+  touch-action: manipulation;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+a {
+  color: var(--tg-theme-link-color, #2481cc);
+  text-decoration: none;
+}
+
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.bar h2 {
+  margin: 0;
+}
+
+.bar nav {
+  display: flex;
+  gap: 14px;
+  font-size: 14px;
+}
+
+.crumbs {
+  margin: 4px 0 8px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--tg-theme-hint-color, #8e8e93);
+}
+
+.icon {
+  padding: 0 6px;
+}
+
+.list {
+  margin-top: 8px;
+}
+
 body {
   margin: 0;
   padding: 12px 12px calc(12px + var(--tg-safe-area-inset-bottom, 0px));
@@ -94,6 +145,7 @@ button,
 select,
 input {
   font: inherit;
+  font-size: 16px; /* below 16px iOS zooms the page into a focused field */
   border-radius: 8px;
   border: 0;
   padding: 7px 12px;

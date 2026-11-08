@@ -9,12 +9,15 @@
  *   banner, dialogs, problems, an unexpected end of pi.
  *
  * Status lines (banner, header) link to the Mini App of the chat they are in.
+ * The final answer of every run is pinned, and so is every file the agent
+ * sends (send_file: with sound, where the agent is).
  */
 
 import type { Agent, AgentListener, Settled } from "../core/agent.ts";
 import type { Clock } from "../core/clock.ts";
 import type { RpcEvent } from "../core/rpc.ts";
 import type { RpcExtensionUIRequest } from "@earendil-works/pi-coding-agent";
+import type { Telemetry } from "../telemetry.ts";
 import { BlockStream } from "./blocks.ts";
 import { type DialogSurface, Dialogs } from "./dialogs.ts";
 import type { Keyboard, Outbox } from "./outbox.ts";
@@ -28,7 +31,15 @@ export type ViewDeps = {
   dir(agent: Agent): string;
   /** The Mini App link of a chat. */
   link(chatId: number): string;
+  /** Reads a file the agent sent (as the agent's user). */
+  readFile(agent: Agent, path: string): Promise<{ ok: true; data: Buffer } | { ok: false; problem: string }>;
+  t: Telemetry;
 };
+
+/** What the send_file tool (harness, server profile) puts in its result details. */
+type SentFile = { path: string; name: string; size: number; comment: string };
+
+const CAPTION_LIMIT = 1024;
 
 export class AgentView implements AgentListener {
   private readonly deps: ViewDeps;
@@ -36,6 +47,8 @@ export class AgentView implements AgentListener {
   private surface: Surface;
   private readonly dialogs: Dialogs;
   private blocks: BlockStream | undefined;
+  /** Files being delivered, in the order the agent sent them. */
+  private work: Promise<void> = Promise.resolve();
 
   constructor(deps: ViewDeps, agent: Agent, surface: Surface) {
     this.deps = deps;
@@ -83,6 +96,11 @@ export class AgentView implements AgentListener {
     await this.dialogs.interrupt();
   }
 
+  /** Resolves when the files the agent sent so far have been delivered (or reported). */
+  delivered(): Promise<void> {
+    return this.work;
+  }
+
   /** The agent ceased to exist: it no longer reports here. */
   detach(): void {
     if (this.agent.listener === this) this.agent.listener = undefined;
@@ -96,6 +114,17 @@ export class AgentView implements AgentListener {
 
   event(event: RpcEvent): void {
     this.blocks?.onEvent(event);
+    if (event.type === "tool_execution_end" && event.toolName === "send_file" && !event.isError) {
+      const details = (event.result as { details?: Partial<SentFile> } | undefined)?.details;
+      if (details?.path !== undefined && details.name !== undefined) {
+        const file = { path: details.path, name: details.name, size: details.size ?? 0, comment: details.comment ?? "" };
+        this.work = this.work.then(() => this.sendFile(file));
+      } else {
+        this.deps.t.error("file.send", { agent: this.agent.sessionId.slice(0, 8), message: "send_file result without details" });
+      }
+    } else {
+      // other events only show as blocks
+    }
   }
 
   uiRequest(request: RpcExtensionUIRequest): void {
@@ -108,21 +137,26 @@ export class AgentView implements AgentListener {
     const banner = result.banner !== undefined ? bannerLine({ ...result.banner, interrupted: result.aborted || result.banner.interrupted === true }) : result.aborted ? "interrupted" : "finished";
     const line = link(`${this.deps.dir(this.agent)} · ${banner}`, this.deps.link(this.surface.outbox.chatId));
     switch (this.surface.kind) {
-      case "workspace":
-        if (blocks !== undefined) {
-          void blocks.finish(line);
-        } else {
-          void this.surface.outbox.send({ markdown: line }, { silent: false });
-        }
+      case "workspace": {
+        const outbox = this.surface.outbox;
+        void (async () => {
+          const pinned = blocks !== undefined ? await blocks.finish(line) : await outbox.send({ markdown: line }, { silent: false });
+          if (pinned !== undefined) await outbox.pin(pinned);
+        })();
         return;
+      }
       case "background": {
+        const outbox = this.surface.outbox;
         const parts = [this.headerLine(), ...(result.lastText !== "" ? [result.lastText] : []), line].join("\n\n");
         const pages = splitText(parts, PAGE_LIMIT);
         void (async () => {
+          let first: number | undefined;
           for (const [index, page] of pages.entries()) {
             const last = index === pages.length - 1;
-            await this.surface.outbox.send({ markdown: page }, { silent: !last, keyboard: last ? this.attachKeyboard() : undefined });
+            const id = await outbox.send({ markdown: page }, { silent: !last, keyboard: last ? this.attachKeyboard() : undefined });
+            first ??= id;
           }
+          if (first !== undefined) await outbox.pin(first);
         })();
         return;
       }
@@ -150,6 +184,29 @@ export class AgentView implements AgentListener {
   }
 
   /* ------------------------------------------------------------------------ */
+
+  /** A file from send_file: a document where the agent is, with its comment, with sound, pinned. */
+  private async sendFile(file: SentFile): Promise<void> {
+    const outbox = this.surface.outbox;
+    const read = await this.deps.readFile(this.agent, file.path);
+    const fields = { agent: this.agent.sessionId.slice(0, 8), dir: this.deps.dir(this.agent), name: file.name, size: file.size };
+    if (!read.ok) {
+      this.deps.t.error("file.send", { ...fields, message: read.problem });
+      await this.post(`Error: could not send ${file.name}: ${read.problem}`, true);
+    } else {
+      const header = this.surface.kind === "background" ? `${escapeHtml(`${this.deps.dir(this.agent)} · ${this.agent.title || "new session"}`)}\n` : "";
+      const caption = `${header}${escapeHtml(file.comment)}`;
+      const fits = caption.length <= CAPTION_LIMIT;
+      const id = await outbox.sendDocument({ name: file.name, data: read.data }, fits ? caption : header, { silent: false });
+      if (id === undefined) {
+        this.deps.t.error("file.send", { ...fields, message: "sendDocument failed" });
+      } else {
+        this.deps.t.info("file.send", fields);
+        if (!fits) await outbox.send({ html: escapeHtml(file.comment) }, { replyTo: id });
+        await outbox.pin(id);
+      }
+    }
+  }
 
   private newBlocks(outbox: Outbox): BlockStream {
     return new BlockStream(outbox, this.deps.clock, `x:${this.agent.sessionId}`);
