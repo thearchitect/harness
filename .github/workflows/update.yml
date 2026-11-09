@@ -2,8 +2,8 @@
 # primary Linux platform, and fast-forwards master on success. The full matrix
 # runs separately in compatibility.yml. The update commit is pushed to
 # the `auto/update` branch first; pushes made with GITHUB_TOKEN do not trigger
-# other workflows, so this workflow runs the checks and publishes the cache
-# itself.
+# other workflows, so this workflow runs the checks itself (cache publication
+# is off: check.yml).
 name: update
 
 on:
