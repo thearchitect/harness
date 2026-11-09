@@ -49,35 +49,35 @@ body {
   max-width: 50%;
 }
 
-/* A row of actions (buttons, selects, links): equal cells across the whole
-   width, however many are shown (x-show hides a cell entirely). */
-.actions {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: minmax(0, 1fr);
-  gap: 8px;
-}
-
-.actions > * {
-  width: 100%;
-  min-width: 0;
-  text-align: center;
-}
-
-/* Fields side by side: columns by share, never by content — the same three
-   columns as a row of three actions below, so their edges line up. */
+/* A row of controls sits on one three-column grid across the whole width:
+   a button, a select or a link takes a column; a field or a text (.grow)
+   takes two. Three buttons are three equal cells; a field and its button
+   are two columns and one; every row's edges line up with the others. */
+.actions,
 .fields {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
+  align-items: center;
   gap: 8px;
 }
 
+.actions > *,
+.fields > * {
+  width: 100%;
+  min-width: 0;
+}
+
+.actions > .grow,
 .fields > .field:first-child {
   grid-column: span 2;
 }
 
+.actions > :not(.grow) {
+  text-align: center;
+}
+
 /* A field beside a button: the button sits on the field's line, not its label. */
-.row:has(> .field) {
+.actions:has(> .field) {
   align-items: end;
 }
 
@@ -233,8 +233,8 @@ h3 {
   padding: 0 6px;
 }
 
-.fields,
-.actions {
+* + .fields,
+* + .actions {
   margin-top: 8px;
 }
 
@@ -260,7 +260,7 @@ button {
 
 /* Secondary cells are filled too, so a row reads as one even grid. */
 button.destructive,
-.actions > select {
+.actions > select:not(.grow) {
   background: var(--tg-theme-secondary-bg-color, #f1f1f4);
 }
 
@@ -268,7 +268,7 @@ button.destructive {
   color: var(--tg-theme-destructive-text-color, #e53935);
 }
 
-.actions > select {
+.actions > select:not(.grow) {
   text-align-last: center;
 }
 

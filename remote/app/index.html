@@ -55,9 +55,9 @@
           </div>
         </template>
         <template x-if="!here">
-          <div class="card row">
+          <div class="card actions">
             <span class="grow hint">No agent here.</span>
-            <button @click="open('files')">New agent…</button>
+            <button @click="open('files')">New…</button>
           </div>
         </template>
       </section>
@@ -149,7 +149,7 @@
         </template>
         <p class="hint" x-show="dir.truncated">Only the first 500 entries are shown.</p>
       </div>
-      <div class="card row">
+      <div class="card actions">
         <input class="grow" type="text" placeholder="New folder" x-model="folderName" @keydown.enter="newFolder()">
         <button :disabled="busy || folderName.trim() === ''" @click="newFolder()">Create</button>
       </div>
@@ -174,7 +174,7 @@
                 <span class="grow title" x-text="f.provider + '/' + f.id"></span>
                 <label class="toggle"><input type="radio" name="default" :checked="isDefault(f)" @change="setDefault(f)"> default</label>
               </div>
-              <div class="row">
+              <div class="actions">
                 <label class="grow field">Thinking
                   <select @change="f.effort = $event.target.value || undefined; saveSettings()">
                     <option value="" :selected="f.effort === undefined">pi's default</option>
@@ -190,7 +190,7 @@
           <template x-if="settings.patterns.length > 0">
             <p class="hint" x-text="'Also enabled by pattern: ' + settings.patterns.join(', ')"></p>
           </template>
-          <div class="card row">
+          <div class="card actions">
             <select class="grow" x-model="adding">
               <option value="">Add a model…</option>
               <template x-for="m in settings.available.filter((m) => !settings.favorites.some((f) => f.provider === m.provider && f.id === m.id))" :key="m.provider + '/' + m.id">
