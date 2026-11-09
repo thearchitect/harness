@@ -48,7 +48,7 @@
               </label>
             </div>
             <div class="actions">
-              <button x-show="here.status === 'running' || here.status === 'waiting'" :disabled="stale || busy" @click="act({ type: 'stop', agentId: here.id })">Stop</button>
+              <button :disabled="stale || busy || (here.status !== 'running' && here.status !== 'waiting')" @click="act({ type: 'stop', agentId: here.id })">Stop</button>
               <button :disabled="stale || busy" @click="act({ type: 'detach' })">Detach</button>
               <button class="destructive" :disabled="stale || busy" @click="confirmThen('Close the agent? Its session stays in the history.', { type: 'close', agentId: here.id })">Close</button>
             </div>

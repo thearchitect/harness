@@ -23,8 +23,7 @@ body {
 
 .row,
 .bar,
-.bar nav,
-.actions {
+.bar nav {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -32,8 +31,7 @@ body {
 
 .row > *,
 .bar > *,
-.bar nav > *,
-.actions > * {
+.bar nav > * {
   flex: none;
   min-width: 0;
   max-width: 100%;
@@ -51,15 +49,36 @@ body {
   max-width: 50%;
 }
 
+/* A row of actions (buttons, selects, links): equal cells across the whole
+   width, however many are shown (x-show hides a cell entirely). */
 .actions {
-  flex-wrap: wrap;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+  gap: 8px;
 }
 
-/* Fields side by side: columns by share, never by content. */
+.actions > * {
+  width: 100%;
+  min-width: 0;
+  text-align: center;
+}
+
+/* Fields side by side: columns by share, never by content — the same three
+   columns as a row of three actions below, so their edges line up. */
 .fields {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
+}
+
+.fields > .field:first-child {
+  grid-column: span 2;
+}
+
+/* A field beside a button: the button sits on the field's line, not its label. */
+.row:has(> .field) {
+  align-items: end;
 }
 
 .field {
@@ -239,9 +258,18 @@ button {
   color: var(--tg-theme-button-text-color, #fff);
 }
 
+/* Secondary cells are filled too, so a row reads as one even grid. */
+button.destructive,
+.actions > select {
+  background: var(--tg-theme-secondary-bg-color, #f1f1f4);
+}
+
 button.destructive {
-  background: transparent;
   color: var(--tg-theme-destructive-text-color, #e53935);
+}
+
+.actions > select {
+  text-align-last: center;
 }
 
 button.wide {
