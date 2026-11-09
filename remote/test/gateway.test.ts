@@ -496,7 +496,7 @@ describe("gateway", () => {
     } as Omit<Update, "update_id">);
     const transcription = await world.helper.nextTranscription();
     await world.wb.drain();
-    assert.equal(transcription.file, join(world.home, "tmp", `${ARTEM}-920`, "voice.oga"));
+    assert.equal(transcription.file, join(world.home, "tmp", `${ARTEM}-920`, "voice.ogg"));
     assert.equal(world.wb.isQuiescent(), false, "a transcription keeps the machine awake");
     const progress = world.tg.calls.find((c) => c.method === "sendMessage" && c.args[1] === "Transcribing…");
     assert.deepEqual((progress?.args[2] as { reply_parameters?: unknown }).reply_parameters, { message_id: 920, allow_sending_without_reply: true });
@@ -511,9 +511,9 @@ describe("gateway", () => {
     assert.equal(world.tg.of("editMessageText").at(-1)?.[2], "Voice: Привет, мир");
     assert.equal(pi.prompts().at(-1), [
       "Attached files:",
-      `- ${join(world.home, "tmp", `${ARTEM}-920`, "voice.oga")} (5 KB, voice message, 0:42)`,
+      `- ${join(world.home, "tmp", `${ARTEM}-920`, "voice.ogg")} (5 KB, voice message, 0:42)`,
       "",
-      "This message was spoken: its text below is the transcript of the attached voice.oga. Work with the text; the audio needs no processing.",
+      "This message was spoken: its text below is the transcript of the attached voice.ogg. Work with the text; the audio needs no processing.",
       "",
       "Привет, мир",
     ].join("\n"));

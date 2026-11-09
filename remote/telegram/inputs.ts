@@ -61,7 +61,9 @@ export function attachmentsOf(message: Message, fromReply: boolean): Attachment[
   const largest = message.photo?.at(-1);
   if (largest !== undefined) found.push({ ...at, kind: "photo", fileId: largest.file_id, name: `photo-${message.message_id}.jpg`, size: largest.file_size ?? 0 });
   if (message.voice !== undefined) {
-    found.push({ ...at, kind: "voice", fileId: message.voice.file_id, name: "voice.oga", size: message.voice.file_size ?? 0, durationS: message.voice.duration });
+    // OGG/Opus. Telegram calls it .oga; speech-to-text APIs know the format by
+    // its extension and accept .ogg, not .oga.
+    found.push({ ...at, kind: "voice", fileId: message.voice.file_id, name: "voice.ogg", size: message.voice.file_size ?? 0, durationS: message.voice.duration });
   }
   for (const [file, fallback] of [
     [message.document, "file"],
