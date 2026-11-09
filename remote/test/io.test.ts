@@ -256,6 +256,14 @@ describe("accounts, secrets and login (runAs self)", () => {
     }
   });
 
+  test("runAsUser: a command that exits without reading its input is no error (EPIPE)", async () => {
+    // 1 MB never fits the pipe: the write outlives `true`, every time.
+    const result = await runAsUser(config, user, "true", [], Buffer.alloc(1024 * 1024));
+    assert.equal(result.code, 0);
+    const exec = await execAsUser(config, user, "true", [], { timeoutMs: 5_000, maxBytes: 100, input: Buffer.alloc(1024 * 1024) });
+    assert.equal(exec.code, 0);
+  });
+
   test("execAsUser: a deadline and an output cap kill the command and say why", async () => {
     const slow = await execAsUser(config, user, "sleep", ["5"], { timeoutMs: 50, maxBytes: 100 });
     assert.equal(slow.problem, "took longer than 0.05 s");

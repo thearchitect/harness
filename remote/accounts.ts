@@ -101,6 +101,9 @@ export function runAsUser(config: Config, user: UserConfig, command: string, arg
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
     child.on("error", (error) => resolve({ code: null, stdout, stderr: `${stderr}${error.message}` }));
     child.on("close", (code) => resolve({ code, stdout, stderr }));
+    // A command that does not read its input (`[ -e f ] || cat > f` when f
+    // exists) may exit first: EPIPE here, its exit status tells the outcome.
+    child.stdin.on("error", () => undefined);
     child.stdin.end(input ?? "");
   });
 }
