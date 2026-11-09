@@ -26,17 +26,6 @@ jobs:
     with:
       ref: ${{ github.sha }}
       full-matrix: true
-      publish-cache: ${{ github.ref == 'refs/heads/master' }}
+      # Cache publication is off (check.yml).
       force: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
     secrets: inherit
-
-  publish-cache:
-    if: github.ref == 'refs/heads/master'
-    needs: build
-    uses: ./.github/workflows/publish-cache.yml
-    with:
-      ref: ${{ github.sha }}
-    permissions:
-      contents: write
-      actions: read
-      statuses: write

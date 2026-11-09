@@ -58,7 +58,7 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       ref: ${{ needs.bump.outputs.sha }}
-      publish-cache: true
+      # Cache publication is off (check.yml).
     secrets: inherit
 
   merge:
@@ -77,13 +77,3 @@ jobs:
           # Fails (and leaves master alone) if master moved since the bump.
           git push origin "${{ needs.bump.outputs.sha }}:refs/heads/master"
           git push origin --delete auto/update
-
-  publish-cache:
-    needs: [bump, merge]
-    uses: ./.github/workflows/publish-cache.yml
-    with:
-      ref: ${{ needs.bump.outputs.sha }}
-    permissions:
-      contents: write
-      actions: read
-      statuses: write

@@ -1,5 +1,6 @@
 # Reusable: append missing immutable cache assets; never prune other revisions
 # or platforms. The shared release has a single writer across all workflows.
+# Not called at the moment: the release reached GitHub's limit of 1000 assets.
 name: publish-cache
 
 on:

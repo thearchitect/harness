@@ -24,17 +24,7 @@ jobs:
     uses: ./.github/workflows/build.yml
     with:
       ref: ${{ github.sha }}
-      publish-cache: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/master' }}
+      # Cache publication is off: the release hit GitHub's 1000-asset limit
+      # (publish-cache.yml is kept, no workflow calls it).
       force: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
     secrets: inherit
-
-  publish-cache:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/master'
-    needs: build
-    uses: ./.github/workflows/publish-cache.yml
-    with:
-      ref: ${{ github.sha }}
-    permissions:
-      contents: write
-      actions: read
-      statuses: write
