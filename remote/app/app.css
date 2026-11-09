@@ -21,7 +21,7 @@ a {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .bar h2 {
@@ -35,7 +35,7 @@ a {
 }
 
 .crumbs {
-  margin: 4px 0 8px;
+  margin: 0;
   font-size: 14px;
   overflow-wrap: anywhere;
 }
@@ -53,6 +53,20 @@ a {
 }
 
 .list {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.list .line:last-of-type {
+  border-bottom: 0;
+}
+
+.list .hint {
+  margin: 6px 2px;
+}
+
+button.wide {
+  width: 100%;
   margin-top: 8px;
 }
 
@@ -84,7 +98,7 @@ h3 {
   background: var(--tg-theme-section-bg-color, #fff);
   border-radius: 10px;
   padding: 10px 12px;
-  margin-bottom: 8px;
+  margin-bottom: 12px;
 }
 
 .row {

@@ -43,7 +43,7 @@ document.addEventListener("alpine:init", () => {
     levels: {},
     filter: "",
     dir: { path: "~", entries: [], truncated: false, loading: false },
-    showHidden: false,
+    showHidden: true,
     folderName: "",
     settings: undefined,
     adding: "",
@@ -83,6 +83,15 @@ document.addEventListener("alpine:init", () => {
     get crumbs() {
       const parts = this.dir.path.split("/");
       return parts.map((name, i) => ({ name, path: parts.slice(0, i + 1).join("/") }));
+    },
+
+    /** The directory above, or undefined in ~ (nothing above it is shown). */
+    get parent() {
+      return this.crumbs.at(-2)?.path;
+    },
+
+    get shownEntries() {
+      return this.dir.entries.filter((e) => this.showHidden || !e.hidden);
     },
 
     /* screens */

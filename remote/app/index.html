@@ -115,24 +115,27 @@
         <h2 class="grow">Files</h2>
         <label class="toggle"><input type="checkbox" x-model="showHidden"> hidden</label>
       </header>
-      <nav class="crumbs">
-        <template x-for="(c, i) in crumbs" :key="c.path">
-          <span><a href="#" @click.prevent="browse(c.path)" x-text="c.name"></a><span x-show="i < crumbs.length - 1"> / </span></span>
+      <div class="card">
+        <nav class="crumbs">
+          <template x-for="(c, i) in crumbs" :key="c.path">
+            <span><a href="#" @click.prevent="browse(c.path)" x-text="c.name"></a><span x-show="i < crumbs.length - 1"> / </span></span>
+          </template>
+        </nav>
+        <button class="wide" :disabled="stale || busy" @click="act({ type: 'new', dir: dir.path }).then((ok) => ok && back())">Start agent here</button>
+      </div>
+      <div class="card list">
+        <template x-if="dir.loading">
+          <p class="hint">Loading…</p>
         </template>
-      </nav>
-      <div class="actions">
-        <button :disabled="stale || busy" @click="act({ type: 'new', dir: dir.path }).then((ok) => ok && back())">Start agent here</button>
-        <button :disabled="busy" @click="download(dir.path)">Download</button>
-      </div>
-      <div class="card row">
-        <input class="grow" type="text" placeholder="New folder" x-model="folderName" @keydown.enter="newFolder()">
-        <button :disabled="busy || folderName.trim() === ''" @click="newFolder()">Create</button>
-      </div>
-      <template x-if="dir.loading">
-        <p class="hint">Loading…</p>
-      </template>
-      <div class="list">
-        <template x-for="e in dir.entries.filter((e) => showHidden || !e.hidden)" :key="e.name">
+        <template x-if="parent !== undefined">
+          <div class="row line">
+            <a href="#" class="grow" @click.prevent="browse(parent)">..</a>
+          </div>
+        </template>
+        <template x-if="!dir.loading && shownEntries.length === 0">
+          <p class="hint">Empty.</p>
+        </template>
+        <template x-for="e in shownEntries" :key="e.name">
           <div class="row line">
             <template x-if="e.kind === 'dir'">
               <a href="#" class="grow" @click.prevent="browse(dir.path + '/' + e.name)" x-text="e.name + '/'"></a>
@@ -144,8 +147,12 @@
             <a href="#" class="icon" title="Download" @click.prevent="download(dir.path + '/' + e.name)">↓</a>
           </div>
         </template>
+        <p class="hint" x-show="dir.truncated">Only the first 500 entries are shown.</p>
       </div>
-      <p class="hint" x-show="dir.truncated">Only the first 500 entries are shown.</p>
+      <div class="card row">
+        <input class="grow" type="text" placeholder="New folder" x-model="folderName" @keydown.enter="newFolder()">
+        <button :disabled="busy || folderName.trim() === ''" @click="newFolder()">Create</button>
+      </div>
     </main>
   </template>
 
