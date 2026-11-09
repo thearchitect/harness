@@ -1,5 +1,105 @@
 /* Telegram's theme (--tg-theme-*), compact lists, mobile first. */
 
+/* ── Layout primitives ─────────────────────────────────────────────────────
+   Nothing is ever wider than the screen, by construction:
+   - every box counts its padding and border in its width;
+   - a flex or grid child may shrink below its content (min-width: 0); only
+     .grow takes the free space, everything else in a row keeps its size;
+   - a field fills its column and never exceeds it;
+   - one-line text (.clip, .title, buttons) ends with an ellipsis, running
+     text wraps anywhere.
+   The rest of the sheet styles on top of these and never sets widths. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  overflow-x: clip; /* a backstop: the rules above already keep things inside */
+}
+
+.row,
+.bar,
+.bar nav,
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.row > *,
+.bar > *,
+.bar nav > *,
+.actions > * {
+  flex: none;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.row > .grow,
+.bar > .grow {
+  flex: 1 1 0;
+}
+
+/* A clipped side note (a path) gives way too, and never takes more than half
+   of the row: the .grow beside it stays readable. */
+.row > .clip:not(.grow) {
+  flex: 0 1 auto;
+  max-width: 50%;
+}
+
+.actions {
+  flex-wrap: wrap;
+}
+
+/* Fields side by side: columns by share, never by content. */
+.fields {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+select,
+input:not([type="checkbox"]):not([type="radio"]) {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.field > select,
+.field > input,
+input[type="search"],
+button.wide,
+button.session {
+  width: 100%;
+}
+
+.clip,
+.title,
+button {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.hint,
+.problem,
+.crumbs,
+p {
+  overflow-wrap: anywhere;
+}
+
+/* ── Look ──────────────────────────────────────────────────────────────── */
+
 :root {
   color-scheme: light dark;
   font: 15px/1.35 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -12,64 +112,6 @@ html {
   text-size-adjust: 100%;
 }
 
-a {
-  color: var(--tg-theme-link-color, #2481cc);
-  text-decoration: none;
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-
-.bar h2 {
-  margin: 0;
-}
-
-.bar nav {
-  display: flex;
-  gap: 14px;
-  font-size: 14px;
-}
-
-.crumbs {
-  margin: 0;
-  font-size: 14px;
-  overflow-wrap: anywhere;
-}
-
-.toggle {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 13px;
-  color: var(--tg-theme-hint-color, #8e8e93);
-}
-
-.icon {
-  padding: 0 6px;
-}
-
-.list {
-  padding-top: 4px;
-  padding-bottom: 4px;
-}
-
-.list .line:last-of-type {
-  border-bottom: 0;
-}
-
-.list .hint {
-  margin: 6px 2px;
-}
-
-button.wide {
-  width: 100%;
-  margin-top: 8px;
-}
-
 body {
   margin: 0;
   padding: 12px 12px calc(12px + var(--tg-safe-area-inset-bottom, 0px));
@@ -79,6 +121,11 @@ body {
 
 body.stale main {
   opacity: 0.6;
+}
+
+a {
+  color: var(--tg-theme-link-color, #2481cc);
+  text-decoration: none;
 }
 
 h2 {
@@ -94,6 +141,20 @@ h3 {
   color: var(--tg-theme-section-header-text-color, #6d6d72);
 }
 
+.bar {
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.bar h2 {
+  margin: 0;
+}
+
+.bar nav {
+  gap: 14px;
+  font-size: 14px;
+}
+
 .card {
   background: var(--tg-theme-section-bg-color, #fff);
   border-radius: 10px;
@@ -101,10 +162,8 @@ h3 {
   margin-bottom: 12px;
 }
 
-.row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.card > .row + .row {
+  margin-top: 8px;
 }
 
 .line {
@@ -112,16 +171,21 @@ h3 {
   border-bottom: 1px solid var(--tg-theme-section-separator-color, #e5e5ea);
 }
 
-.grow {
-  flex: 1;
-  min-width: 0;
+.list {
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.list .line:last-of-type {
+  border-bottom: 0;
+}
+
+.list .hint {
+  margin: 6px 2px;
 }
 
 .title {
   font-weight: 500;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .hint {
@@ -133,26 +197,31 @@ h3 {
   color: var(--tg-theme-destructive-text-color, #e53935);
 }
 
-.fields {
-  display: flex;
-  gap: 8px;
-  margin-top: 8px;
+.crumbs {
+  margin: 0;
+  font-size: 14px;
 }
 
-.fields label {
-  flex: 1;
+.toggle {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  font-size: 12px;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
   color: var(--tg-theme-hint-color, #8e8e93);
 }
 
+.icon {
+  padding: 0 6px;
+}
+
+.fields,
 .actions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
   margin-top: 8px;
+}
+
+.field {
+  font-size: 12px;
+  color: var(--tg-theme-hint-color, #8e8e93);
 }
 
 button,
@@ -175,6 +244,10 @@ button.destructive {
   color: var(--tg-theme-destructive-text-color, #e53935);
 }
 
+button.wide {
+  margin-top: 8px;
+}
+
 button:disabled,
 select:disabled {
   opacity: 0.5;
@@ -184,12 +257,9 @@ select,
 input {
   background: var(--tg-theme-bg-color, #fff);
   color: var(--tg-theme-text-color, #000);
-  min-width: 0;
 }
 
 input[type="search"] {
-  width: 100%;
-  box-sizing: border-box;
   margin-bottom: 8px;
 }
 
@@ -197,13 +267,18 @@ button.session {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  width: 100%;
   text-align: left;
   margin-bottom: 6px;
   background: var(--tg-theme-section-bg-color, #fff);
   color: var(--tg-theme-text-color, #000);
 }
 
-button.session .title {
+button.session > * {
   max-width: 100%;
+}
+
+button.session .hint {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }

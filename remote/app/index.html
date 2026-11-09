@@ -17,7 +17,7 @@
   <template x-if="state && screen === 'main'">
     <main>
       <header class="bar">
-        <h2 class="grow" x-text="state.workspace.title"></h2>
+        <h2 class="grow clip" x-text="state.workspace.title"></h2>
         <nav>
           <a href="#" @click.prevent="open('files')">Files</a>
           <a href="#" @click.prevent="open('models')">Models</a>
@@ -30,7 +30,7 @@
             <div class="title" x-text="here.dir + ' · ' + here.title"></div>
             <div class="hint" x-text="statusText(here)"></div>
             <div class="fields">
-              <label>Model
+              <label class="field">Model
                 <select :disabled="stale || busy" @focus="loadModels(here.id)" @change="act({ type: 'model', agentId: here.id, provider: $event.target.value.split('/')[0], id: $event.target.value.split('/').slice(1).join('/') })">
                   <option x-text="here.model ?? 'not started'" :value="here.model ?? ''" selected></option>
                   <template x-for="m in (models[here.id] ?? []).filter((m) => m !== here.model)" :key="m">
@@ -38,7 +38,7 @@
                   </template>
                 </select>
               </label>
-              <label>Thinking
+              <label class="field">Thinking
                 <select :disabled="stale || busy" @focus="loadLevels(here.id)" @change="act({ type: 'thinking', agentId: here.id, level: $event.target.value })">
                   <option x-text="here.thinking ?? '—'" :value="here.thinking ?? ''" selected></option>
                   <template x-for="l in (levels[here.id] ?? []).filter((l) => l !== here.thinking)" :key="l">
@@ -86,8 +86,8 @@
         <h3>Workspaces</h3>
         <template x-for="w in state.workspaces" :key="w.id">
           <div class="row line">
-            <span class="grow" x-text="w.title"></span>
-            <span class="hint" x-text="agentDir(w.agentId)"></span>
+            <span class="grow clip" x-text="w.title"></span>
+            <span class="hint clip" x-text="agentDir(w.agentId)"></span>
           </div>
         </template>
       </section>
@@ -138,10 +138,10 @@
         <template x-for="e in shownEntries" :key="e.name">
           <div class="row line">
             <template x-if="e.kind === 'dir'">
-              <a href="#" class="grow" @click.prevent="browse(dir.path + '/' + e.name)" x-text="e.name + '/'"></a>
+              <a href="#" class="grow clip" @click.prevent="browse(dir.path + '/' + e.name)" x-text="e.name + '/'"></a>
             </template>
             <template x-if="e.kind !== 'dir'">
-              <span class="grow" x-text="e.name"></span>
+              <span class="grow clip" x-text="e.name"></span>
             </template>
             <span class="hint" x-show="e.kind === 'file'" x-text="size(e.size)"></span>
             <a href="#" class="icon" title="Download" @click.prevent="download(dir.path + '/' + e.name)">↓</a>
@@ -175,7 +175,7 @@
                 <label class="toggle"><input type="radio" name="default" :checked="isDefault(f)" @change="setDefault(f)"> default</label>
               </div>
               <div class="row">
-                <label class="grow">Thinking
+                <label class="grow field">Thinking
                   <select @change="f.effort = $event.target.value || undefined; saveSettings()">
                     <option value="" :selected="f.effort === undefined">pi's default</option>
                     <template x-for="l in levelsOf(f)" :key="l">
