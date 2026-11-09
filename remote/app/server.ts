@@ -43,7 +43,6 @@ const SESSIONS_SHOWN = 50;
 type Action =
   | { type: "new"; dir: string }
   | { type: "resume"; sessionId: string }
-  | { type: "attach"; agentId: string }
   | { type: "move"; agentId: string; to: number }
   | { type: "detach" }
   | { type: "close"; agentId: string }
@@ -79,8 +78,6 @@ export function createApp(deps: AppDeps): AppHandler {
         return wb.newAgent(user, chatId, action.dir);
       case "resume":
         return wb.resume(user, chatId, action.sessionId);
-      case "attach":
-        return wb.attach(user, chatId, action.agentId);
       case "move":
         return wb.attach(user, action.to, action.agentId);
       case "detach":

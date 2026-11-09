@@ -69,7 +69,7 @@ Inside `nix develop` (flyctl, skopeo, cage):
   (`send_file`, pinned); folders as a zip.
 - **Mini App.** Status lines (the banner, the agent's header, "No agent
   here.") open it: the agent here (model, thinking, stop, detach, close),
-  your agents (here, move to, close), your workspaces, the session history
+  your agents (move here or to another workspace, close), your workspaces, the session history
   (resume here); *Files* (browse ~, new folder, download, start an agent
   there) and *Models* (favorites with their thinking level, the default for
   new agents). `/sessions`, `/model`, `/thinking` link to it.
