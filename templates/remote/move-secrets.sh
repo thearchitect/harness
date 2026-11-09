@@ -44,8 +44,8 @@ filter="cat"
 if [[ ${#keys[@]} -gt 0 ]]; then
   filter="grep -E '^($(IFS='|'; echo "${keys[*]}"))='"
 fi
-# The script travels base64-encoded: no quoting survives ssh, sh and runuser intact.
-script="$(printf 'exec runuser -u %s -- env -i HOME=%s PATH=/bin sh -c %q' "$name" "$home" "cd \"\$HOME\" && cage dump -o /dev/stdout @harness | $filter" | base64 -w0)"
+# The script travels base64-encoded: no quoting survives ssh, sh and setpriv intact.
+script="$(printf 'exec setpriv --reuid=%s --regid=%s --clear-groups env -i HOME=%s PATH=/bin sh -c %q' "$name" "$name" "$home" "cd \"\$HOME\" && cage dump -o /dev/stdout @harness | $filter" | base64 -w0)"
 cage import "$file" - flyctl ssh console -a "$FLY_APP" -q -C "sh -c 'echo $script | base64 -d | sh'"
 
 # The env of the user's agents carries the file from now on.

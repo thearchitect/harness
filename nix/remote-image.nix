@@ -100,7 +100,7 @@ pkgs.dockerTools.streamLayeredImage {
       gzip
       which
       procps
-      util-linux # runuser: operator commands as a user (move-secrets.sh)
+      util-linux # setpriv: operator commands as a user (move-secrets.sh)
       less
       git
       openssh
