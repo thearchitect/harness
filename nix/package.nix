@@ -149,7 +149,16 @@ let
   # ask_user: its RPC dialogs cannot render options natively, the model asks
   # in plain text instead.
   serverPiPackages = lib.remove "pi-ask-user" piPackages;
-  packageFlags = packages: lib.concatMapStringsSep " " (p: "-e ${nodeModules}/${p}") packages;
+  # `-e <file>` loads only that extension, `-e <dir>` the whole package with
+  # its skills. pi-ask-user loads without its ask-user skill: when and how to
+  # ask is the harness's own rule (prompt.yaml operator_questions and
+  # tool_guidelines.ask_user).
+  piPackageEntries = {
+    "pi-ask-user" = "pi-ask-user/index.ts";
+  };
+  packageFlags =
+    packages:
+    lib.concatMapStringsSep " " (p: "-e ${nodeModules}/${piPackageEntries.${p} or p}") packages;
 
   # The cage skill is cage's own (`cage skill`): it always matches the bundled cage.
   cageSkill = runCommand "cage-skill" { } ''

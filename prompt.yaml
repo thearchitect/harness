@@ -7,6 +7,8 @@
 #   sections    → markdown blocks rendered as <key> after pi's <cwd>, following <tools> and <rules>;
 #                 {{WORKSPACE_TMP}} is filled per session, {{PI_README}}, {{PI_DOCS}} and
 #                 {{PI_EXAMPLES}} with the paths of the running pi.
+#   tool_guidelines → per tool name: the bullet in <rules> that replaces the tool's own guidelines;
+#                 rendered only while that tool is declared.
 #   guidelines  → bullets in <rules>, in this order, after the guidelines of the declared tools.
 #
 # All of it is mode-independent, so PLAN/BUILD switches never change the prompt
@@ -139,6 +141,14 @@ sections:
     - Topics: extensions (`docs/extensions.md`, `examples/extensions/`), themes (`docs/themes.md`), skills (`docs/skills.md`), prompt templates (`docs/prompt-templates.md`), TUI components (`docs/tui.md`), keybindings (`docs/keybindings.md`), SDK integrations (`docs/sdk.md`), custom providers (`docs/custom-provider.md`), models (`docs/models.md`), pi packages (`docs/packages.md`), environment variables (`docs/environment-variables.md`), MCP servers (`docs/mcp.md`), codemode scripts and non-LLM models (`docs/codemode.md`).
     - Read pi `.md` files completely and follow their cross-references before implementing.
 
+tool_guidelines:
+  # Replaces pi-ask-user's own guidelines: the dialog is the exception to operator_questions.
+  ask_user: >-
+    Use `ask_user` only when the operator asks for it or when the work cannot continue without an answer
+    before the reply ends. Give the background for the answers in the chat before the call, and give each
+    question a `context` sufficient on its own to answer it. Ask one decision per question; batch through
+    `questions` only independent decisions, and ask one that depends on another answer in a later call.
+
 guidelines:
   # Keeps every file change on write/edit and lsp_refactor, so mutation gates, review and diffs apply.
   file_edit: >-
@@ -235,6 +245,12 @@ guidelines:
     the correction or wait for a new request unless the user explicitly asks you to stop, pause, or wait.
     The same comment may appear in both a tool result and a steered user message; treat these as one
     correction, not two separate requests. `Stop` and `Esc` remain explicit run-stopping controls.
+
+  # Questions collect at the end of the final reply, answerable from the reply alone.
+  operator_questions: >-
+    Questions to the operator, if any, go at the end of your final reply unless the operator directs
+    otherwise, and the reply gives everything their answers rest on, so the operator can decide from it
+    alone, without studying the code, architecture or documentation.
 
   reply_language: >-
     Answer in the language the user started the conversation in.

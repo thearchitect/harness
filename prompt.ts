@@ -7,7 +7,9 @@
  * assembleSystemPrompt renders their replacements from prompt.yaml and from
  * the same options pi would use. pi still renders <addendum>
  * (APPEND_SYSTEM.md), <project_context>, <skills> and <cwd>, and other
- * extensions keep contributing their own sections.
+ * extensions keep contributing their own sections. A declared tool's rules in
+ * <rules> are its own promptGuidelines unless prompt.yaml `tool_guidelines`
+ * replaces them.
  *
  * Limits of the pi 1.4 extension API, accepted by design:
  * - pi re-renders its own <tools>/<rules> before every turn; these are
@@ -39,6 +41,8 @@ type SectionName = (typeof SECTION_NAMES)[number];
 type PromptConfig = {
   preamble: string;
   sections: Record<SectionName, string>;
+  /** Per tool name: the rule that replaces the tool's own promptGuidelines. */
+  toolGuidelines: Record<string, string>;
   guidelines: string[];
 };
 
@@ -113,6 +117,7 @@ function loadPromptConfig(): PromptConfig {
       sections: Object.fromEntries(
         SECTION_NAMES.map((name) => [name, text(sections[name], `sections.${name}`)]),
       ) as Record<SectionName, string>,
+      toolGuidelines: textMap(top.tool_guidelines, "tool_guidelines"),
       guidelines: Object.values(textMap(top.guidelines, "guidelines")),
     };
   }
@@ -138,14 +143,25 @@ function renderTools(declaredTools: string[], toolSnippets: Record<string, strin
   }
 }
 
-/** Bullets in order, each once: the declared tools' guidelines, then the given ones. */
+/**
+ * Bullets in order, each once: the declared tools' guidelines (prompt.yaml's
+ * replacement where it has one), then the given ones.
+ */
 function renderRules(
   declaredTools: string[],
   toolGuidelines: Record<string, string[]>,
   guidelines: string[],
 ): string {
+  const toolRules = declaredTools.flatMap((name) => {
+    const replacement = PROMPT.toolGuidelines[name];
+    if (replacement !== undefined) {
+      return [replacement];
+    } else {
+      return toolGuidelines[name] ?? [];
+    }
+  });
   const rules = new Set<string>();
-  for (const rule of [...declaredTools.flatMap((name) => toolGuidelines[name] ?? []), ...guidelines]) {
+  for (const rule of [...toolRules, ...guidelines]) {
     const normalized = rule.trim();
     if (normalized !== "") {
       rules.add(normalized);

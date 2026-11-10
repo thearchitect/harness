@@ -38,7 +38,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
 - `tool_send_file.ts` — `send_file` (server profile only): a file to the user in Telegram, delivered by `remote/`
 - `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
-- `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `guidelines` (bullets in `<rules>`, in order)
+- `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `tool_guidelines` (a declared tool's rule replacing its own guidelines), `guidelines` (bullets in `<rules>`, in order)
 - `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (`core/`: agents, workspaces, pi processes; `telegram/`: chats; `app/`: the Mini App; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
 - `gate.ts` — the write/edit gate's pure parts: BUILD's review by profile (the server profile builds without asking) and the gate as plain select/input dialogs outside the TUI
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `server` (server profile only); the `cage` skill is cage's own `cage skill`, generated at build time (manifest `skills`)
@@ -57,9 +57,11 @@ demand → `skills/`. A file that defines tools for the model is named
 The harness owns the whole system prompt. It sets pi's `customPrompt` (the
 documented `SYSTEM.md` mechanism), so pi's built-in preamble, `<tools>`,
 `<rules>` and `<docs>` never appear; `prompt.ts` renders the preamble,
-`<tools>`, `<rules>` (guidelines of the declared tools, then `prompt.yaml`
+`<tools>`, `<rules>` (guidelines of the declared tools, each replaced by its
+`prompt.yaml` `tool_guidelines` entry where there is one, then `prompt.yaml`
 `guidelines`, then other extensions' `promptGuidelines`) and the `prompt.yaml`
-sections. pi still renders `<addendum>` (`APPEND_SYSTEM.md`),
+sections. `pi-ask-user` is loaded as an extension file, without its `ask-user`
+skill: when and how to ask is `prompt.yaml`'s own rule. pi still renders `<addendum>` (`APPEND_SYSTEM.md`),
 `<project_context>`, `<skills>` and `<cwd>`; other extensions add their own
 sections. A `SYSTEM.md` is appended after the harness preamble, with a notice.
 

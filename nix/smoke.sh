@@ -56,7 +56,8 @@ else
   fail "pi --help loads the bundled extensions" "$WORK/help.log"
 fi
 # Profiles: the server profile (Telegram gateway) loads no ask_user; both load
-# the bundled skills.
+# the bundled skills, and neither the ask-user skill (pi-ask-user loads as an
+# extension file, its rule lives in prompt.yaml).
 # rpc_commands <log> [env...]: the command names pi reports over RPC.
 rpc_commands() {
   local log="$1"
@@ -67,10 +68,10 @@ rpc_commands() {
 }
 desktop_commands="$(rpc_commands "$WORK/rpc-desktop.log" HARNESS_PROFILE=)"
 server_commands="$(rpc_commands "$WORK/rpc-server.log" HARNESS_PROFILE=server)"
-if grep -qx 'skill:ask-user' <<<"$desktop_commands" && grep -qx 'skill:cage' <<<"$desktop_commands" && grep -qx 'madness' <<<"$desktop_commands" && ! grep -qx 'skill:server' <<<"$desktop_commands"; then
-  pass "desktop profile: ask-user and cage skills, madness, no server skill"
+if ! grep -qx 'skill:ask-user' <<<"$desktop_commands" && grep -qx 'skill:cage' <<<"$desktop_commands" && grep -qx 'madness' <<<"$desktop_commands" && ! grep -qx 'skill:server' <<<"$desktop_commands"; then
+  pass "desktop profile: cage skill, madness, no ask-user or server skill"
 else
-  fail "desktop profile: ask-user and cage skills, madness, no server skill" "$WORK/rpc-desktop.log"
+  fail "desktop profile: cage skill, madness, no ask-user or server skill" "$WORK/rpc-desktop.log"
 fi
 if ! grep -qx 'skill:ask-user' <<<"$server_commands" && ! grep -qx 'madness' <<<"$server_commands" && grep -qx 'skill:cage' <<<"$server_commands" && grep -qx 'skill:server' <<<"$server_commands" && grep -qx 'deps' <<<"$server_commands"; then
   pass "server profile: no ask-user, no madness, cage and server skills, harness loaded"
