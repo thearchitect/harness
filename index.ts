@@ -51,6 +51,7 @@ import {
   wrapTextWithAnsi,
   type Component,
   type EditorTheme,
+  type KeyId,
   type TUI,
 } from "@earendil-works/pi-tui";
 import { realpath } from "node:fs/promises";
@@ -191,15 +192,24 @@ function applyModeColor(mode: TurnMode, colorMode: ColorMode, text: string): str
 }
 
 class PerMessageModeEditor extends CustomEditor {
+  private readonly modeKeybindings: KeybindingsManager;
+  private readonly modeBorderColors: Record<TurnMode, EditorTheme["borderColor"]>;
+  private readonly inheritedMode: () => TurnMode | undefined;
+  private readonly onModeSelected: (mode: TurnMode) => void;
+
   constructor(
     tui: TUI,
     theme: EditorTheme,
-    private readonly modeKeybindings: KeybindingsManager,
-    private readonly modeBorderColors: Record<TurnMode, EditorTheme["borderColor"]>,
-    private readonly inheritedMode: () => TurnMode | undefined,
-    private readonly onModeSelected: (mode: TurnMode) => void,
+    modeKeybindings: KeybindingsManager,
+    modeBorderColors: Record<TurnMode, EditorTheme["borderColor"]>,
+    inheritedMode: () => TurnMode | undefined,
+    onModeSelected: (mode: TurnMode) => void,
   ) {
     super(tui, theme, modeKeybindings);
+    this.modeKeybindings = modeKeybindings;
+    this.modeBorderColors = modeBorderColors;
+    this.inheritedMode = inheritedMode;
+    this.onModeSelected = onModeSelected;
   }
 
   override render(width: number): string[] {
@@ -226,6 +236,42 @@ class PerMessageModeEditor extends CustomEditor {
 
     super.handleInput(data);
   }
+}
+
+// ------------------------------------------------------------------
+// Keybindings: harness submit defaults
+// ------------------------------------------------------------------
+// Ctrl+Enter submits, Enter inserts a new line - unless keybindings.json
+// assigns either action: then both keep pi's defaults, so a user's "submit:
+// enter" never meets the harness's "newLine: enter" (new line wins).
+// The definitions are pi's module-level objects, shared by every manager in
+// the process and surviving extension reloads; pi's own defaults are kept
+// process-wide to restore them when the user takes the keys over.
+
+type SubmitKeybinding = "tui.input.submit" | "tui.input.newLine";
+type SubmitKeys = Record<SubmitKeybinding, KeyId | KeyId[]>;
+
+const HARNESS_SUBMIT_KEYS: SubmitKeys = {
+  "tui.input.submit": ["ctrl+enter"],
+  "tui.input.newLine": ["enter", "shift+enter", "ctrl+j"],
+};
+const PI_SUBMIT_KEYS = Symbol.for("harness.submitKeys.piDefaults");
+
+export function applySubmitKeyDefaults(keybindings: KeybindingsManager): void {
+  // The file as it is now: on /reload session_start runs before pi rereads it.
+  keybindings.reload();
+  const store = globalThis as { [PI_SUBMIT_KEYS]?: SubmitKeys };
+  const piKeys = (store[PI_SUBMIT_KEYS] ??= {
+    "tui.input.submit": keybindings.getDefinition("tui.input.submit").defaultKeys,
+    "tui.input.newLine": keybindings.getDefinition("tui.input.newLine").defaultKeys,
+  });
+  const userBindings = keybindings.getUserBindings();
+  const userOwned =
+    userBindings["tui.input.submit"] !== undefined || userBindings["tui.input.newLine"] !== undefined;
+  const defaults = userOwned ? piKeys : HARNESS_SUBMIT_KEYS;
+  keybindings.getDefinition("tui.input.submit").defaultKeys = defaults["tui.input.submit"];
+  keybindings.getDefinition("tui.input.newLine").defaultKeys = defaults["tui.input.newLine"];
+  keybindings.setUserBindings(userBindings); // rebuild with the new defaults
 }
 
 function applyModeWorkingMessage(ctx: ExtensionContext, mode: TurnMode): void {
@@ -626,11 +672,15 @@ class GateDialog implements Component {
  * steer message.
  */
 class GateCommentRow implements Component {
-  constructor(
-    private readonly base: Component,
-    private readonly theme: Theme,
-    private readonly comment: string,
-  ) {}
+  private readonly base: Component;
+  private readonly theme: Theme;
+  private readonly comment: string;
+
+  constructor(base: Component, theme: Theme, comment: string) {
+    this.base = base;
+    this.theme = theme;
+    this.comment = comment;
+  }
 
   invalidate(): void {
     this.base.invalidate();
@@ -1277,6 +1327,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
           theme: EditorTheme,
           keybindings: KeybindingsManager,
         ): PerMessageModeEditor => {
+          applySubmitKeyDefaults(keybindings);
           const colorMode = ctx.ui.theme.getColorMode();
           const modeBorderColors: Record<TurnMode, EditorTheme["borderColor"]> = {
             plan: (text: string): string => applyModeColor("plan", colorMode, text),
