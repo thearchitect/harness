@@ -10,6 +10,7 @@
   fetchurl,
   importNpmLock,
   nodejs,
+  patchelfUnstable,
   autoPatchelfHook,
   libxcb,
   writeText,
@@ -81,7 +82,10 @@ let
       pname = "harness-npm-tools";
       version = harnessVersion;
       npmRebuildFlags = [ "--ignore-scripts" ];
-      nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [ autoPatchelfHook ];
+      nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [
+        patchelfUnstable
+        autoPatchelfHook
+      ];
       buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
         stdenv.cc.cc.lib
         libxcb # pi-tui's X11 clipboard addon
