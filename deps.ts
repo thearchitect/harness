@@ -159,12 +159,12 @@ export function bundledMcpServers(bin: Manifest["bin"], profile: Profile): Recor
 function lightpandaServer(bin: Manifest["bin"]): McpServerConfig {
   return {
     description:
-      "Headless JS-capable browser: open pages, render to markdown, links, clicks, forms, fallback web search",
+      "Headless JS-capable browser: web search, open pages, render to markdown, links, clicks, forms",
     command: bin.lightpanda,
     args: ["mcp"],
     env: { LIGHTPANDA_DISABLE_TELEMETRY: "true" },
     timeout: 60,
-    toolExposure: { goto: "direct", markdown: "direct" },
+    toolExposure: { search: "direct", goto: "direct", markdown: "direct" },
   };
 }
 
