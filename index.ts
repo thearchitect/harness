@@ -94,6 +94,8 @@ type ProviderConfig = { modelOverrides?: Record<string, ModelOverrideConfig> };
 type ExtensionConfig = {
   /** Debug aid: dump the assembled system prompt into the transcript on the session's first request (display-only, never sent to the model). */
   showSystemPromptOnFirstRun?: boolean;
+  /** Bundled MCP servers by name: false registers the server disabled (listed in /mcp, not started); absent means enabled. */
+  mcpServers: Record<string, boolean>;
   providers: Record<string, ProviderConfig>;
 };
 
@@ -107,6 +109,7 @@ type ExtensionConfig = {
  */
 const CONFIG: ExtensionConfig = {
   showSystemPromptOnFirstRun: true,
+  mcpServers: { playwright: false, "chromium-devtools": false },
   providers: {
     "openai-codex": {
       modelOverrides: {
@@ -839,7 +842,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   ];
   if ("manifest" in bundle) {
     for (const [name, config] of Object.entries(bundledMcpServers(bundle.manifest.bin, profile))) {
-      pi.registerMcpServer(name, config);
+      pi.registerMcpServer(name, { ...config, enabled: CONFIG.mcpServers[name] ?? true });
     }
   } else {
     // pi was not started through the launcher: no bundled servers
