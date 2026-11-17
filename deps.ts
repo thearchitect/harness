@@ -140,9 +140,16 @@ export function lspToolchain(manifest: Manifest): { toolchain: Toolchain } | { p
  * ------------------------------------------------------------------------- */
 
 /**
- * Exposure policy: read-only tools go to codemode, where the model discovers
- * and batches them (fan-out over many symbols in one script); tools that write
- * files are direct, so every write is a visible call in the transcript.
+ * Exposure policy. A declared tool costs every request, and a change to the
+ * declared set mid-session misses the prompt cache. So: direct only for the
+ * frequent tools of the main flow, on a local server that is always enabled
+ * and connects at once (lightpanda `search`, `markdown`); everything else
+ * codemode - discovered and called in scripts, which never changes the
+ * declared set. No `deferred`: tool_search loads declarations. Servers that
+ * can be toggled in /mcp or connect late (user-browser servers) stay codemode
+ * for the same reason. Tools that write files (lightpanda `download`) are not
+ * gated, like `bash`. Tools we cannot use are hidden, so scripts never find
+ * them.
  */
 export function bundledMcpServers(bin: Manifest["bin"], profile: Profile): Record<string, McpServerConfig> {
   switch (profile) {
@@ -164,7 +171,21 @@ function lightpandaServer(bin: Manifest["bin"]): McpServerConfig {
     args: ["mcp"],
     env: { LIGHTPANDA_DISABLE_TELEMETRY: "true" },
     timeout: 60,
-    toolExposure: { search: "direct", goto: "direct", markdown: "direct" },
+    toolExposure: {
+      search: "direct",
+      markdown: "direct",
+      // record-and-replay scripts: not part of our workflow
+      save: "hidden",
+      run: "hidden",
+      // need TypeSafe (TYPESAFE_API_KEY), not provided
+      acceptCookies: "hidden",
+      login: "hidden",
+      classify: "hidden",
+      // HTTP transport only; lightpanda runs over stdio here
+      session_new: "hidden",
+      session_list: "hidden",
+      session_close: "hidden",
+    },
   };
 }
 
