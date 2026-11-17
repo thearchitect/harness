@@ -58,13 +58,15 @@ persistent profile.
 - See the page with `return await page.screenshot()` — the viewport; `{ fullPage: true }` for the
   whole page; `page.locator("…").screenshot()` for one element. Prefer a screenshot over the outline
   when the look matters: a CAPTCHA, an overlay, the layout.
-- The operator is needed — a login, a CAPTCHA, a check you cannot pass: `show({ profile })` reopens
-  the browser in a visible window and returns that page — reopening resets in-page state, so ask
-  about the page `show` returned, not the one you saw before. Ask with `ask_user` what to do in the
-  window (options: done / could not) and wait; never act in the window before the answer. After it,
-  inspect the page first, then continue with `run`. The window stays until the operator closes it;
-  then `run` reopens headless at the last page and says so — inspect again. To close it yourself on
-  request: `await context.close()`. Never type the operator's credentials yourself.
+- The operator is needed — a login, a CAPTCHA, a check you cannot pass: first tell the operator with
+  `ask_user` that you are about to open a visible browser window and why (options: open / not now);
+  on "not now", do not open it and report that the task waits for this step. Then `show({ profile })`
+  reopens the browser in a visible window and returns that page — reopening resets in-page state, so
+  ask about the page `show` returned, not the one you saw before. Ask with `ask_user` what to do in
+  the window (options: done / could not) and wait; never act in the window before the answer. After
+  it, inspect the page first, then continue with `run`. The window stays until the operator closes
+  it; then `run` reopens headless at the last page and says so — inspect again. To close it yourself
+  on request: `await context.close()`. Never type the operator's credentials yourself.
 - Keep a human pace: one page at a time, no parallel crawling.
 - `show` fails where no window can be shown (the server): report it.
 
