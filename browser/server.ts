@@ -6,10 +6,10 @@
  *
  * Tools:
  * - run: Playwright code on the live page of a persistent profile;
- * - show: the same profile in a visible window, until the operator closes it.
+ * - show: the same profile in a visible window for the operator.
  */
 
-import { McpServer, type CallToolResult, type ServerContext } from "@modelcontextprotocol/server";
+import { McpServer, type CallToolResult } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import * as z from "zod";
 import { Browser, browserExecutable, canShowWindow } from "./browser.ts";
@@ -33,7 +33,9 @@ function serve(browser: Browser): void {
           "Run Playwright code on the live page of a persistent Chromium profile (Patchright: no automation marks; headless).",
           "`script` is the body of an async function with `page` and `context` in scope; its return value comes back:",
           "a string as text, a screenshot (`return await page.screenshot()`) as an image, anything else as JSON.",
-          "The page stays open between calls; `url` navigates first. Another `profile` closes the current browser and opens that one.",
+          "The page stays open between calls, headless or in the operator's window (see `show`); `url` navigates first.",
+          "A browser closed in the meantime (the operator closed the window) reopens headless at its last page, and the result starts with a note saying so.",
+          "Another `profile` closes the current browser and opens that one.",
         ].join(" "),
         inputSchema: z.object({
           profile: PROFILE,
@@ -45,7 +47,7 @@ function serve(browser: Browser): void {
       },
       async ({ profile, url, script }): Promise<CallToolResult> => {
         try {
-          return { content: [await browser.run(profile, url, script)] };
+          return { content: await browser.run(profile, url, script) };
         } catch (error) {
           return failure(error);
         }
@@ -57,33 +59,20 @@ function serve(browser: Browser): void {
       {
         description: [
           "Show the browser to the operator: reopens `profile` in a visible window at `url` (default: the current page)",
-          "and returns when the operator closes the window; `run` then continues headless at the page the operator left.",
-          "Fails where no window can be shown (a server).",
+          "and returns at once with the window's page - URL, title and outline. Reopening resets in-page state.",
+          "The window stays until the operator closes it; `run` works in it meanwhile. Fails where no window can be shown (a server).",
         ].join(" "),
         inputSchema: z.object({
           profile: PROFILE,
           url: z.string().optional().describe("Open this page (default: the current page of the profile)"),
         }),
       },
-      async ({ profile, url }, ctx: ServerContext): Promise<CallToolResult> => {
+      async ({ profile, url }): Promise<CallToolResult> => {
         if (!canShowWindow(process.platform, process.env)) {
           return failure("no display: a window cannot be shown here");
         } else {
-          const progressToken = ctx.mcpReq._meta?.progressToken;
-          let progress = 0;
-          // progress keeps the call alive while the operator works in the window
-          const onWaiting = (): void => {
-            if (progressToken !== undefined) {
-              progress += 1;
-              void ctx.mcpReq
-                .notify({ method: "notifications/progress", params: { progressToken, progress, message: "waiting for the operator to close the window" } })
-                .catch((error: unknown) => console.error(`[browser] progress notification failed: ${String(error)}`));
-            } else {
-              // the client asked for no progress: nothing to report
-            }
-          };
           try {
-            return { content: [{ type: "text", text: await browser.show(profile, url, onWaiting, ctx.mcpReq.signal) }] };
+            return { content: [{ type: "text", text: await browser.show(profile, url) }] };
           } catch (error) {
             return failure(error);
           }

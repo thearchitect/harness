@@ -4,20 +4,30 @@
  * Chromium driven through Patchright - the Playwright API without automation
  * marks (no navigator.webdriver, no Runtime.enable) - on a persistent profile,
  * so cookies and logins survive. Headless by default, with the user agent of
- * the regular browser; `show` hands the same profile to the operator in a
- * visible window and resumes headless at the page the operator left.
+ * the regular browser; `show` reopens the same profile in a visible window for
+ * the operator, and the model keeps working in it until the operator closes it.
+ *
+ * Switching between headless and visible restarts the browser: cookies and
+ * storage persist in the profile, in-page state does not. Each switch is made
+ * visible to the model: `show` returns the window's page, and a `run` that has
+ * to reopen a closed browser says so before its result.
  *
  * One browser at a time, owned by the server process: pi starts the server
  * with the session and stops it on exit, which closes the browser.
  */
 
-import { chromium, type BrowserContext, type Page } from "patchright";
+import { chromium, errors, type BrowserContext, type Page } from "patchright";
 import { execFile } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 
 /** Patchright's default action and navigation timeout, in ms. */
 const DEFAULT_TIMEOUT_MS = 30_000;
+/** How long `show` lets a page settle before outlining it, in ms. */
+const SETTLE_TIMEOUT_MS = 5_000;
+/** The longest page outline `show` returns, in characters. */
+const OUTLINE_LIMIT = 8_000;
+const BLANK = "about:blank";
 
 /* ----------------------------------------------------------------------------
  * Pure parts
@@ -108,91 +118,100 @@ export function toContent(value: unknown): Content {
   }
 }
 
+/** The note a `run` result starts with when the browser had to be reopened. */
+export function reopenedNote(url: string): string {
+  return `The browser had been closed; reopened headless at ${url}. In-page state was reset - inspect the page before acting on it.`;
+}
+
 /* ----------------------------------------------------------------------------
  * The browser
  * ------------------------------------------------------------------------- */
 
-type Session = { profile: string; context: BrowserContext; page: Page };
+type Session = {
+  profile: string;
+  visible: boolean;
+  context: BrowserContext;
+  /** The page the tools work on. */
+  page: Page;
+  /** Where `page` last navigated: the page to reopen after the browser closed. */
+  lastUrl: string;
+  /** The browser closed under the server: the operator closed the window, or a script closed the context. */
+  closed: boolean;
+};
 
 const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
   ...params: string[]
 ) => (page: Page, context: BrowserContext) => Promise<unknown>;
 
 export class Browser {
+  private readonly executable: string;
+  /** The open browser, or the last one when it closed under the server (its `lastUrl` is reopened). */
   private session: Session | undefined;
   /** Calls run one at a time: codemode may send several at once to one page. */
   private queue: Promise<unknown> = Promise.resolve();
   /** The headless user agent, read from the executable once. */
   private userAgentValue: Promise<string> | undefined;
 
-  private readonly executable: string;
-
   constructor(executable: string) {
     this.executable = executable;
   }
 
-  /** Runs `script` (an async function body with `page` and `context`) on the live page of `profile`. */
-  run(profile: string, url: string | undefined, script: string): Promise<Content> {
+  /**
+   * Runs `script` (an async function body with `page` and `context`) on the
+   * live page of `profile`, headless or in the operator's window. A browser
+   * that closed under the server reopens headless at its last page, and the
+   * result starts with a note saying so.
+   */
+  run(profile: string, url: string | undefined, script: string): Promise<Content[]> {
     return this.serialized(async () => {
-      const session = await this.headless(resolve(profile));
+      const dir = resolve(profile);
+      const previous = this.session;
+      const notes: Content[] = [];
+      let session: Session;
+      if (previous && previous.profile === dir && !previous.closed) {
+        session = previous;
+      } else if (previous && previous.profile === dir) {
+        session = await this.open(dir, false, previous.lastUrl);
+        notes.push({ type: "text", text: reopenedNote(previous.lastUrl) });
+      } else {
+        session = await this.open(dir, false, BLANK);
+      }
+      await livePage(session);
+
       if (url !== undefined) {
         await session.page.goto(url);
       } else {
         // the script works on the current page
       }
       const fn = new AsyncFunction("page", "context", script);
-      return toContent(await fn(session.page, session.context));
+      return [...notes, toContent(await fn(session.page, session.context))];
     });
   }
 
   /**
-   * Shows `profile` to the operator in a visible window at `url` (default:
-   * the current page) and waits until the operator closes it; then resumes
-   * headless at the page the operator left. `onWaiting` runs periodically
-   * while the window is open; `signal` closes the window early.
+   * Shows `profile` to the operator: reopens it in a visible window at `url`
+   * (default: the current page) and returns at once, with the window's page -
+   * URL, title and outline - as it is after the restart. An open window is
+   * reused.
    */
-  show(profile: string, url: string | undefined, onWaiting: () => void, signal: AbortSignal): Promise<string> {
+  show(profile: string, url: string | undefined): Promise<string> {
     return this.serialized(async () => {
       const dir = resolve(profile);
-      let lastUrl = url ?? (this.session?.profile === dir ? this.session.page.url() : "about:blank");
-      await this.close();
-
-      const visible = await this.launch(dir, true);
-      const track = (page: Page): void => {
-        page.on("framenavigated", (frame) => {
-          if (frame === page.mainFrame()) {
-            lastUrl = frame.url();
-          } else {
-            // navigation inside a frame: the page stays where it is
-          }
-        });
-      };
-      visible.context.pages().forEach(track);
-      visible.context.on("page", track);
-      if (lastUrl !== "about:blank") {
-        await visible.page.goto(lastUrl);
+      const previous = this.session;
+      let session: Session;
+      if (previous && previous.profile === dir && previous.visible && !previous.closed) {
+        session = previous;
+        await livePage(session);
+        if (url !== undefined) {
+          await session.page.goto(url);
+        } else {
+          // the window stays where the operator is
+        }
       } else {
-        // nothing to reopen: the operator starts from a blank page
+        const target = url ?? (previous && previous.profile === dir ? previous.lastUrl : BLANK);
+        session = await this.open(dir, true, target);
       }
-
-      const closed = new Promise<void>((done) => visible.context.once("close", () => done()));
-      const timer = setInterval(onWaiting, 15_000);
-      const abort = (): void => void visible.context.close();
-      signal.addEventListener("abort", abort, { once: true });
-      try {
-        await closed;
-      } finally {
-        clearInterval(timer);
-        signal.removeEventListener("abort", abort);
-      }
-
-      this.session = await this.launch(dir, false);
-      if (lastUrl !== "about:blank") {
-        await this.session.page.goto(lastUrl);
-      } else {
-        // the operator left a blank page
-      }
-      return `the operator closed the window at ${lastUrl}`;
+      return describe(session.page);
     });
   }
 
@@ -200,7 +219,7 @@ export class Browser {
   async close(): Promise<void> {
     const session = this.session;
     this.session = undefined;
-    if (session) {
+    if (session && !session.closed) {
       await session.context.close();
     } else {
       // no browser open
@@ -217,24 +236,9 @@ export class Browser {
     return result;
   }
 
-  /** The headless session of `profile`: the open one, or a new one in place of another profile's. */
-  private async headless(profile: string): Promise<Session> {
-    const open = this.session;
-    if (open && open.profile === profile) {
-      if (open.page.isClosed()) {
-        open.page = open.context.pages()[0] ?? (await open.context.newPage());
-      } else {
-        // the page the previous call left
-      }
-      return open;
-    } else {
-      await this.close();
-      this.session = await this.launch(profile, false);
-      return this.session;
-    }
-  }
-
-  private async launch(profile: string, visible: boolean): Promise<Session> {
+  /** Replaces the current browser with `profile`, headless or visible, at `url`. */
+  private async open(profile: string, visible: boolean, url: string): Promise<Session> {
+    await this.close();
     await mkdir(profile, { recursive: true });
     let args: string[];
     if (visible) {
@@ -251,7 +255,30 @@ export class Browser {
     });
     context.setDefaultTimeout(DEFAULT_TIMEOUT_MS);
     const page = context.pages()[0] ?? (await context.newPage());
-    return { profile, context, page };
+    const session: Session = { profile, visible, context, page, lastUrl: url, closed: false };
+
+    context.on("close", () => {
+      session.closed = true;
+    });
+    const track = (tab: Page): void => {
+      tab.on("framenavigated", (frame) => {
+        if (tab === session.page && frame === tab.mainFrame()) {
+          session.lastUrl = frame.url();
+        } else {
+          // another tab, or a frame inside the page: the page to reopen stays
+        }
+      });
+    };
+    context.pages().forEach(track);
+    context.on("page", track);
+
+    this.session = session;
+    if (url !== BLANK) {
+      await page.goto(url);
+    } else {
+      // nothing to open: the page stays blank
+    }
+    return session;
   }
 
   private userAgent(): Promise<string> {
@@ -271,4 +298,33 @@ export class Browser {
     });
     return this.userAgentValue;
   }
+}
+
+/** Points the session at an open page when its page was closed (a closed tab or popup): the last tab, or a new one. */
+async function livePage(session: Session): Promise<void> {
+  if (session.page.isClosed()) {
+    const open = session.context.pages();
+    session.page = open[open.length - 1] ?? (await session.context.newPage());
+    session.lastUrl = session.page.url();
+  } else {
+    // the page the previous call left
+  }
+}
+
+/** The page as the operator sees it: URL, title and outline, after it settled. */
+async function describe(page: Page): Promise<string> {
+  let settled: string;
+  try {
+    await page.waitForLoadState("networkidle", { timeout: SETTLE_TIMEOUT_MS });
+    settled = "";
+  } catch (error) {
+    if (error instanceof errors.TimeoutError) {
+      settled = "\n(the page was still loading)";
+    } else {
+      throw error;
+    }
+  }
+  const outline = await page.locator("body").ariaSnapshot();
+  const shown = outline.length > OUTLINE_LIMIT ? `${outline.slice(0, OUTLINE_LIMIT)}\n[outline truncated]` : outline;
+  return `Window open at ${page.url()} - "${await page.title()}"${settled}\n${shown}`;
 }

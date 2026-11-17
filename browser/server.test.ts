@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { browserExecutable, canShowWindow, majorVersion, regularUserAgent, toContent } from "./browser.ts";
+import { browserExecutable, canShowWindow, majorVersion, regularUserAgent, reopenedNote, toContent } from "./browser.ts";
 
 describe("pure parts", () => {
   test("browserExecutable: the user's browser wins over the bundled one", () => {
@@ -117,6 +117,18 @@ describe("server over stdio", () => {
   test("run: a screenshot comes back as an image", async () => {
     const result = await client.callTool("run", { profile: join(home, "profile"), script: "return await page.screenshot();" });
     assert.equal(result.content[0]?.type, "image");
+  });
+
+  test("run: a browser closed in the meantime reopens headless at its last page, with a note", async () => {
+    const profile = join(home, "profile");
+    const url = "data:text/html,<p id=x>before close</p>";
+    const closing = await client.callTool("run", { profile, url, script: "await context.close();" });
+    assert.equal(closing.isError, undefined, text(closing));
+    const reopened = await client.callTool("run", { profile, script: "return page.url();" });
+    assert.deepEqual(reopened.content, [
+      { type: "text", text: reopenedNote(url) },
+      { type: "text", text: url },
+    ]);
   });
 
   test("run: a failing script is an error result", async () => {
