@@ -68,15 +68,15 @@ rpc_commands() {
 }
 desktop_commands="$(rpc_commands "$WORK/rpc-desktop.log" HARNESS_PROFILE=)"
 server_commands="$(rpc_commands "$WORK/rpc-server.log" HARNESS_PROFILE=server)"
-if ! grep -qx 'skill:ask-user' <<<"$desktop_commands" && grep -qx 'skill:cage' <<<"$desktop_commands" && grep -qx 'madness' <<<"$desktop_commands" && ! grep -qx 'skill:server' <<<"$desktop_commands"; then
-  pass "desktop profile: cage skill, madness, no ask-user or server skill"
+if ! grep -qx 'skill:ask-user' <<<"$desktop_commands" && grep -qx 'skill:cage' <<<"$desktop_commands" && grep -qx 'skill:testing' <<<"$desktop_commands" && grep -qx 'madness' <<<"$desktop_commands" && ! grep -qx 'skill:server' <<<"$desktop_commands"; then
+  pass "desktop profile: cage and testing skills, madness, no ask-user or server skill"
 else
-  fail "desktop profile: cage skill, madness, no ask-user or server skill" "$WORK/rpc-desktop.log"
+  fail "desktop profile: cage and testing skills, madness, no ask-user or server skill" "$WORK/rpc-desktop.log"
 fi
-if ! grep -qx 'skill:ask-user' <<<"$server_commands" && ! grep -qx 'madness' <<<"$server_commands" && grep -qx 'skill:cage' <<<"$server_commands" && grep -qx 'skill:server' <<<"$server_commands" && grep -qx 'deps' <<<"$server_commands"; then
-  pass "server profile: no ask-user, no madness, cage and server skills, harness loaded"
+if ! grep -qx 'skill:ask-user' <<<"$server_commands" && ! grep -qx 'madness' <<<"$server_commands" && grep -qx 'skill:cage' <<<"$server_commands" && grep -qx 'skill:testing' <<<"$server_commands" && grep -qx 'skill:server' <<<"$server_commands" && grep -qx 'deps' <<<"$server_commands"; then
+  pass "server profile: no ask-user, no madness, cage, testing and server skills, harness loaded"
 else
-  fail "server profile: no ask-user, no madness, cage and server skills, harness loaded" "$WORK/rpc-server.log"
+  fail "server profile: no ask-user, no madness, cage, testing and server skills, harness loaded" "$WORK/rpc-server.log"
 fi
 # The cage skill is cage's own text.
 if cmp -s "$(jq -r .skills.cage "$MANIFEST")" <("$(jq -r .bin.cage "$MANIFEST")" skill); then

@@ -50,7 +50,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `tool_guidelines` (a declared tool's rule replacing its own guidelines), `guidelines` (bullets in `<rules>`, in order)
 - `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (`core/`: agents, workspaces, pi processes; `telegram/`: chats; `app/`: the Mini App; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
 - `gate.ts` — the write/edit gate's pure parts: BUILD's review by profile (the server profile builds without asking) and the gate as plain select/input dialogs outside the TUI
-- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `server` (server profile only); the `cage` skill is cage's own `cage skill`, generated at build time (manifest `skills`)
+- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `testing`, `server` (server profile only); the `cage` skill is cage's own `cage skill`, generated at build time (manifest `skills`)
 - `install/SKILL.md` — the install/upgrade skill
 - `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the `/deps` report, the double-load guard (registered by `index.ts`)
 - `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition (called by `index.ts` at `// WORKAROUND Wn`)
