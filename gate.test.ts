@@ -99,14 +99,21 @@ describe("profiles", () => {
     lightpanda: "/lp",
     "playwright-mcp": "/pw",
     "chrome-devtools-mcp": "/cd",
+    node: "/node",
+    browser: "/chromium",
   } as unknown as Manifest["bin"];
 
-  test("desktop: lightpanda and the user-browser servers", () => {
-    assert.deepEqual(Object.keys(bundledMcpServers(bin, "desktop")).sort(), ["chromium-devtools", "lightpanda", "playwright"]);
+  test("desktop: lightpanda, the real browser and the user-browser servers", () => {
+    assert.deepEqual(Object.keys(bundledMcpServers(bin, "desktop")).sort(), [
+      "browser",
+      "chromium-devtools",
+      "lightpanda",
+      "playwright",
+    ]);
   });
 
-  test("server: lightpanda only", () => {
-    assert.deepEqual(Object.keys(bundledMcpServers(bin, "server")), ["lightpanda"]);
+  test("server: lightpanda and the real browser", () => {
+    assert.deepEqual(Object.keys(bundledMcpServers(bin, "server")).sort(), ["browser", "lightpanda"]);
   });
 
   test("HARNESS_PROFILE selects the profile; an unknown value is a problem", () => {

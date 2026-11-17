@@ -24,9 +24,24 @@
       packages = forAllSystems (
         pkgs:
         let
+          system = pkgs.stdenv.hostPlatform.system;
+          # The real browser of the `browser` MCP server, never built locally:
+          # Chromium comes prebuilt from cache.nixos.org (Linux only); on macOS
+          # Google Chrome, which nixpkgs repackages from Google's release (unfree,
+          # allowed for this one package; not redistributable, so never exported
+          # to the harness binary cache - nix/cache-export.sh).
+          browser =
+            if pkgs.stdenv.hostPlatform.isLinux then
+              pkgs.chromium
+            else
+              (import nixpkgs {
+                inherit system;
+                config.allowUnfreePredicate = p: pkgs.lib.getName p == "google-chrome";
+              }).google-chrome;
           bundle = pkgs.callPackage ./nix/package.nix {
             harnessSrc = self;
-            cage = cage.packages.${pkgs.stdenv.hostPlatform.system}.default;
+            cage = cage.packages.${system}.default;
+            inherit browser;
           };
         in
         {

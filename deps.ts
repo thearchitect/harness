@@ -29,7 +29,7 @@ import type { Toolchain } from "./lsp/index.ts";
 import { execFile } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
@@ -42,6 +42,8 @@ type BinId =
   | "rust-analyzer"
   | "playwright-mcp"
   | "chrome-devtools-mcp"
+  | "node"
+  | "browser"
   | "herdr"
   | "cage";
 
@@ -154,10 +156,11 @@ export function lspToolchain(manifest: Manifest): { toolchain: Toolchain } | { p
 export function bundledMcpServers(bin: Manifest["bin"], profile: Profile): Record<string, McpServerConfig> {
   switch (profile) {
     case "desktop":
-      return { lightpanda: lightpandaServer(bin), ...userBrowserServers(bin) };
+      return { lightpanda: lightpandaServer(bin), browser: browserServer(bin), ...userBrowserServers(bin) };
     case "server":
-      // headless: there is no user browser to attach to
-      return { lightpanda: lightpandaServer(bin) };
+      // headless: there is no user browser to attach to, and `show` reports
+      // that no window can be shown
+      return { lightpanda: lightpandaServer(bin), browser: browserServer(bin) };
     default:
       return assertNever(profile);
   }
@@ -186,6 +189,23 @@ function lightpandaServer(bin: Manifest["bin"]): McpServerConfig {
       session_list: "hidden",
       session_close: "hidden",
     },
+  };
+}
+
+/**
+ * A real Chromium for the hard cases of web research (browser/server.ts),
+ * run from this extension's directory so pi-dev runs the working tree's copy.
+ * HARNESS_BROWSER (inherited) replaces the bundled browser.
+ */
+function browserServer(bin: Manifest["bin"]): McpServerConfig {
+  return {
+    description:
+      "Real Chromium for hard cases: logins, bot checks, sites Lightpanda cannot render; Playwright code on a live page, shown to the operator on request",
+    command: bin.node,
+    args: [join(EXTENSION_DIR, "browser", "server.ts")],
+    env: { HARNESS_BUNDLED_BROWSER: bin.browser },
+    timeout: 120,
+    exposure: "codemode",
   };
 }
 

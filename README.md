@@ -3,10 +3,17 @@
 Personal pi workflow, distributed as a Nix bundle: the pinned `pi` with the
 harness extension, the bundled pi packages and the pinned MCP tools. On PATH:
 `pi`, `pi-dev`, `herdr`, `pnpm`, `cage`, `lightpanda`, `playwright-mcp`,
-`chrome-devtools-mcp` (the last ones with telemetry off by default). herdr's pi
-integration is part of the bundle: do not `herdr integration install pi`
-(`/deps` warns about such a copy). `HARNESS_PROFILE=server` runs pi headless
-(as the Telegram gateway does): no user-browser MCP servers, no `ask_user`.
+`chrome-devtools-mcp` (the last ones with telemetry off by default), and the
+runtimes `node`, `npm`, `npx`, `bun`, `bunx` at a low priority (your own
+node or bun wins; `.override { withRuntimes = false; }` leaves them out - pi
+still finds them, appended to its PATH). The bundled MCP servers: `lightpanda`
+(search and reading), `browser` (a real Chromium through Patchright for logins
+and bot checks; Chromium prebuilt from cache.nixos.org on Linux, Google Chrome
+from Google on macOS), `playwright` and `chromium-devtools` (the user's own
+browser; registered disabled, enable them in `/mcp`). herdr's pi integration is
+part of the bundle: do not `herdr integration install pi` (`/deps` warns about
+such a copy). `HARNESS_PROFILE=server` runs pi headless (as the Telegram
+gateway does): no user-browser MCP servers, no `ask_user`, no `browser` window.
 
 ## Install
 
@@ -27,8 +34,9 @@ nix.settings.extra-trusted-public-keys = [ "harness-1:YE1emDZFHptBwqvSGZIoVkGgCU
 ```
 
 Upgrade: rerun the script, or `nix flake update harness` and rebuild. Verify:
-`pi --version`; inside pi, `/deps`. Host settings: `HARNESS_BROWSER` (browser
-executable for playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for
+`pi --version`; inside pi, `/deps`. Host settings: `HARNESS_BROWSER` (your own
+Chrome/Chromium executable, used instead of the bundled one by `browser` and by
+playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for
 chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 
 ## Layout
@@ -37,6 +45,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `lsp/` — code intelligence: a facade over the bundle's language servers (see below)
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
 - `tool_send_file.ts` — `send_file` (server profile only): a file to the user in Telegram, delivered by `remote/`
+- `browser/` — the `browser` MCP server (`server.ts`, run on the bundle's node): Patchright on a persistent profile, `run` (Playwright code on the live page) and `show` (a visible window for the operator); `browser.ts` holds the browser
 - `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `tool_guidelines` (a declared tool's rule replacing its own guidelines), `guidelines` (bullets in `<rules>`, in order)
 - `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (`core/`: agents, workspaces, pi processes; `telegram/`: chats; `app/`: the Mini App; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi

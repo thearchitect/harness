@@ -93,6 +93,15 @@ if "$PI" mcp list >"$WORK/mcp-list.log" 2>&1; then pass "pi mcp list"; else fail
 LIGHTPANDA_DISABLE_TELEMETRY=true check_mcp lightpanda goto "$(bin lightpanda)" mcp
 check_mcp playwright browser_snapshot "$(bin playwright-mcp)" --extension
 check_mcp chromium-devtools take_snapshot "$(bin chrome-devtools-mcp)" --no-usage-statistics
+# The real browser's server runs from the extension directory the launcher loads.
+extension_dir="$(grep -o '/nix/store/[^ ]*-harness-extension-[^ ]*' "$PI" | head -n 1)"
+HARNESS_BUNDLED_BROWSER="$(bin browser)" check_mcp browser run "$(bin node)" "$extension_dir/browser/server.ts"
+if "$(bin browser)" --version >"$WORK/browser.log" 2>&1; then pass "browser --version"; else fail "browser --version" "$WORK/browser.log"; fi
+
+# Runtimes: on the user's PATH (withRuntimes) and appended to the agent's PATH by the launcher
+if "$BUNDLE/bin/node" --version >"$WORK/node.log" 2>&1; then pass "node --version"; else fail "node --version" "$WORK/node.log"; fi
+if "$BUNDLE/bin/bun" --version >"$WORK/bun.log" 2>&1; then pass "bun --version"; else fail "bun --version" "$WORK/bun.log"; fi
+if grep -q ':\$PATH:/nix/store/[^ ]*-nodejs-[^ ]*/bin:/nix/store/[^ ]*-bun-' "$PI"; then pass "launcher appends node and bun to PATH"; else fail "launcher appends node and bun to PATH"; fi
 
 # Language servers run (their behavior: nix/test.sh)
 if "$(bin tsgo)" --version >"$WORK/tsgo.log" 2>&1; then pass "tsgo --version"; else fail "tsgo --version" "$WORK/tsgo.log"; fi

@@ -24,7 +24,14 @@ printf '%s' "$SIGNING_KEY" >"$keyfile"
 
 paths=()
 while read -r path; do
-  nix path-info --store https://cache.nixos.org "$path" >/dev/null 2>&1 || paths+=("$path")
+  if [[ "$path" == *-google-chrome-* ]]; then
+    # unfree and not redistributable: users fetch it from Google themselves
+    continue
+  elif nix path-info --store https://cache.nixos.org "$path" >/dev/null 2>&1; then
+    continue
+  else
+    paths+=("$path")
+  fi
 done < <(nix path-info --recursive "$RESULT")
 echo "exporting ${#paths[@]} store paths not in cache.nixos.org"
 

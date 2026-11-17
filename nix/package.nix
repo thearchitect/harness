@@ -1,8 +1,11 @@
 # The harness bundle: a `pi` wrapper that loads the harness extension and the
 # bundled pi packages, plus every pinned MCP tool the extension registers
-# (published to it through $HARNESS_MANIFEST). The project toolchain (go, node,
-# the project's TypeScript, make, ...) is deliberately NOT part of the bundle:
-# it comes from the user's PATH.
+# (published to it through $HARNESS_MANIFEST). The project toolchain (go, the
+# project's TypeScript, make, ...) is deliberately NOT part of the bundle: it
+# comes from the user's PATH. node and bun are runtimes of last resort: the
+# launcher appends them to PATH (a project's own node wins), and with
+# `withRuntimes` (default) the bundle also puts them on the user's PATH at a
+# low priority (`.override { withRuntimes = false; }` leaves them out).
 {
   lib,
   stdenv,
@@ -23,7 +26,11 @@
   ripgrep,
   fd,
   cage,
+  bun,
+  # The real browser of the `browser` MCP server (flake.nix picks it per platform).
+  browser,
   harnessSrc,
+  withRuntimes ? true,
 }:
 let
   system = stdenv.hostPlatform.system;
@@ -51,6 +58,7 @@ let
         ../lsp
         ../tool_project_tree.ts
         ../tool_send_file.ts
+        ../browser
         ../workarounds.ts
         ../prompt.ts
         ../prompt.yaml
@@ -183,6 +191,10 @@ let
         rust-analyzer = rust-analyzer.version;
         playwright-mcp = npmVersion "@playwright/mcp";
         chrome-devtools-mcp = npmVersion "chrome-devtools-mcp";
+        patchright = npmVersion "patchright";
+        browser = "${lib.getName browser} ${browser.version}";
+        node = nodejs.version;
+        bun = bun.version;
         herdr = herdr.version;
         pnpm = pnpm.version;
         cage = cage.version;
@@ -202,6 +214,9 @@ let
         rust-analyzer = lib.getExe rust-analyzer;
         playwright-mcp = "${nodeModules}/.bin/playwright-mcp";
         chrome-devtools-mcp = "${nodeModules}/.bin/chrome-devtools-mcp";
+        # The `browser` MCP server runs on the bundle's node.
+        node = lib.getExe nodejs;
+        browser = lib.getExe browser;
         herdr = lib.getExe herdr;
         cage = "${cage}/bin/cage"; # cage sets no meta.mainProgram
       };
@@ -246,7 +261,12 @@ let
         ripgrep
         fd
       ]
-    }:$PATH"
+    }:$PATH:${
+      lib.makeBinPath [
+        nodejs
+        bun
+      ]
+    }"
     case "''${1-}" in
       ${piSubcommands}) exec ${lib.getExe nodejs} ${piCli} "$@" ;;
     esac
@@ -309,6 +329,13 @@ stdenvNoCC.mkDerivation {
     ln -s ${nodeModules}/.bin/playwright-mcp $out/bin/playwright-mcp
     ln -s ${chromeDevtoolsMcpCli}/bin/chrome-devtools-mcp $out/bin/chrome-devtools-mcp
     ln -s ${manifest} $out/share/harness/manifest.json
+  ''
+  + lib.optionalString withRuntimes ''
+    for runtime in ${nodejs}/bin/{node,npm,npx} ${bun}/bin/{bun,bunx}; do
+      ln -s "$runtime" $out/bin/
+    done
+  ''
+  + ''
     runHook postInstall
   '';
 
@@ -331,6 +358,9 @@ stdenvNoCC.mkDerivation {
     homepage = "https://github.com/thearchitect/harness";
     license = lib.licenses.mit;
     mainProgram = "pi";
+    # Lower than the default (5): the user's own node or bun wins a name
+    # collision in a profile or buildEnv.
+    priority = 10;
     platforms = [
       "x86_64-linux"
       "aarch64-linux"

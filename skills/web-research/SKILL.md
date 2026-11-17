@@ -29,7 +29,25 @@ The page stays open between scripts.
    sends the page's cookies; save it under the session workspace, a path relative to the working
    directory whose directory already exists.
 
-A login, a CAPTCHA or bot check, or a site Lightpanda cannot render: report it.
+A login, a CAPTCHA or bot check, or a site Lightpanda cannot render: go to the real browser below.
+
+## Hard cases: a real browser
+
+Logins, CAPTCHAs and bot checks, sites Lightpanda cannot render: `mcp__browser` (codemode) drives
+Chromium through Patchright — the Playwright API without automation marks — on a live page with a
+persistent profile.
+
+- Profile: `<session workspace>/browser/<site>`, one per site.
+- `run({ profile, url, script })`: `script` is the body of an async function with `page` and
+  `context`; it returns the result. The page stays open between calls.
+  Inspect with `return await page.locator("body").ariaSnapshot()`, act with role locators
+  (`await page.getByRole("button", { name: "…" }).click()`), see it with
+  `return await page.screenshot()`.
+- The operator is needed — a login, a CAPTCHA, a check you cannot pass: tell the operator what to
+  do, then `show({ profile })`: a visible window; it returns when the operator closes it, and `run`
+  continues on the same page. Never type the operator's credentials yourself.
+- Keep a human pace: one page at a time, no parallel crawling.
+- `show` fails where no window can be shown (the server): report it.
 
 ## Fallback: DeepSeek, then Ollama
 

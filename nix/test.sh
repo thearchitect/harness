@@ -30,6 +30,8 @@ cd "$ROOT"
 node --test tool_project_tree.test.ts
 node --test tool_send_file.test.ts
 node --test gate.test.ts
+# The browser MCP server against the bundle's browser (headless, offline).
+node --test browser/server.test.ts
 node --test submit_keys.test.ts
 # The Telegram gateway (remote/): type check, then its tests (cage, ssh-keygen
 # and the login helper run for real, in a throwaway home).

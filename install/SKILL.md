@@ -29,6 +29,9 @@ then rebuild. Upgrade with
 - Act on the script's warnings, with the user's consent: an older `pi` earlier on PATH,
   harness-bundled packages still in `~/.pi/agent/settings.json`, an old
   `~/.pi/agent/extensions/harness` checkout.
-- Optional host settings: `HARNESS_BROWSER` (browser executable) and
-  `HARNESS_BROWSER_USER_DATA_DIR` (its profile) for the playwright / chromium-devtools servers.
+- Optional host settings: `HARNESS_BROWSER` (your own Chrome/Chromium executable, used
+  instead of the bundled one by the `browser` and playwright servers) and
+  `HARNESS_BROWSER_USER_DATA_DIR` (its profile, for chromium-devtools).
+- The bundle puts `node`/`npm`/`npx`/`bun`/`bunx` on PATH at a low priority; to leave them
+  out, install `packages.<system>.default.override { withRuntimes = false; }`.
 - Verify: `pi --version`; inside pi, `/deps` lists the bundled versions.
