@@ -13,7 +13,8 @@ from Google on macOS), `playwright` and `chromium-devtools` (the user's own
 browser; registered disabled, enable them in `/mcp`). herdr's pi integration is
 part of the bundle: do not `herdr integration install pi` (`/deps` warns about
 such a copy). `HARNESS_PROFILE=server` runs pi headless (as the Telegram
-gateway does): no user-browser MCP servers, no `ask_user`, no `browser` window.
+gateway does): no user-browser MCP servers, no `ask_user`, `ask_secret` or
+`display_file`, no `browser` window.
 
 ## Install
 
@@ -45,6 +46,8 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `lsp/` — code intelligence: a facade over the bundle's language servers (see below)
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
 - `tool_send_file.ts` — `send_file` (server profile only): a file to the user in Telegram, delivered by `remote/`
+- `tool_ask_secret.ts` — `ask_secret` (desktop profile only): a secret from the operator through a masked dialog, kept in memory for the session, given to bash commands as an environment variable and masked in every tool result; the model never sees it and asks only on the operator's explicit command (secrets a task needs are named in the plan; PLAN and BUILD alike; it reaches cage through `cage set -stdin` in BUILD)
+- `tool_display_file.ts` — `display_file` (desktop profile only): a text file (Markdown rendered, code highlighted) or an image shown to the operator in the transcript; the model gets one line, never the content
 - `browser/` — the `browser` MCP server (`server.ts`, run on the bundle's node): Patchright on a persistent profile, `run` (Playwright code on the live page) and `show` (a visible window for the operator); `browser.ts` holds the browser
 - `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `tool_guidelines` (a declared tool's rule replacing its own guidelines), `guidelines` (bullets in `<rules>`, in order)

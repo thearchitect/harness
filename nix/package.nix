@@ -58,6 +58,8 @@ let
         ../lsp
         ../tool_project_tree.ts
         ../tool_send_file.ts
+        ../tool_ask_secret.ts
+        ../tool_display_file.ts
         ../browser
         ../workarounds.ts
         ../prompt.ts

@@ -29,6 +29,8 @@ fi
 cd "$ROOT"
 node --test tool_project_tree.test.ts
 node --test tool_send_file.test.ts
+node --test tool_ask_secret.test.ts
+node --test tool_display_file.test.ts
 node --test gate.test.ts
 # The browser MCP server against the bundle's browser (headless, offline).
 node --test browser/server.test.ts

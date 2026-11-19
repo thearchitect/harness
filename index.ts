@@ -73,6 +73,8 @@ import { askGateViaDialogs, buildChangeReview, type GateDecision } from "./gate.
 import { AGENT_WORKSPACE_DIR, registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
 import { registerProjectTree } from "./tool_project_tree.ts";
 import { registerSendFile } from "./tool_send_file.ts";
+import { registerAskSecret, sessionSecrets } from "./tool_ask_secret.ts";
+import { registerDisplayFile } from "./tool_display_file.ts";
 
 /* ============================================================================
  * ▄▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▄ ▀▀█▀▀ ▀▀█▀▀ ▄▀▀▀▀       ▄▀▀▀▀ ▄▀▀▀▄ █▄  █ █▀▀▀▀ ▀▀█▀▀ ▄▀▀▀▀
@@ -920,7 +922,8 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   // Each call runs a definition built for the session cwd with the shell
   // settings pi applies to its own bash tool (shellPath, shellCommandPrefix
   // from global + trusted project settings), resolved through the public
-  // SettingsManager exactly like pi's session does.
+  // SettingsManager exactly like pi's session does. The session's secrets
+  // from ask_secret (tool_ask_secret.ts) join the command's environment.
   const bashTool = createBashToolDefinition(process.cwd());
   pi.registerTool({
     ...bashTool,
@@ -932,9 +935,11 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
         const settings = SettingsManager.create(ctx.cwd, getAgentDir(), {
           projectTrusted: ctx.isProjectTrusted(),
         });
+        const secrets = sessionSecrets.env(ctx.sessionManager.getSessionId());
         const sessionBashTool = createBashToolDefinition(ctx.cwd, {
           commandPrefix: settings.getShellCommandPrefix(),
           shellPath: settings.getShellPath(),
+          spawnHook: (spawn) => ({ ...spawn, env: { ...spawn.env, ...secrets } }),
         });
         return await sessionBashTool.execute(
           toolCallId,
@@ -1123,6 +1128,12 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
           toggleMadness(ctx);
         },
       });
+      // The operator is at the terminal: secrets come through a masked
+      // dialog (tool_ask_secret.ts), files and images are shown in the
+      // transcript (tool_display_file.ts). Neither exists on the server:
+      // there secrets are /secrets and files are send_file.
+      registerAskSecret(pi);
+      registerDisplayFile(pi);
       break;
     case "server":
       // BUILD never asks there and PLAN must keep refusing: madness would
@@ -1373,20 +1384,23 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   );
 
   // ------------------------------------------------------------------
-  // herdr: block indicator while ask_user runs
+  // herdr: block indicator while ask_user or ask_secret runs
   // ------------------------------------------------------------------
+  const blockingTools: Record<string, string> = { ask_user: "question", ask_secret: "secret" };
   pi.on(
     "tool_execution_start",
     (event: EventOf<"tool_execution_start">, ctx: ExtensionContext): void => {
-      if (event.toolName === "ask_user" && ctx.hasUI) {
-        startBlockedTool(event.toolCallId, "question");
+      const label = blockingTools[event.toolName];
+      if (label !== undefined && ctx.hasUI) {
+        startBlockedTool(event.toolCallId, label);
       }
     },
   );
 
   pi.on("tool_execution_end", (event: EventOf<"tool_execution_end">): void => {
-    if (event.toolName === "ask_user") {
-      finishBlockedTool(event.toolCallId, "question");
+    const label = blockingTools[event.toolName];
+    if (label !== undefined) {
+      finishBlockedTool(event.toolCallId, label);
     }
   });
 
