@@ -16,12 +16,12 @@
  *   exposure policy (an mcp.json entry with the same name takes precedence, as
  *   for any extension-registered server);
  * - lspToolchain: the language servers lsp/ drives;
- * - depsReport: the /deps text - profile, bundled versions, a duplicate herdr
- *   pi integration and how to update;
+ * - depsReport: the dependencies report (the panel's row) - profile, the update section (update.ts),
+ *   bundled versions, a duplicate herdr pi integration;
  * - claimHarnessInstance: the double-load guard.
  *
- * Updates are not done here: `nix profile upgrade harness` (or the user's
- * NixOS / home-manager flake update) replaces the whole bundle atomically.
+ * Updates are update.ts's: `nix profile upgrade` (or the user's NixOS /
+ * home-manager flake update) replaces the whole bundle atomically.
  */
 
 import type { McpServerConfig } from "@earendil-works/pi-coding-agent";
@@ -33,7 +33,6 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
-const UPDATE_HINT = "Update: `nix profile upgrade harness` (or update the harness flake input of your NixOS / home-manager config).";
 
 type BinId =
   | "lightpanda"
@@ -251,7 +250,7 @@ function userBrowserServers(bin: Manifest["bin"]): Record<string, McpServerConfi
 }
 
 /* ----------------------------------------------------------------------------
- * /deps
+ * The dependencies report
  * ------------------------------------------------------------------------- */
 
 /**
@@ -282,9 +281,11 @@ function herdrIntegration(herdr: string): Promise<{ text: string; level: "info" 
   });
 }
 
+/** The dependencies report: the bundle, its update (the given lines, update.ts), bundled versions, herdr. */
 export async function depsReport(
   manifest: Manifest,
   profile: Profile,
+  update: readonly string[],
 ): Promise<{ text: string; level: "info" | "warning" }> {
   const width = Math.max(...Object.keys(manifest.versions).map((id) => id.length));
   let herdr: { text: string; level: "info" | "warning" };
@@ -299,13 +300,13 @@ export async function depsReport(
       herdr = assertNever(profile);
   }
   const lines = [
-    `harness ${manifest.harness}`,
-    `profile: ${profile}`,
+    `harness ${manifest.harness} · profile: ${profile}`,
+    ...update,
+    "Bundled:",
     ...Object.entries(manifest.versions)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([id, version]) => `  ${id.padEnd(width)}  ${version}`),
     `herdr pi integration: ${herdr.text}`,
-    UPDATE_HINT,
   ];
   return { text: lines.join("\n"), level: herdr.level };
 }

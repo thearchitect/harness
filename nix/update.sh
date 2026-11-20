@@ -9,7 +9,9 @@
 #   nix/update.sh --no-flake skip `nix flake update`
 #
 # Prints one "<component> <old> -> <new>" line per change on stdout (used as
-# the PR body by .github/workflows/update.yml). Requires: node/npm, jq, curl,
+# the body of the "Update bundle pins" commit by .github/workflows/update.yml;
+# update.ts reads these lines back to show users what an update changes, so the
+# format is a contract). Requires: node/npm, jq, curl,
 # nix. Never edit package-lock.json or sources.json by hand.
 set -euo pipefail
 

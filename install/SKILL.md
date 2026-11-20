@@ -34,4 +34,4 @@ then rebuild. Upgrade with
   `HARNESS_BROWSER_USER_DATA_DIR` (its profile, for chromium-devtools).
 - The bundle puts `node`/`npm`/`npx`/`bun`/`bunx` on PATH at a low priority; to leave them
   out, install `packages.<system>.default.override { withRuntimes = false; }`.
-- Verify: `pi --version`; inside pi, `/deps` lists the bundled versions.
+- Verify: `pi --version`; inside pi, `Ctrl+\` → *dependencies* lists the bundled versions.

@@ -3,7 +3,8 @@
  *
  * Per-message PLAN/BUILD mode or the single SIMPLE mode of the simple variant
  * (custom editor, mode colors, mode selector message), per-mode write/edit
- * gating, the side panel (panel.ts: madness, simple, /deps behind Ctrl+\),
+ * gating, the side panel (panel.ts: madness, simple, update, dependencies
+ * behind Ctrl+\), the bundle's update (update.ts),
  * and per-cycle "planning/building finished" banners annotated with finish
  * time, duration and USD cost. BUILD
  * write/edit
@@ -73,6 +74,17 @@ import { assembleSystemPrompt, systemPromptProblem } from "./prompt.ts";
 import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest, readProfile, type Profile } from "./deps.ts";
 import { askGateViaDialogs, changeReview, type ChangeReach, type GateDecision, type TurnMode } from "./gate.ts";
 import { openPanel, PANEL_SHORTCUT, type PanelHandle, type PanelSection } from "./panel.ts";
+import {
+  canExecUpdate,
+  checkUpdates,
+  detectInstall,
+  execUpdate,
+  formatAge,
+  updateHint,
+  updateLines,
+  type Install,
+  type UpdateState,
+} from "./update.ts";
 import { AGENT_WORKSPACE_DIR, registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
 import { registerProjectTree } from "./tool_project_tree.ts";
 import { registerSendFile } from "./tool_send_file.ts";
@@ -892,7 +904,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
 
   // Bundled dependencies (deps.ts): the MCP servers of the Nix bundle
   // manifest for this profile; a missing manifest or an unknown profile is
-  // shown in the status line (the profile then stays desktop), details in /deps.
+  // shown in the status line (the profile then stays desktop), details in the panel's dependencies report.
   const bundle = readManifest();
   const profileChoice = readProfile();
   const profile: Profile = "profile" in profileChoice ? profileChoice.profile : "desktop";
@@ -1035,6 +1047,14 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   let madnessEnabled = false;
   // The side panel while it is open (panel.ts).
   let panel: PanelHandle | undefined;
+  // The bundle's update (update.ts): checked once per process in the
+  // background; the install kind is asked of nix only when needed.
+  let updateState: UpdateState = { kind: "checking" };
+  let updateCheckStarted = false;
+  let install: Promise<Install> | undefined;
+  // The current session's event context: its shutdown() really exits pi when
+  // idle (a shortcut's context only flags the request).
+  let sessionCtx: ExtensionContext | undefined;
   let cycleStartTime: number | undefined;
   let baselineCost = 0;
   let systemPromptEntryShown = false;
@@ -1121,7 +1141,8 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
  *  ▀▀▀▀  ▀▀▀  ▀   ▀ ▀   ▀ ▀   ▀ ▀   ▀ ▀▀▀▀
  * ----------------------------------------------------------------------------
  * "/madness" (bypasses write/edit permission gates), "/simple" (the simple
- * variant), "/deps", and the side panel (Ctrl+\\) holding all three.
+ * variant), and the side panel (Ctrl+\\) holding both, the update of the
+ * bundle (update.ts) and the dependencies report.
  * ========================================================================== */
 
   const STATUS_WIDGET_KEY = "harness:status";
@@ -1176,7 +1197,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     }
   }
 
-  /** The panel's rows: madness first (the most used: Ctrl+\\, Enter, Esc), then simple, then /deps. */
+  /** The panel's rows: madness first (the most used: Ctrl+\\, Enter, Esc), then simple, update and dependencies. */
   function panelSections(ctx: ExtensionContext): PanelSection[] {
     return [
       {
@@ -1203,8 +1224,14 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
         items: [
           {
             kind: "action",
+            label: "update",
+            hint: (): string => updateHint(updateState, Date.now()),
+            run: (): void => void runUpdate(ctx),
+          },
+          {
+            kind: "action",
             label: "dependencies",
-            hint: "versions · update",
+            hint: (): string => "versions",
             run: (): void => void showDeps(ctx),
           },
         ],
@@ -1212,11 +1239,13 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     ];
   }
 
+  /** The report of the bundle: its update, bundled versions, herdr. */
   async function showDeps(ctx: ExtensionContext): Promise<void> {
     if ("problem" in bundle) {
       ctx.ui.notify(`harness: ${bundleProblems.join("; ")}`, "error");
     } else {
-      const report = await depsReport(bundle.manifest, profile);
+      const update = updateLines(updateState, await bundleInstall(), Date.now());
+      const report = await depsReport(bundle.manifest, profile, update);
       if ("problem" in profileChoice) {
         ctx.ui.notify(`harness: ${profileChoice.problem}\n${report.text}`, "warning");
       } else {
@@ -1225,12 +1254,66 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     }
   }
 
-  pi.registerCommand("deps", {
-    description: "Bundled dependency versions, herdr integration state, how to update",
-    handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+  /** How the bundle is installed: asked of nix on first need, then kept for the process. */
+  async function bundleInstall(): Promise<Install> {
+    const manifestPath = process.env.HARNESS_MANIFEST;
+    if (manifestPath === undefined) {
+      return { kind: "system" };
+    } else {
+      install ??= detectInstall(manifestPath);
+      return install;
+    }
+  }
+
+  /**
+   * Checks master for updates in the background (never awaited: the session
+   * is usable at once) and announces new commits when the answer comes.
+   */
+  function startUpdateCheck(): void {
+    if ("problem" in bundle) {
+      updateState = { kind: "failed", reason: bundleProblems.join("; ") };
+    } else {
+      updateState = { kind: "checking" };
+      void checkUpdates(bundle.manifest.harness, fetch).then((state) => {
+        updateState = state;
+        if (state.kind === "available") {
+          sessionCtx?.ui.notify(
+            `harness: ${state.count} new commit${state.count === 1 ? "" : "s"}, latest ${formatAge(state.latest, Date.now())} — Ctrl+\\ → update`,
+            "info",
+          );
+        } else {
+          // up to date, a dev build or a failed check: the panel row tells
+        }
+      });
+    }
+  }
+
+  /**
+   * The update row: with updates and the bundle in the user's profile, pi
+   * exits and is replaced by the update script (update.ts execUpdate);
+   * otherwise the report says why not or how. A failed check is retried.
+   */
+  async function runUpdate(ctx: ExtensionContext): Promise<void> {
+    if (updateState.kind === "failed") {
+      startUpdateCheck();
+      ctx.ui.notify("harness: checking for updates again", "info");
+    } else if (updateState.kind !== "available") {
       await showDeps(ctx);
-    },
-  });
+    } else {
+      const where = await bundleInstall();
+      if (where.kind === "system") {
+        await showDeps(ctx);
+      } else if (!canExecUpdate()) {
+        ctx.ui.notify("harness: this Node cannot replace its process: run `nix profile upgrade " + where.element + "` and restart pi", "error");
+      } else if (sessionCtx === undefined || !sessionCtx.isIdle()) {
+        ctx.ui.notify("harness: finish or stop the run first, then update", "warning");
+      } else {
+        const sessionFile = sessionCtx.sessionManager.getSessionFile();
+        process.once("exit", (): void => execUpdate(where.element, sessionFile));
+        sessionCtx.shutdown();
+      }
+    }
+  }
 
   switch (profile) {
     case "desktop":
@@ -1479,7 +1562,14 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       } else {
         // the bundle manifest and the profile are in place: nothing to show
       }
+      sessionCtx = ctx;
       if (ctx.mode !== "tui") return;
+      if (profile === "desktop" && !updateCheckStarted) {
+        updateCheckStarted = true;
+        startUpdateCheck();
+      } else {
+        // the server is updated by its deployment; the check runs once per process
+      }
       ctx.ui.setEditorComponent(
         (
           tui: TUI,

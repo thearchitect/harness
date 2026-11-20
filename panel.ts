@@ -1,7 +1,7 @@
 /**
  * harness - the side panel: a full-height overlay on the right quarter of the
  * screen, opened and closed by Ctrl+\ (desktop profile, TUI only). It holds
- * sections of rows - toggles (madness, simple) and actions (/deps) - and is
+ * sections of rows - toggles (madness, simple) and actions (update, dependencies) - and is
  * built to take more sections later without changing this component.
  *
  * Keys are layout-independent: ↑/↓ move between rows (cyclic, section titles
@@ -15,7 +15,7 @@ import { matchesKey, truncateToWidth, visibleWidth, type Component, type TUI } f
 
 export type PanelItem =
   | { kind: "toggle"; label: string; tone: "success" | "error"; on: () => boolean; toggle: () => void }
-  | { kind: "action"; label: string; hint: string; run: () => void };
+  | { kind: "action"; label: string; hint: () => string; run: () => void };
 
 export type PanelSection = { title: string; items: PanelItem[] };
 
@@ -196,7 +196,7 @@ class SidePanel implements Component {
           value = item.on() ? this.theme.fg(item.tone, "●━━  on") : this.theme.fg("dim", "━━○ off");
           break;
         case "action":
-          value = this.theme.fg("dim", item.hint);
+          value = this.theme.fg("dim", item.hint());
           break;
         default:
           throw new Error(`unknown panel item: ${JSON.stringify(item satisfies never)}`);

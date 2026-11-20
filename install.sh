@@ -115,4 +115,4 @@ fi
 [[ -f "$AGENT_DIR/mcp.json" ]] && grep -q "locked-exec" "$AGENT_DIR/mcp.json" &&
   warn "$AGENT_DIR/mcp.json runs servers through harness's removed locked-exec.mjs; switch them to \"command\": \"pnpm\", \"args\": [\"--silent\", \"dlx\", \"<pkg>@<version>\", ...] (playwright and chromium-devtools are bundled now: delete those entries)."
 
-say "Done. Start pi with: pi   (inside pi, /deps shows bundled versions)"
+say "Done. Start pi with: pi   (inside pi, Ctrl+\\ opens the harness panel: updates, bundled versions)"

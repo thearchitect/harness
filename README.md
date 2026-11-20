@@ -11,8 +11,8 @@ still finds them, appended to its PATH). The bundled MCP servers: `lightpanda`
 and bot checks; Chromium prebuilt from cache.nixos.org on Linux, Google Chrome
 from Google on macOS), `playwright` and `chromium-devtools` (the user's own
 browser; registered disabled, enable them in `/mcp`). herdr's pi integration is
-part of the bundle: do not `herdr integration install pi` (`/deps` warns about
-such a copy). `HARNESS_PROFILE=server` runs pi headless (as the Telegram
+part of the bundle: do not `herdr integration install pi` (the dependencies
+report of the panel warns about such a copy). `HARNESS_PROFILE=server` runs pi headless (as the Telegram
 gateway does): no user-browser MCP servers, no `ask_user`, `ask_secret` or
 `display_file`, no `browser` window.
 
@@ -34,8 +34,13 @@ nix.settings.extra-substituters = [ "https://github.com/thearchitect/harness/rel
 nix.settings.extra-trusted-public-keys = [ "harness-1:YE1emDZFHptBwqvSGZIoVkGgCUwvCrBxoMFA+zps0Dg=" ];
 ```
 
-Upgrade: rerun the script, or `nix flake update harness` and rebuild. Verify:
-`pi --version`; inside pi, `/deps`. Host settings: `HARNESS_BROWSER` (your own
+Upgrade: pi checks master in the background at startup and announces new
+commits; `Ctrl+\` → *update* upgrades an install made by the script (`nix
+profile upgrade`, then pi restarts on the same session) and, for a NixOS /
+home-manager install, says to update its `harness` flake input and rebuild.
+The panel's *dependencies* report lists what the new commits change. By hand:
+rerun the script, or `nix flake update harness` and rebuild. Verify:
+`pi --version`; inside pi, `Ctrl+\` → *dependencies*. Host settings: `HARNESS_BROWSER` (your own
 Chrome/Chromium executable, used instead of the bundled one by `browser` and by
 playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for
 chromium-devtools). Details and after-install checks: `install/SKILL.md`.
@@ -53,10 +58,11 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `tool_guidelines` (a declared tool's rule replacing its own guidelines), `guidelines` (bullets in `<rules>`, in order)
 - `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (`core/`: agents, workspaces, pi processes; `telegram/`: chats; `app/`: the Mini App; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
 - `gate.ts` — the write/edit gate's pure parts: each mode's review by how far a change reaches (scratch space, the current directory, elsewhere) and by profile (the server profile builds without asking), and the gate as plain select/input dialogs outside the TUI
-- `panel.ts` — the side panel (desktop TUI, `Ctrl+\` opens and closes it): a full-height overlay on the right quarter with the madness and simple toggles and `/deps`; ↑/↓, Space/Enter, Esc
+- `panel.ts` — the side panel (desktop TUI, `Ctrl+\` opens and closes it): a full-height overlay on the right quarter with the madness and simple toggles, *update* and *dependencies*; ↑/↓, Space/Enter, Esc
+- `update.ts` — the bundle's update: the background check of master at startup (one GitHub API request; the pin changes come from the bodies of CI's "Update bundle pins" commits), the install kind (`nix profile` or a system configuration) and the one-press upgrade
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `testing`, `server` (server profile only); the `cage` skill is cage's own `cage skill`, generated at build time (manifest `skills`)
 - `install/SKILL.md` — the install/upgrade skill
-- `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the `/deps` report, the double-load guard (registered by `index.ts`)
+- `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the dependencies report, the double-load guard (registered by `index.ts`)
 - `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition (called by `index.ts` at `// WORKAROUND Wn`)
 - `nix/` — the bundle: `package.nix` (launchers, extension fileset, manifest), `npm/` (pi, pi packages, npm MCP servers, TypeScript and the extension's own npm dependencies from one lockfile), `sources.json`, `update.sh`, `smoke.sh`, `test.sh`, CI tests
 - `TODO.md` — waiting on upstream
