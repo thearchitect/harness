@@ -1,5 +1,5 @@
 /**
- * Tests of the write/edit gate (BUILD review by profile, the dialog outside
+ * Tests of the write/edit gate (each mode's review by reach and profile, the dialog outside
  * the TUI) and of the bundled MCP servers per profile.
  *   node --test gate.test.ts
  */
@@ -9,7 +9,9 @@ import { describe, test } from "node:test";
 import { bundledMcpServers, readProfile, type Manifest } from "./deps.ts";
 import {
   askGateViaDialogs,
-  buildChangeReview,
+  changeReview,
+  type ChangeReach,
+  type TurnMode,
   GATE_COMMENT_PROMPTS,
   GATE_OPTIONS,
   GATE_TITLE,
@@ -41,16 +43,27 @@ async function decide(select: string | undefined, input?: string): Promise<{ dec
   return { decision, recorded };
 }
 
-describe("BUILD review by profile", () => {
-  test("the server profile allows without asking, with or without a UI", () => {
-    assert.equal(buildChangeReview("server", true), "allow");
-    assert.equal(buildChangeReview("server", false), "allow");
-  });
-
-  test("the desktop asks, and cannot without a dialog-capable UI", () => {
-    assert.equal(buildChangeReview("desktop", true), "ask");
-    assert.equal(buildChangeReview("desktop", false), "no-ui");
-  });
+describe("change review by mode, reach and profile", () => {
+  // [mode, reach, desktop with UI, desktop without UI, server]
+  const table: [TurnMode, ChangeReach, string, string, string][] = [
+    ["plan", "scratch", "allow", "allow", "allow"],
+    ["plan", "cwd", "refuse", "refuse", "refuse"],
+    ["plan", "outside", "refuse", "refuse", "refuse"],
+    ["normal", "scratch", "allow", "allow", "allow"],
+    ["normal", "cwd", "ask", "no-ui", "allow"],
+    ["normal", "outside", "ask", "no-ui", "allow"],
+    ["simple", "scratch", "allow", "allow", "allow"],
+    ["simple", "cwd", "allow", "allow", "allow"],
+    ["simple", "outside", "ask", "no-ui", "allow"],
+  ];
+  for (const [mode, reach, desktop, desktopNoUI, server] of table) {
+    test(`${mode} / ${reach}`, () => {
+      assert.equal(changeReview(mode, reach, "desktop", true), desktop);
+      assert.equal(changeReview(mode, reach, "desktop", false), desktopNoUI);
+      assert.equal(changeReview(mode, reach, "server", true), server);
+      assert.equal(changeReview(mode, reach, "server", false), server);
+    });
+  }
 });
 
 describe("gate dialog outside the TUI", () => {

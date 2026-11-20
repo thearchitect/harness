@@ -2,8 +2,8 @@
  * harness - the write/edit gate's pure parts, kept apart from index.ts for
  * their tests (gate.test.ts):
  *
- * - buildChangeReview: what BUILD does with a change outside the scratch
- *   space, by profile (PLAN refuses such changes in every profile);
+ * - changeReview: what a mode does with a change, by how far the change
+ *   reaches (scratch space, the current directory, elsewhere) and by profile;
  * - askGateViaDialogs: the gate outside the TUI. In RPC mode pi forwards
  *   extension dialogs as plain select/input requests: one select, and a
  *   comment only for the options that take one.
@@ -12,11 +12,49 @@
 import type { Profile } from "./deps.ts";
 
 /**
- * BUILD's review of a change outside the scratch space: the desktop asks the
- * user (and cannot without a dialog-capable UI); the server profile (remote/)
- * builds unattended, nobody reviews there.
+ * The mode of one agent run: PLAN and BUILD ("normal", the value stored in
+ * session entries and read by remote/) form the advanced pair; SIMPLE is the
+ * single mode of the simple variant.
  */
-export function buildChangeReview(profile: Profile, hasUI: boolean): "allow" | "ask" | "no-ui" {
+export type TurnMode = "plan" | "normal" | "simple";
+
+/**
+ * How far a change reaches: only /tmp or the session workspace, the current
+ * working directory, or anywhere else (also a path that cannot be resolved).
+ */
+export type ChangeReach = "scratch" | "cwd" | "outside";
+
+/**
+ * A mode's decision on a change: scratch space is free in every mode; PLAN
+ * refuses everything else; BUILD reviews everything else; SIMPLE writes the
+ * current directory freely and reviews the rest. A review asks the user on
+ * the desktop (and cannot without a dialog-capable UI); the server profile
+ * (remote/) builds unattended, nobody reviews there.
+ */
+export function changeReview(
+  mode: TurnMode,
+  reach: ChangeReach,
+  profile: Profile,
+  hasUI: boolean,
+): "allow" | "refuse" | "ask" | "no-ui" {
+  if (reach === "scratch") {
+    return "allow";
+  } else {
+    switch (mode) {
+      case "plan":
+        return "refuse";
+      case "normal":
+        return review(profile, hasUI);
+      case "simple":
+        return reach === "cwd" ? "allow" : review(profile, hasUI);
+      default:
+        throw new Error(`unknown mode: ${String(mode satisfies never)}`);
+    }
+  }
+}
+
+/** A review by profile: the desktop asks the user, the server allows. */
+function review(profile: Profile, hasUI: boolean): "allow" | "ask" | "no-ui" {
   switch (profile) {
     case "server":
       return "allow";

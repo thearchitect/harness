@@ -55,6 +55,7 @@ let
         ../index.ts
         ../deps.ts
         ../gate.ts
+        ../panel.ts
         ../lsp
         ../tool_project_tree.ts
         ../tool_send_file.ts

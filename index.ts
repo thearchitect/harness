@@ -1,9 +1,11 @@
 /**
  * harness - personal Pi workflow extension.
  *
- * Per-message PLAN/BUILD mode (custom editor, mode colors, mode selector
- * message), plan-mode write/edit gating, and per-cycle "planning/building
- * finished" banners annotated with finish time, duration and USD cost. BUILD
+ * Per-message PLAN/BUILD mode or the single SIMPLE mode of the simple variant
+ * (custom editor, mode colors, mode selector message), per-mode write/edit
+ * gating, the side panel (panel.ts: madness, simple, /deps behind Ctrl+\),
+ * and per-cycle "planning/building finished" banners annotated with finish
+ * time, duration and USD cost. BUILD
  * write/edit
  * gates use an interactive Yes / No (why?) / Stop dialog whose comment is
  * fed back to the running model without interrupting it. The "/-" command
@@ -69,7 +71,8 @@ import { fileURLToPath } from "node:url";
 import { ensureThinkingBlocksVisible } from "./workarounds.ts";
 import { assembleSystemPrompt, systemPromptProblem } from "./prompt.ts";
 import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest, readProfile, type Profile } from "./deps.ts";
-import { askGateViaDialogs, buildChangeReview, type GateDecision } from "./gate.ts";
+import { askGateViaDialogs, changeReview, type ChangeReach, type GateDecision, type TurnMode } from "./gate.ts";
+import { openPanel, PANEL_SHORTCUT, type PanelHandle, type PanelSection } from "./panel.ts";
 import { AGENT_WORKSPACE_DIR, registerLsp, type ChangeAuthorization, type ChangeRequest } from "./lsp/index.ts";
 import { registerProjectTree } from "./tool_project_tree.ts";
 import { registerSendFile } from "./tool_send_file.ts";
@@ -149,9 +152,13 @@ function applyContextWindowOverrides(model: ExtensionContext["model"]): void {
  * █   █ █   █ █   █ █▀▀
  * ▀   ▀  ▀▀▀  ▀▀▀▀  ▀▀▀▀▀
  * ----------------------------------------------------------------------------
- * Per-message !plan/!build switching: custom editor, mode colors, working message, and the <active-mode> selector message.
+ * Per-message !plan/!build switching (the advanced variant) or the single
+ * SIMPLE mode (the simple variant, /simple): custom editor, mode colors,
+ * working message, and the <active-mode> selector message.
  * ========================================================================== */
 const MODE_ENTRY_TYPE = "per-message-mode";
+/** The session's variant, one entry per switch: the last one on the branch holds. */
+const VARIANT_ENTRY_TYPE = "harness-variant";
 const MODE_SELECTOR_MESSAGE_TYPE = "harness-active-mode";
 const FINISHED_ENTRY_TYPE = "per-message-mode-finished";
 const SYSTEM_PROMPT_ENTRY_TYPE = "harness-system-prompt";
@@ -165,7 +172,9 @@ const LEGACY_SYSTEM_PROMPT_ENTRY_TYPE = "thearchitect-system-prompt";
 
 type SystemPromptEntryData = { text: string; model: string };
 
-type TurnMode = "plan" | "normal";
+/** advanced: PLAN/BUILD per message; simple: one SIMPLE mode. A new session starts advanced. */
+type Variant = "advanced" | "simple";
+type VariantEntryData = { variant: Variant };
 type ModeDetails = { mode: TurnMode; model?: string; effort?: string; finishedAt?: number; durationMs?: number; costUsd?: number; interrupted?: boolean };
 type ColorMode = ReturnType<Theme["getColorMode"]>;
 type EventOf<TType extends ExtensionEvent["type"]> = Extract<
@@ -182,12 +191,31 @@ const MODE_COLOR_ANSI: Record<ColorMode, Record<TurnMode, string>> = {
   truecolor: {
     plan: "\x1b[38;2;255;139;61m",
     normal: "\x1b[38;2;176;114;255m",
+    simple: "\x1b[38;2;94;201;120m",
   },
   "256color": {
     plan: "\x1b[38;5;209m",
     normal: "\x1b[38;5;135m",
+    simple: "\x1b[38;5;78m",
   },
 };
+
+/** Every text a mode shows: chat chip, working message, end-of-run banner. */
+const MODE_TEXT: Record<TurnMode, { chip: string; working: string; finished: string; interrupted: string }> = {
+  plan: { chip: "PLAN", working: "Planning...", finished: "planning finished", interrupted: "planning interrupted" },
+  normal: { chip: "BUILD", working: "Building...", finished: "building finished", interrupted: "building interrupted" },
+  simple: { chip: "SIMPLE", working: "Working...", finished: "finished", interrupted: "interrupted" },
+};
+
+/** The mode a stored entry names; entries without a known mode are PLAN. */
+function storedMode(data: ModeDetails | undefined): TurnMode {
+  const mode = data?.mode;
+  if (mode === "normal" || mode === "simple") {
+    return mode;
+  } else {
+    return "plan";
+  }
+}
 
 function applyModeColor(mode: TurnMode, colorMode: ColorMode, text: string): string {
   // ?? guards against future ColorMode additions: extensions load via jiti
@@ -196,10 +224,27 @@ function applyModeColor(mode: TurnMode, colorMode: ColorMode, text: string): str
   return `${palette[mode]}${text}\x1b[39m`;
 }
 
+/**
+ * The mode a message asks for: in the simple variant always SIMPLE (a leading
+ * "!" means nothing there and is stripped), in the advanced one BUILD with a
+ * leading "!" and PLAN without.
+ */
+function modeOfMessage(text: string, variant: Variant): TurnMode {
+  switch (variant) {
+    case "simple":
+      return "simple";
+    case "advanced":
+      return text.startsWith("!") ? "normal" : "plan";
+    default:
+      throw new Error(`unknown variant: ${String(variant satisfies never)}`);
+  }
+}
+
 class PerMessageModeEditor extends CustomEditor {
   private readonly modeKeybindings: KeybindingsManager;
   private readonly modeBorderColors: Record<TurnMode, EditorTheme["borderColor"]>;
   private readonly inheritedMode: () => TurnMode | undefined;
+  private readonly variant: () => Variant;
   private readonly onModeSelected: (mode: TurnMode) => void;
 
   constructor(
@@ -208,18 +253,19 @@ class PerMessageModeEditor extends CustomEditor {
     modeKeybindings: KeybindingsManager,
     modeBorderColors: Record<TurnMode, EditorTheme["borderColor"]>,
     inheritedMode: () => TurnMode | undefined,
+    variant: () => Variant,
     onModeSelected: (mode: TurnMode) => void,
   ) {
     super(tui, theme, modeKeybindings);
     this.modeKeybindings = modeKeybindings;
     this.modeBorderColors = modeBorderColors;
     this.inheritedMode = inheritedMode;
+    this.variant = variant;
     this.onModeSelected = onModeSelected;
   }
 
   override render(width: number): string[] {
-    const requestedMode = this.getText().startsWith("!") ? "normal" : "plan";
-    const mode = this.inheritedMode() ?? requestedMode;
+    const mode = this.inheritedMode() ?? modeOfMessage(this.getText(), this.variant());
     this.borderColor = this.modeBorderColors[mode];
     return super.render(width);
   }
@@ -233,10 +279,12 @@ class PerMessageModeEditor extends CustomEditor {
       const text = this.getExpandedText();
       if (text.startsWith("!")) {
         this.setText(stripNormalPrefix(text));
-        this.onModeSelected("normal");
       } else {
-        this.onModeSelected("plan");
+        // nothing to strip
       }
+      this.onModeSelected(modeOfMessage(text, this.variant()));
+    } else {
+      // not a submission: the mode is chosen when the message is sent
     }
 
     super.handleInput(data);
@@ -280,14 +328,23 @@ export function applySubmitKeyDefaults(keybindings: KeybindingsManager): void {
 }
 
 function applyModeWorkingMessage(ctx: ExtensionContext, mode: TurnMode): void {
-  const text = mode === "plan" ? "Planning..." : "Building...";
   ctx.ui.setWorkingMessage(
-    applyModeColor(mode, ctx.ui.theme.getColorMode(), text),
+    applyModeColor(mode, ctx.ui.theme.getColorMode(), MODE_TEXT[mode].working),
   );
 }
 
-function modeName(mode: TurnMode): "plan" | "build" {
-  return mode === "plan" ? "plan" : "build";
+/** The mode's name in the system prompt's <mode-policies>. */
+function modeName(mode: TurnMode): "plan" | "build" | "simple" {
+  switch (mode) {
+    case "plan":
+      return "plan";
+    case "normal":
+      return "build";
+    case "simple":
+      return "simple";
+    default:
+      throw new Error(`unknown mode: ${String(mode satisfies never)}`);
+  }
 }
 
 function formatModeSelector(mode: TurnMode): string {
@@ -751,7 +808,7 @@ async function askGateDecision(
  * █ ▀▀█ █▀▀▀█   █     █   █ ▀▄█ █ ▀▀█
  *  ▀▀▀  ▀   ▀   ▀   ▀▀▀▀▀ ▀   ▀  ▀▀▀
  * ----------------------------------------------------------------------------
- * Plan mode blocks write/edit outside /tmp and the session workspace; build mode asks for UI confirmation (madness bypasses; the server profile does not ask).
+ * Plan mode blocks write/edit outside /tmp and the session workspace; build mode asks for UI confirmation; simple mode writes the current directory freely and asks for the rest (madness bypasses; the server profile does not ask).
  * ========================================================================== */
 async function canonicalizeProspectivePath(path: string): Promise<string> {
   let cursor = resolve(path);
@@ -784,9 +841,10 @@ function isInside(root: string, candidate: string): boolean {
   );
 }
 
-async function isInsideTemp(path: string, cwd: string, tempRoot: string): Promise<boolean> {
+/** Whether a path (relative to cwd) lies inside a canonical root. */
+async function isInsideRoot(path: string, cwd: string, root: string): Promise<boolean> {
   const candidate = await canonicalizeProspectivePath(resolve(cwd, path));
-  return isInside(tempRoot, candidate);
+  return isInside(root, candidate);
 }
 
 /** Minimal view of the session manager needed to locate the session workspace. */
@@ -973,7 +1031,10 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   const tempRoot = await canonicalizeProspectivePath(tmpdir());
   let pendingSubmissionMode: TurnMode | undefined;
   let activeMode: TurnMode = "plan";
+  let variant: Variant = "advanced";
   let madnessEnabled = false;
+  // The side panel while it is open (panel.ts).
+  let panel: PanelHandle | undefined;
   let cycleStartTime: number | undefined;
   let baselineCost = 0;
   let systemPromptEntryShown = false;
@@ -1027,7 +1088,16 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
 
   const HERDR_BLOCKED_EVENT = "herdr:blocked";
 
+  /**
+   * A dialog opens or closes. An opening one closes the side panel, which
+   * would otherwise cover the right quarter of the dialog.
+   */
   function reportBlocked(active: boolean, label: string): void {
+    if (active) {
+      panel?.close();
+    } else {
+      // a dialog closed: the panel stays closed until reopened
+    }
     pi.events.emit(HERDR_BLOCKED_EVENT, { active, label });
   }
 
@@ -1050,33 +1120,96 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
  * █     █   █ █   █ █   █ █▀▀▀█ █ ▀▄█ █   █
  *  ▀▀▀▀  ▀▀▀  ▀   ▀ ▀   ▀ ▀   ▀ ▀   ▀ ▀▀▀▀
  * ----------------------------------------------------------------------------
- * "/madness" command and Ctrl+\\ shortcut: bypasses write/edit permission gates.
+ * "/madness" (bypasses write/edit permission gates), "/simple" (the simple
+ * variant), "/deps", and the side panel (Ctrl+\\) holding all three.
  * ========================================================================== */
 
   const STATUS_WIDGET_KEY = "harness:status";
 
-  // Single status line below the editor: "❤︎ <gate> × session <id>".
+  // Single status line below the editor: "[simple] ✻ <gate> ✻ session <id>".
   function updateStatusWidget(ctx: ExtensionContext): void {
     const theme = ctx.ui.theme;
+    const simple = variant === "simple" ? `${theme.fg("success", "simple")} ` : "";
     const gate = madnessEnabled
       ? theme.fg("error", theme.bold("this is madness"))
       : theme.fg("dim", "you shall not pass");
     const id = ctx.sessionManager.getSessionId();
     const line = id
-      ? `${theme.fg("dim", "✻")} ${gate} ${theme.fg("dim", "✻")} ${theme.fg("dim", `session ${id}`)}`
-      : `${theme.fg("dim", "✻")} ${gate}`;
+      ? `${simple}${theme.fg("dim", "✻")} ${gate} ${theme.fg("dim", "✻")} ${theme.fg("dim", `session ${id}`)}`
+      : `${simple}${theme.fg("dim", "✻")} ${gate}`;
     ctx.ui.setWidget(STATUS_WIDGET_KEY, [line], { placement: "belowEditor" });
   }
 
-  function toggleMadness(ctx: ExtensionContext): void {
-    madnessEnabled = !madnessEnabled;
+  function setMadness(ctx: ExtensionContext, enabled: boolean): void {
+    madnessEnabled = enabled;
     updateStatusWidget(ctx);
-    ctx.ui.notify(
-      madnessEnabled
-        ? "madness mode enabled: permission gates disabled"
-        : "madness mode disabled: permission gates restored",
-      "info",
-    );
+  }
+
+  /** Switches the variant; the switch is recorded in the session and takes effect with the next message. */
+  function setVariant(ctx: ExtensionContext, next: Variant): void {
+    variant = next;
+    pi.appendEntry<VariantEntryData>(VARIANT_ENTRY_TYPE, { variant: next });
+    updateStatusWidget(ctx);
+  }
+
+  /** The variant of the current branch: its last recorded switch, advanced when there is none. */
+  function restoreVariant(ctx: ExtensionContext): void {
+    const recorded = ctx.sessionManager
+      .getBranch()
+      .findLast((entry) => entry.type === "custom" && entry.customType === VARIANT_ENTRY_TYPE);
+    const data = recorded?.type === "custom" ? (recorded.data as VariantEntryData | undefined) : undefined;
+    variant = data?.variant === "simple" ? "simple" : "advanced";
+  }
+
+  function togglePanel(ctx: ExtensionContext): void {
+    if (panel !== undefined) {
+      panel.close();
+    } else {
+      const handle = openPanel(ctx, panelSections(ctx), (): void => {
+        if (panel === handle) {
+          panel = undefined;
+        } else {
+          // a newer panel replaced this one
+        }
+      });
+      panel = handle;
+    }
+  }
+
+  /** The panel's rows: madness first (the most used: Ctrl+\\, Enter, Esc), then simple, then /deps. */
+  function panelSections(ctx: ExtensionContext): PanelSection[] {
+    return [
+      {
+        title: "mode",
+        items: [
+          {
+            kind: "toggle",
+            label: "madness",
+            tone: "error",
+            on: (): boolean => madnessEnabled,
+            toggle: (): void => setMadness(ctx, !madnessEnabled),
+          },
+          {
+            kind: "toggle",
+            label: "simple",
+            tone: "success",
+            on: (): boolean => variant === "simple",
+            toggle: (): void => setVariant(ctx, variant === "simple" ? "advanced" : "simple"),
+          },
+        ],
+      },
+      {
+        title: "harness",
+        items: [
+          {
+            kind: "action",
+            label: "dependencies",
+            hint: "versions · update",
+            run: (): void => void showDeps(ctx),
+          },
+        ],
+      },
+    ];
   }
 
   async function showDeps(ctx: ExtensionContext): Promise<void> {
@@ -1099,13 +1232,6 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     },
   });
 
-  pi.registerShortcut("alt+u", {
-    description: "Bundled dependencies (/deps)",
-    handler: (ctx: ExtensionContext): void => {
-      void showDeps(ctx);
-    },
-  });
-
   switch (profile) {
     case "desktop":
       pi.registerCommand("madness", {
@@ -1119,13 +1245,32 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
             return;
           }
 
-          toggleMadness(ctx);
+          setMadness(ctx, !madnessEnabled);
+          ctx.ui.notify(
+            madnessEnabled
+              ? "madness mode enabled: permission gates disabled"
+              : "madness mode disabled: permission gates restored",
+            "info",
+          );
         },
       });
-      pi.registerShortcut("ctrl+\\", {
-        description: "Toggle madness mode",
+      pi.registerCommand("simple", {
+        description: "Toggle the simple mode (one mode, no PLAN/BUILD switching) for this session",
+        handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
+          setVariant(ctx, variant === "simple" ? "advanced" : "simple");
+          ctx.ui.notify(
+            variant === "simple"
+              ? "simple mode: one mode from the next message on"
+              : "advanced mode: PLAN/BUILD from the next message on",
+            "info",
+          );
+        },
+      });
+      // The panel is a TUI overlay: the shortcut exists only there.
+      pi.registerShortcut(PANEL_SHORTCUT, {
+        description: "Harness panel: madness, simple, dependencies",
         handler: (ctx: ExtensionContext): void => {
-          toggleMadness(ctx);
+          togglePanel(ctx);
         },
       });
       // The operator is at the terminal: secrets come through a masked
@@ -1211,7 +1356,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
  * █▀▀   █ ▀▄█   █   █▀▀▀▄   █   █▀▀    ▀▀▀▄
  * ▀▀▀▀▀ ▀   ▀   ▀   ▀   ▀ ▀▀▀▀▀ ▀▀▀▀▀ ▀▀▀▀
  * ----------------------------------------------------------------------------
- * Chat chips: "◆ PLAN/◆ BUILD" markers and the "planning/building finished" banners (with gray finish-time/duration/cost suffix).
+ * Chat chips: "◆ PLAN/◆ BUILD/◆ SIMPLE" markers and the "planning/building/… finished" banners (with gray finish-time/duration/cost suffix).
  * ========================================================================== */
 
   pi.registerEntryRenderer<ModeDetails>(
@@ -1221,10 +1366,9 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       _options: EntryRenderOptions,
       theme: Theme,
     ): Text => {
-      const mode = entry.data?.mode === "normal" ? "normal" : "plan";
-      const label = mode === "normal" ? "BUILD" : "PLAN";
+      const mode = storedMode(entry.data);
       return new Text(
-        applyModeColor(mode, theme.getColorMode(), theme.bold(`◆ ${label}`)),
+        applyModeColor(mode, theme.getColorMode(), theme.bold(`◆ ${MODE_TEXT[mode].chip}`)),
         0,
         0,
       );
@@ -1238,11 +1382,8 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       _options: EntryRenderOptions,
       theme: Theme,
     ): Text => {
-      const mode = entry.data?.mode === "normal" ? "normal" : "plan";
-      const interrupted = entry.data?.interrupted === true;
-      const text = interrupted
-        ? mode === "plan" ? "planning interrupted" : "building interrupted"
-        : mode === "plan" ? "planning finished" : "building finished";
+      const mode = storedMode(entry.data);
+      const text = entry.data?.interrupted === true ? MODE_TEXT[mode].interrupted : MODE_TEXT[mode].finished;
       const identityParts: string[] = [];
       if (entry.data?.model) identityParts.push(entry.data.model);
       if (entry.data?.effort) identityParts.push(entry.data.effort);
@@ -1319,6 +1460,9 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
       pendingSubmissionMode = undefined;
       activeMode = "plan";
       madnessEnabled = false;
+      // pi removes extension overlays on session replacement and reload
+      panel = undefined;
+      restoreVariant(ctx);
       cycleStartTime = undefined;
       baselineCost = 0;
       systemPromptEntryShown = false;
@@ -1347,6 +1491,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
           const modeBorderColors: Record<TurnMode, EditorTheme["borderColor"]> = {
             plan: (text: string): string => applyModeColor("plan", colorMode, text),
             normal: (text: string): string => applyModeColor("normal", colorMode, text),
+            simple: (text: string): string => applyModeColor("simple", colorMode, text),
           };
           return new PerMessageModeEditor(
             tui,
@@ -1354,6 +1499,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
             keybindings,
             modeBorderColors,
             (): TurnMode | undefined => (ctx.isIdle() ? undefined : activeMode),
+            (): Variant => variant,
             (mode: TurnMode): void => {
               pendingSubmissionMode = mode;
             },
@@ -1372,10 +1518,20 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     },
   );
 
+  // /tree moves to another branch: its own last variant switch holds.
+  pi.on(
+    "session_tree",
+    (_event: EventOf<"session_tree">, ctx: ExtensionContext): void => {
+      restoreVariant(ctx);
+      updateStatusWidget(ctx);
+    },
+  );
+
   pi.on(
     "session_shutdown",
     (_event: EventOf<"session_shutdown">, ctx: ExtensionContext): void => {
       madnessEnabled = false;
+      panel?.close();
       for (const toolCallId of blockedToolCalls) {
         finishBlockedTool(toolCallId, "question");
       }
@@ -1411,16 +1567,13 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     // Extension-originated prompts (gate steer comments) must pass through
     // verbatim: no "!"-prefix handling, no mode chip, no mode flip.
     if (event.source === "extension") return { action: "continue" };
-    let text = event.text;
+    const text = stripNormalPrefix(event.text);
     let requestedMode: TurnMode;
-
-    if (text.startsWith("!")) {
-      requestedMode = "normal";
-      text = stripNormalPrefix(text);
-    } else if (event.source === "interactive") {
-      requestedMode = pendingSubmissionMode ?? "plan";
+    if (text === event.text && event.source === "interactive") {
+      // the editor already chose the mode (and stripped any "!") on submission
+      requestedMode = pendingSubmissionMode ?? modeOfMessage(event.text, variant);
     } else {
-      requestedMode = "plan";
+      requestedMode = modeOfMessage(event.text, variant);
     }
     pendingSubmissionMode = undefined;
 
@@ -1650,16 +1803,18 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   /** Scratch space: /tmp or the session workspace, free to write in every mode. */
   async function isScratchPath(ctx: ExtensionContext, path: string, workspaceRoot?: string): Promise<boolean> {
     return (
-      (await isInsideTemp(path, ctx.cwd, tempRoot)) ||
-      (await isInsideTemp(path, ctx.cwd, workspaceRoot ?? (await scratchWorkspaceRoot(ctx))))
+      (await isInsideRoot(path, ctx.cwd, tempRoot)) ||
+      (await isInsideRoot(path, ctx.cwd, workspaceRoot ?? (await scratchWorkspaceRoot(ctx))))
     );
   }
 
   /**
    * The change review shared by write/edit and lsp_refactor, one decision per
-   * change (a lsp_refactor call is one change however many operations it holds): madness lets everything through; paths inside /tmp or the session
-   * workspace need no review in any mode; otherwise PLAN refuses and BUILD
-   * asks Yes / No (why?) / Stop. An approval's comment is attached to the
+   * change (a lsp_refactor call is one change however many operations it holds): madness lets everything through; otherwise the
+   * change's farthest path decides (gate.ts changeReview): paths inside /tmp
+   * or the session workspace need no review in any mode; PLAN refuses the
+   * rest; SIMPLE writes the current directory freely; a review asks
+   * Yes / No (why?) / Stop. An approval's comment is attached to the
    * tool result (pendingGateComments) and steered to the model; a
    * rejection's comment is steered too.
    */
@@ -1669,45 +1824,48 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     } else {
       // reviewed below
     }
-    const mode = activeMode;
     let workspaceRoot: string | undefined;
+    // the paths outside scratch space, and how far the farthest one reaches
     let reviewed: string[];
+    let reach: ChangeReach;
+    let resolveProblem: string | undefined;
     try {
       const root = await scratchWorkspaceRoot(ctx);
+      const cwdRoot = await canonicalizeProspectivePath(ctx.cwd);
       workspaceRoot = root;
       reviewed = [];
+      reach = "scratch";
       for (const path of request.paths) {
         if (await isScratchPath(ctx, path, root)) {
           // scratch space: free in every mode
+        } else if (await isInsideRoot(path, ctx.cwd, cwdRoot)) {
+          reviewed.push(path);
+          reach = reach === "outside" ? "outside" : "cwd";
         } else {
           reviewed.push(path);
+          reach = "outside";
         }
       }
     } catch (error) {
-      if (mode === "plan") {
-        return {
-          kind: "blocked",
-          terminate: false,
-          reason: `PLAN could not safely resolve ${request.paths.join(", ")}: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      } else {
-        // BUILD reviews every path it cannot classify
-        reviewed = request.paths;
-      }
+      // a path that cannot be classified reaches anywhere
+      reviewed = request.paths;
+      reach = "outside";
+      resolveProblem = error instanceof Error ? error.message : String(error);
     }
 
-    const buildReview = buildChangeReview(profile, ctx.hasUI);
-    if (reviewed.length === 0) {
+    const review = changeReview(activeMode, reach, profile, ctx.hasUI);
+    if (review === "allow") {
       return { kind: "allowed" };
-    } else if (mode === "plan") {
+    } else if (review === "refuse") {
       return {
         kind: "blocked",
         terminate: false,
-        reason: `PLAN allows ${request.tool} only inside ${tempRoot} or your session workspace (${workspaceRoot ?? "unavailable"}). Use a disposable copy there.`,
+        reason:
+          resolveProblem !== undefined
+            ? `PLAN could not safely resolve ${request.paths.join(", ")}: ${resolveProblem}`
+            : `PLAN allows ${request.tool} only inside ${tempRoot} or your session workspace (${workspaceRoot ?? "unavailable"}). Use a disposable copy there.`,
       };
-    } else if (buildReview === "allow") {
-      return { kind: "allowed" };
-    } else if (buildReview === "no-ui") {
+    } else if (review === "no-ui") {
       return {
         kind: "blocked",
         terminate: false,
