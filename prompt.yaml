@@ -261,7 +261,10 @@ guidelines:
     alone, without studying the code, architecture or documentation.
 
   reply_language: >-
-    Answer in the language the user started the conversation in.
+    Write all your text in the language the user is conducting the conversation in: answers, plans,
+    reports, questions, and the short notes alongside tool calls during the work alike — whatever
+    the language of the prompt, the code, tool output or files. Code, identifiers and file contents
+    keep their own language; commit messages are always in English.
 
   file_paths: >-
     Show file paths clearly when working with files.
