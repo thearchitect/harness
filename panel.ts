@@ -213,12 +213,16 @@ class SidePanel implements Component {
     return (width: number): string => this.frame(content, width, false);
   }
 
-  /** Border, selection marker and background around a row's content, exactly width columns. */
+  /**
+   * Border and selection marker around a row's content, exactly width columns.
+   * The panel has no background of its own (the terminal's shows through, as
+   * under the chat); only the selected row is highlighted.
+   */
   private frame(content: string, width: number, selected: boolean): string {
     const border = this.theme.fg("borderAccent", "┃");
     const marker = selected ? this.theme.fg("accent", "▌") : " ";
     const inner = truncateToWidth(`${marker} ${content}`, Math.max(0, width - 1));
     const padded = inner + " ".repeat(Math.max(0, width - 1 - visibleWidth(inner)));
-    return border + this.theme.bg(selected ? "selectedBg" : "customMessageBg", padded);
+    return border + (selected ? this.theme.bg("selectedBg", padded) : padded);
   }
 }
