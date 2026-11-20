@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, truncateSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
@@ -7,7 +7,8 @@ import { checkFile, SEND_LIMIT } from "./tool_send_file.ts";
 
 describe("send_file", () => {
   test("a file: its real path, name, size and comment; anything else: why it cannot be sent", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "send-file-test-"));
+    // The real directory: on macOS tmpdir() is under /tmp, a symlink to /private/tmp.
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "send-file-test-")));
     writeFileSync(join(dir, "report.txt"), "hello");
     symlinkSync(join(dir, "report.txt"), join(dir, "link.txt"));
     mkdirSync(join(dir, "folder"));

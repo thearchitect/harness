@@ -57,6 +57,27 @@ jobs:
       - name: Flake check
         if: steps.plan.outputs.action == 'build'
         run: nix flake check --no-build --print-build-logs
+      - name: Prefetch release assets
+        if: steps.plan.outputs.action == 'build'
+        # Anonymous GitHub release downloads from runners intermittently get
+        # HTTP 403. An authenticated download added as a fixed-output path is
+        # exactly what fetchurl would produce, so the build does not download it.
+        # shell: bash adds pipefail, so a failing jq fails the step too.
+        shell: bash
+        run: |
+          jq -r --arg system "$CI_SYSTEM" '.[].assets[$system].url // empty' nix/sources.json |
+          while read -r url; do
+            case "$url" in
+              https://github.com/*/releases/download/*)
+                IFS=/ read -r _ _ _ owner repo _ _ tag file <<<"$url"
+                gh release download "$tag" --repo "$owner/$repo" --pattern "$file" --dir "$RUNNER_TEMP/prefetch" --clobber
+                nix-store --add-fixed sha256 "$RUNNER_TEMP/prefetch/$file"
+                ;;
+              *)
+                echo "not a GitHub release asset, left to fetchurl: $url"
+                ;;
+            esac
+          done
       - name: Build
         if: steps.plan.outputs.action == 'build'
         run: nix build --print-build-logs .#default
