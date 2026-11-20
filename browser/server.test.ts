@@ -137,7 +137,9 @@ describe("server over stdio", () => {
     assert.match(text(result), /boom/);
   });
 
-  test("show: refused without a display", async () => {
+  // Only a platform that can lack a display has this scenario: macOS always has one (canShowWindow).
+  const alwaysDisplay = canShowWindow(process.platform, {});
+  test("show: refused without a display", { skip: alwaysDisplay ? "this platform always has a display" : false }, async () => {
     const result = await client.callTool("show", { profile: join(home, "profile") });
     assert.equal(result.isError, true);
     assert.match(text(result), /no display/);
