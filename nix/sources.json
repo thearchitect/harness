@@ -1,18 +1,18 @@
 {
   "lightpanda": {
-    "version": "1.0.4",
+    "version": "1.0.5",
     "assets": {
       "x86_64-linux": {
-        "url": "https://github.com/lightpanda-io/browser/releases/download/1.0.4/lightpanda-x86_64-linux",
-        "hash": "sha256-fSJlESmQEgOr25XGT0kGnEnoj1IR9NjExoKMEjxK2rQ="
+        "url": "https://github.com/lightpanda-io/browser/releases/download/1.0.5/lightpanda-x86_64-linux",
+        "hash": "sha256-DsIfpIZ6uegrNShf9KsOczbGwdifJv6ZHyfXPIpni9c="
       },
       "aarch64-linux": {
-        "url": "https://github.com/lightpanda-io/browser/releases/download/1.0.4/lightpanda-aarch64-linux",
-        "hash": "sha256-8CHUmgtm0HvyYz+OAIcLkHUpNRb4cmlbDKSutYSLbqg="
+        "url": "https://github.com/lightpanda-io/browser/releases/download/1.0.5/lightpanda-aarch64-linux",
+        "hash": "sha256-dSc5HEefMj65ERuDSwEtkaiQV1KMKO8Cd0GyFzmxIpk="
       },
       "aarch64-darwin": {
-        "url": "https://github.com/lightpanda-io/browser/releases/download/1.0.4/lightpanda-aarch64-macos",
-        "hash": "sha256-g7C6WuMQhrZ1+zulBkS9oHWhO+ur5G3F91Q5UrxBrkY="
+        "url": "https://github.com/lightpanda-io/browser/releases/download/1.0.5/lightpanda-aarch64-macos",
+        "hash": "sha256-7sN4EIbuUSMgoEsDbwkoBqipWZROp4/I9P59/iFahLQ="
       }
     }
   }
