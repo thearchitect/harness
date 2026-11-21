@@ -73,7 +73,7 @@ if ! grep -qx 'skill:ask-user' <<<"$desktop_commands" && grep -qx 'skill:cage' <
 else
   fail "desktop profile: cage and testing skills, madness, no ask-user or server skill" "$WORK/rpc-desktop.log"
 fi
-if ! grep -qx 'skill:ask-user' <<<"$server_commands" && ! grep -qx 'madness' <<<"$server_commands" && grep -qx 'skill:cage' <<<"$server_commands" && grep -qx 'skill:testing' <<<"$server_commands" && grep -qx 'skill:server' <<<"$server_commands" && grep -qx 'deps' <<<"$server_commands"; then
+if ! grep -qx 'skill:ask-user' <<<"$server_commands" && ! grep -qx 'madness' <<<"$server_commands" && grep -qx 'skill:cage' <<<"$server_commands" && grep -qx 'skill:testing' <<<"$server_commands" && grep -qx 'skill:server' <<<"$server_commands" && grep -qx -- '-' <<<"$server_commands"; then
   pass "server profile: no ask-user, no madness, cage, testing and server skills, harness loaded"
 else
   fail "server profile: no ask-user, no madness, cage, testing and server skills, harness loaded" "$WORK/rpc-server.log"
