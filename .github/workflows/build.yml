@@ -87,7 +87,7 @@ jobs:
         run: nix shell nixpkgs#jq nixpkgs#coreutils --command nix/smoke.sh result
       - name: Extension tests
         if: steps.plan.outputs.action == 'build'
-        run: nix shell nixpkgs#nodejs nixpkgs#git nixpkgs#go nixpkgs#cargo nixpkgs#rustc nixpkgs#zip nixpkgs#unzip --command nix/test.sh result
+        run: nix shell nixpkgs#nodejs nixpkgs#git nixpkgs#go nixpkgs#cargo nixpkgs#rustc nixpkgs#zip nixpkgs#unzip nixpkgs#findutils --command nix/test.sh result
       - name: Telegram gateway
         if: steps.plan.outputs.action == 'build' && runner.os == 'Linux'
         run: nix build --print-build-logs --no-link .#harness-telegram

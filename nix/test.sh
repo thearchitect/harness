@@ -5,8 +5,9 @@
 # through the checkout's node_modules, pointed at the bundle's as pi-dev does;
 # the server tests drive the bundle's language servers on the fixtures in
 # lsp/testdata and need git, go and cargo in PATH (the projects' toolchains
-# are never part of the bundle); the gateway's tests need zip and unzip. CI:
-#   nix shell nixpkgs#nodejs nixpkgs#git nixpkgs#go nixpkgs#cargo nixpkgs#rustc nixpkgs#zip nixpkgs#unzip --command nix/test.sh result
+# are never part of the bundle); the gateway's tests need zip, unzip and GNU
+# find (`-printf`, as in its image; macOS's own find is BSD). CI:
+#   nix shell nixpkgs#nodejs nixpkgs#git nixpkgs#go nixpkgs#cargo nixpkgs#rustc nixpkgs#zip nixpkgs#unzip nixpkgs#findutils --command nix/test.sh result
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
@@ -16,6 +17,7 @@ export HARNESS_MANIFEST="$BUNDLE/share/harness/manifest.json"
 for tool in node git go cargo zip unzip; do
   command -v "$tool" >/dev/null || { echo "test: $tool is not in PATH" >&2; exit 1; }
 done
+find --version >/dev/null 2>&1 || { echo "test: find is not GNU findutils (the gateway's image has it)" >&2; exit 1; }
 
 # The bundle's node_modules: the parent of the pi package's scope directory.
 NODE_MODULES="$(dirname "$(dirname "$(node -p 'require(process.argv[1]).packages.pi' "$HARNESS_MANIFEST")")")"
