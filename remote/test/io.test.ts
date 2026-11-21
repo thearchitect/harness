@@ -5,7 +5,7 @@
  */
 
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -35,15 +35,18 @@ function waitFor<T>(list: T[], predicate: (item: T) => boolean): Promise<T> {
 }
 
 describe("rpc client", () => {
-  test("framing, responses, events, dialogs, explicit environment, orderly close", async () => {
+  test("framing, responses, events, dialogs, explicit environment, orderly close", async (t) => {
     const events: RpcEvent[] = [];
     const ui: { id: string }[] = [];
+    // Canonical: the process reports its real cwd (macOS's tmpdir is a symlink).
+    const cwd = realpathSync(tmpdir());
     const proc = new RpcProcess(
-      { command: process.execPath, args: [FAKE_PI], cwd: tmpdir(), env: { ONLY_THIS: "yes" } },
+      { command: process.execPath, args: [FAKE_PI], cwd, env: { ONLY_THIS: "yes" } },
       { onEvent: (e) => events.push(e), onUiRequest: (r) => ui.push(r), onLog: () => undefined },
     );
+    t.after(() => proc.kill("SIGKILL"));
     const state = await proc.request({ type: "get_state" });
-    assert.deepEqual((state as { data: unknown }).data, { cwd: tmpdir(), env: "yes" });
+    assert.deepEqual((state as { data: unknown }).data, { cwd, env: "yes" });
     const unknown = await proc.request({ type: "get_commands" });
     assert.equal(unknown.success, false);
     await proc.request({ type: "prompt", message: "hi" });
@@ -57,11 +60,12 @@ describe("rpc client", () => {
     assert.deepEqual(await proc.exited, { code: 0, signal: null });
   });
 
-  test("an exit rejects pending requests and keeps the stderr tail", async () => {
+  test("an exit rejects pending requests and keeps the stderr tail", async (t) => {
     const proc = new RpcProcess(
       { command: process.execPath, args: [FAKE_PI], cwd: tmpdir(), env: {} },
       { onEvent: () => undefined, onUiRequest: () => undefined, onLog: () => undefined },
     );
+    t.after(() => proc.kill("SIGKILL"));
     await assert.rejects(proc.request({ type: "prompt", message: "crash" }), /pi exited \(code 3/);
     assert.deepEqual(proc.stderrTail(), ["fatal: crashed on purpose"]);
     await assert.rejects(proc.request({ type: "get_state" }), /pi has exited/);

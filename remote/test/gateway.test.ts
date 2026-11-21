@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -52,7 +52,8 @@ let updateId = 1;
 let messageId = 1000;
 
 function makeWorld(): World {
-  const dataDir = mkdtempSync(join(tmpdir(), "gateway-test-"));
+  // Canonical, as the gateway expects it (macOS's tmpdir is a symlink).
+  const dataDir = realpathSync(mkdtempSync(join(tmpdir(), "gateway-test-")));
   const user: UserConfig = { name: "artem", telegramId: ARTEM, uid: 1001, gid: 1001, git: { name: "A", email: "a@x" }, publicKeys: [], admin: true };
   const config: Config = {
     telegram: { tokenVariable: "T", webhookSecretVariable: "W", publicUrl: "https://x/telegram", listenPort: 1 },

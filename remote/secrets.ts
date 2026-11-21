@@ -10,7 +10,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { homeOf, runAsUser, userEnv } from "./accounts.ts";
+import { homeOf, runAsUser } from "./accounts.ts";
 import type { Config, UserConfig } from "./config.ts";
 
 export const SECRET_NAME = /^[A-Z_][A-Z0-9_]{0,47}$/;
@@ -89,21 +89,25 @@ export async function setSecret(config: Config, user: UserConfig, serverKey: str
 /**
  * Names of the variables the deployment sets for the user (its
  * `user-<name>.cage`, decrypted by `cage run` as the user). Only the names
- * leave the child process: it prints the keys of its environment, minus those
- * the gateway set itself.
+ * leave the child processes: the keys of the environment under `cage run`,
+ * minus those of the same command run without it (the gateway's variables
+ * and whatever the platform adds, like macOS's __CF_USER_TEXT_ENCODING).
  */
 export async function deploymentSecretNames(config: Config, user: UserConfig): Promise<{ names: string[] } | { problem: string }> {
   const file = join(config.paths.envsDir, `user-${user.name}.cage`);
   if (!existsSync(file)) {
     return { names: [] };
   } else {
-    const base = new Set(Object.keys(userEnv(config, user)));
     const printKeys = "process.stdout.write(JSON.stringify(Object.keys(process.env)))";
-    const result = await runAsUser(config, user, config.paths.cage, ["run", "-raw", "-no-mask", file, "-", process.execPath, "-e", printKeys]);
-    if (result.code !== 0) {
-      return { problem: result.stderr.trim().split("\n").slice(-3).join("\n") || `cage exited with ${result.code}` };
+    const base = await runAsUser(config, user, process.execPath, ["-e", printKeys]);
+    const withSecrets = await runAsUser(config, user, config.paths.cage, ["run", "-raw", "-no-mask", file, "-", process.execPath, "-e", printKeys]);
+    if (base.code !== 0) {
+      return { problem: base.stderr.trim().split("\n").slice(-3).join("\n") || `node exited with ${base.code}` };
+    } else if (withSecrets.code !== 0) {
+      return { problem: withSecrets.stderr.trim().split("\n").slice(-3).join("\n") || `cage exited with ${withSecrets.code}` };
     } else {
-      return { names: (JSON.parse(result.stdout) as string[]).filter((name) => !base.has(name)).sort() };
+      const baseKeys = new Set(JSON.parse(base.stdout) as string[]);
+      return { names: (JSON.parse(withSecrets.stdout) as string[]).filter((name) => !baseKeys.has(name)).sort() };
     }
   }
 }
