@@ -123,6 +123,17 @@ if "$BUNDLE/bin/playwright-mcp" --version >"$WORK/playwright-mcp-cli.log" 2>&1; 
 if "$BUNDLE/bin/chrome-devtools-mcp" --version >"$WORK/chrome-devtools-mcp-cli.log" 2>&1; then pass "chrome-devtools-mcp --version"; else fail "chrome-devtools-mcp --version" "$WORK/chrome-devtools-mcp-cli.log"; fi
 if grep -q CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS "$BUNDLE/bin/chrome-devtools-mcp"; then pass "chrome-devtools-mcp usage statistics off"; else fail "chrome-devtools-mcp usage statistics off"; fi
 
+# macOS: Ghostty and the Finder Quick Action (macos/)
+if [[ "$(uname -s)" == Darwin ]]; then
+  macos="$BUNDLE/share/harness/macos"
+  if "$BUNDLE/bin/ghostty" --version >"$WORK/ghostty.log" 2>&1 && grep -qF "Ghostty $(jq -r .versions.ghostty "$MANIFEST")" "$WORK/ghostty.log"; then pass "ghostty --version matches the manifest"; else fail "ghostty --version matches the manifest" "$WORK/ghostty.log"; fi
+  if plutil -lint "$macos/Harness.workflow/Contents/Info.plist" "$macos/Harness.workflow/Contents/document.wflow" >"$WORK/plutil.log" 2>&1; then pass "Quick Action plists"; else fail "Quick Action plists" "$WORK/plutil.log"; fi
+  if osacompile -o "$WORK/open.scpt" "$macos/open.applescript" >"$WORK/osacompile.log" 2>&1; then pass "open.applescript compiles against the bundled Ghostty"; else fail "open.applescript compiles against the bundled Ghostty" "$WORK/osacompile.log"; fi
+  if ! "$BUNDLE/bin/harness-open" "$WORK/missing" 2>"$WORK/harness-open.log" && grep -q "not a directory" "$WORK/harness-open.log"; then pass "harness-open refuses a missing directory"; else fail "harness-open refuses a missing directory" "$WORK/harness-open.log"; fi
+else
+  : # the macOS integration exists only on macOS
+fi
+
 if ((failures > 0)); then
   echo "$failures smoke test(s) failed (logs: $WORK)"
   exit 1

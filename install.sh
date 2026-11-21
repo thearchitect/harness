@@ -95,6 +95,15 @@ fi
 # --- post-install checks -------------------------------------------------------------
 PROFILE_PI="$HOME/.nix-profile/bin/pi"
 [[ -x "$PROFILE_PI" ]] || PROFILE_PI="${XDG_STATE_HOME:-$HOME/.local/state}/nix/profile/bin/pi"
+
+# macOS: the Finder Quick Action "Harness" and Ghostty's settings (macos/).
+if [[ "$(uname -s)" == Darwin ]]; then
+  "$(dirname "$PROFILE_PI")/harness-setup" ||
+    warn "the macOS integration (Finder's Harness item, Ghostty) failed; rerun it: harness-setup"
+else
+  : # no host integration on Linux
+fi
+
 found_pi="$(command -v pi 2>/dev/null || true)"
 if [[ -z "$found_pi" ]]; then
   warn "pi is not on PATH yet: open a new shell (Nix profile: $PROFILE_PI)."

@@ -220,11 +220,20 @@ function updateHow(install: Install): string {
   }
 }
 
-/** Upgrades the profile element, then starts pi again on the session; a failed upgrade resumes the current version. */
+/**
+ * Upgrades the profile element and runs the new bundle's host setup where it
+ * has one (`harness-setup`, macOS), then starts pi again on the session; a
+ * failed upgrade resumes the current version.
+ */
 const UPDATE_SCRIPT = `
 echo "Updating harness…"
 if nix ${NIX.map((arg) => `"${arg}"`).join(" ")} profile upgrade "$1"; then
   echo "harness updated"
+  if command -v harness-setup >/dev/null 2>&1; then
+    harness-setup || echo "warning: harness-setup failed; rerun it by hand"
+  else
+    : # no host integration on this platform
+  fi
 else
   echo "harness update failed; press Enter to resume the current version"
   read -r _ </dev/tty

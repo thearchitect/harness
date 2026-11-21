@@ -16,6 +16,21 @@ report of the panel warns about such a copy). `HARNESS_PROFILE=server` runs pi h
 gateway does): no user-browser MCP servers, no `ask_user`, `ask_secret` or
 `display_file`, no `browser` window.
 
+On macOS the bundle also brings Ghostty and a Finder item: right-click a
+folder → **Harness** opens a new Ghostty window running pi in that folder (the
+window closes when pi exits). On PATH: `ghostty`, `harness-open [DIR...]` (the
+same from a terminal) and `harness-setup`, which installs the item
+(`~/Library/Services/Harness.workflow`, a copy: macOS does not reliably pick
+up symlinked services). The item is static and finds `harness-open` in the Nix
+profiles, so upgrades need no reinstall. A Ghostty of your own
+(`/Applications` or `~/Applications`, 1.3 or later) wins over the bundled one:
+both share one bundle id, hence configuration and defaults, so you keep one.
+With only the bundled Ghostty, `harness-setup` turns its self-update off
+(`SUEnableAutomaticChecks`, `SUAutomaticallyUpdate`, unless already set): Nix
+updates it; do not use its *Check for Updates…*, which would overwrite the
+Nix store. The first window asks once for permission to control Ghostty
+(AppleScript).
+
 ## Install
 
 Linux / macOS (installs Nix first if needed, after asking):
@@ -32,6 +47,17 @@ inputs.harness.url = "github:thearchitect/harness";
 home.packages = [ inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default ];
 nix.settings.extra-substituters = [ "https://github.com/thearchitect/harness/releases/download/nix-cache" ];
 nix.settings.extra-trusted-public-keys = [ "harness-1:YE1emDZFHptBwqvSGZIoVkGgCUwvCrBxoMFA+zps0Dg=" ];
+```
+
+The script runs `harness-setup` on macOS (so does *update* in the panel); with
+home-manager on macOS run it on activation:
+
+```nix
+home.activation.harness = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin (
+  lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    run ${inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/harness-setup
+  ''
+);
 ```
 
 Upgrade: pi checks master in the background at startup and announces new
@@ -64,6 +90,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `install/SKILL.md` — the install/upgrade skill
 - `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the dependencies report, the double-load guard (registered by `index.ts`)
 - `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition (called by `index.ts` at `// WORKAROUND Wn`)
+- `macos/` — the macOS integration (bundled on macOS only): the Finder Quick Action `Harness.workflow`, `harness-open.sh` with `open.applescript` (a Ghostty window running pi), `harness-setup.sh` (installs the Quick Action, Ghostty's self-update off), `lib.sh`
 - `nix/` — the bundle: `package.nix` (launchers, extension fileset, manifest), `npm/` (pi, pi packages, npm MCP servers, TypeScript and the extension's own npm dependencies from one lockfile), `sources.json`, `update.sh`, `smoke.sh`, `test.sh`, CI tests
 - `TODO.md` — waiting on upstream
 

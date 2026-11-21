@@ -6,6 +6,8 @@
 # launcher appends them to PATH (a project's own node wins), and with
 # `withRuntimes` (default) the bundle also puts them on the user's PATH at a
 # low priority (`.override { withRuntimes = false; }` leaves them out).
+# On macOS the bundle also carries Ghostty and the Finder Quick Action
+# "Harness" (macos/): `harness-open`, installed by `harness-setup`.
 {
   lib,
   stdenv,
@@ -19,6 +21,9 @@
   writeText,
   writeShellScriptBin,
   runCommand,
+  replaceVars,
+  runtimeShell,
+  ghostty-bin,
   herdr,
   gopls,
   rust-analyzer,
@@ -203,6 +208,7 @@ let
         pnpm = pnpm.version;
         cage = cage.version;
       }
+      // lib.optionalAttrs stdenv.hostPlatform.isDarwin { ghostty = ghostty-bin.version; }
       // lib.genAttrs piPackages npmVersion;
       # Package directories: pi itself, the bundled pi packages, and typescript
       # (the API of the TypeScript language server, loaded by lsp/).
@@ -313,6 +319,22 @@ let
   );
 
   pi = writeShellScriptBin "pi" (launcher extension);
+
+  # macOS: Ghostty and the Finder Quick Action "Harness" (macos/). The
+  # workflow is static and finds harness-open in the Nix profiles, so a
+  # profile upgrade updates the behavior without reinstalling it.
+  ghosttyApp = "${ghostty-bin}/Applications/Ghostty.app";
+  macosLib = ../macos/lib.sh;
+  workflow = ../macos/Harness.workflow;
+  openScript = replaceVars ../macos/open.applescript { ghostty = ghosttyApp; };
+  harnessOpen = replaceVars ../macos/harness-open.sh {
+    inherit runtimeShell macosLib openScript;
+    ghostty = ghosttyApp;
+    pi = "${pi}/bin/pi";
+  };
+  harnessSetup = replaceVars ../macos/harness-setup.sh {
+    inherit runtimeShell macosLib workflow;
+  };
 in
 stdenvNoCC.mkDerivation {
   pname = "harness";
@@ -338,6 +360,15 @@ stdenvNoCC.mkDerivation {
     for runtime in ${nodejs}/bin/{node,npm,npx} ${bun}/bin/{bun,bunx}; do
       ln -s "$runtime" $out/bin/
     done
+  ''
+  + lib.optionalString stdenv.hostPlatform.isDarwin ''
+    mkdir -p $out/Applications $out/share/harness/macos
+    ln -s ${ghosttyApp} $out/Applications/Ghostty.app
+    ln -s ${lib.getExe ghostty-bin} $out/bin/ghostty
+    install -Dm755 ${harnessOpen} $out/bin/harness-open
+    install -Dm755 ${harnessSetup} $out/bin/harness-setup
+    ln -s ${workflow} $out/share/harness/macos/Harness.workflow
+    ln -s ${openScript} $out/share/harness/macos/open.applescript
   ''
   + ''
     runHook postInstall
