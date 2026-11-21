@@ -42,6 +42,8 @@ export function userEnv(config: Config, user: UserConfig): Record<string, string
     NPM_CONFIG_PREFIX: join(home, ".local"),
     UV_TOOL_BIN_DIR: join(home, ".local", "bin"),
     HOME: home,
+    // git finds no repository above the homes: what lies there is the gateway's, never the user's
+    GIT_CEILING_DIRECTORIES: dirname(home),
     USER: user.name,
     LOGNAME: user.name,
     SHELL: "/bin/bash",

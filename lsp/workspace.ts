@@ -3,7 +3,8 @@
  * directory, and one language session per language, started on first use.
  */
 
-import { extname, relative, isAbsolute, resolve } from "node:path";
+import { existsSync, realpathSync } from "node:fs";
+import { basename, dirname, extname, join, relative, isAbsolute, resolve } from "node:path";
 import type { LanguageProfile, Toolchain } from "./profile.ts";
 import { goProfile } from "./profiles/go.ts";
 import { rustProfile } from "./profiles/rust.ts";
@@ -34,11 +35,13 @@ export class Workspace {
 
   /** The workspace of `cwd`: its repository (the superproject of a submodule), or `cwd` itself outside git. */
   static async open(cwd: string, toolchain: Toolchain): Promise<Workspace> {
-    const root = await repositoryRoot(cwd);
+    // Canonical, as git and the language servers report paths (macOS: /tmp is /private/tmp).
+    const real = realpathSync(resolve(cwd));
+    const root = await repositoryRoot(real);
     if (root !== undefined) {
-      return new Workspace(root, true, resolve(cwd), toolchain);
+      return new Workspace(root, true, real, toolchain);
     } else {
-      return new Workspace(resolve(cwd), false, resolve(cwd), toolchain);
+      return new Workspace(real, false, real, toolchain);
     }
   }
 
@@ -50,7 +53,7 @@ export class Workspace {
 
   /** Absolute path of a tool argument (relative to the cwd, or absolute), which must lie inside the workspace. */
   resolvePath(path: string): string {
-    const absolute = resolve(this.cwd, path);
+    const absolute = canonicalDir(resolve(this.cwd, path));
     if (this.contains(absolute)) {
       return absolute;
     } else {
@@ -119,5 +122,21 @@ export class Workspace {
   async close(): Promise<void> {
     this.closed = true;
     await Promise.all([...this.sessions.values()].map((session) => session.stop()));
+  }
+}
+
+/**
+ * An absolute path with its directories resolved through symlinks, as far as
+ * they exist (a move's target may not yet); the last component stays as
+ * written, so a symlinked file is addressed by its own path.
+ */
+function canonicalDir(path: string): string {
+  const parent = dirname(path);
+  if (parent === path) {
+    return path;
+  } else if (existsSync(parent)) {
+    return join(realpathSync(parent), basename(path));
+  } else {
+    return join(canonicalDir(parent), basename(path));
   }
 }
