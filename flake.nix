@@ -54,22 +54,48 @@
         }
       );
 
-      devShells = forAllSystems (pkgs: {
-        default = pkgs.mkShell {
-          # pi-dev: the bundle with the harness extension loaded from the working tree.
-          packages = [
-            self.packages.${pkgs.stdenv.hostPlatform.system}.default.passthru.piDev
-            pkgs.nodejs
-            pkgs.jq
-            pkgs.curl
-          ];
-        };
-      });
+      devShells = forAllSystems (
+        pkgs:
+        let
+          bundle = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+        in
+        {
+          default = pkgs.mkShell {
+            # pi-dev: the bundle with the harness extension loaded from the
+            # working tree; what nix/smoke.sh and nix/test.sh need (the
+            # language servers' toolchains, git for the fixtures, zip, unzip and
+            # GNU find for the gateway, coreutils' timeout on macOS).
+            packages = [
+              bundle.passthru.piDev
+              pkgs.nodejs
+              pkgs.jq
+              pkgs.curl
+            ]
+            ++ bundle.passthru.toolchain
+            ++ [
+              pkgs.git
+              pkgs.zip
+              pkgs.unzip
+              pkgs.findutils
+              pkgs.coreutils
+            ];
+          };
+        }
+      );
 
       checks = forAllSystems (
         pkgs:
         {
           bundle = self.packages.${pkgs.stdenv.hostPlatform.system}.default;
+          # Every bundled tool on the user's PATH (nix/smoke.sh in CI).
+          bundle-full = self.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+            bundled = {
+              go = "path";
+              rust = "path";
+              ffmpeg = "path";
+              exiftool = "path";
+            };
+          };
         }
         // pkgs.lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "x86_64-linux") {
           # The template's configuration builds into an image.

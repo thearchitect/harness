@@ -2,6 +2,8 @@
 # Smoke tests of a built bundle (CI and local):
 #   nix/smoke.sh [bundle-dir]     (default: ./result)
 # Runs in a throwaway HOME, so it never touches the user's pi configuration.
+# Needs jq and timeout (coreutils on macOS); the development shell has them:
+#   nix develop --command nix/smoke.sh result
 set -uo pipefail
 
 BUNDLE="$(readlink -f "${1:-result}")"
@@ -98,10 +100,55 @@ extension_dir="$(grep -o '/nix/store/[^ ]*-harness-extension-[^ ]*' "$PI" | head
 HARNESS_BUNDLED_BROWSER="$(bin browser)" check_mcp browser run "$(bin node)" "$extension_dir/browser/server.ts"
 if "$(bin browser)" --version >"$WORK/browser.log" 2>&1; then pass "browser --version"; else fail "browser --version" "$WORK/browser.log"; fi
 
-# Runtimes: on the user's PATH (withRuntimes) and appended to the agent's PATH by the launcher
-if "$BUNDLE/bin/node" --version >"$WORK/node.log" 2>&1; then pass "node --version"; else fail "node --version" "$WORK/node.log"; fi
-if "$BUNDLE/bin/bun" --version >"$WORK/bun.log" 2>&1; then pass "bun --version"; else fail "bun --version" "$WORK/bun.log"; fi
-if grep -q ':\$PATH:/nix/store/[^ ]*-nodejs-[^ ]*/bin:/nix/store/[^ ]*-bun-' "$PI"; then pass "launcher appends node and bun to PATH"; else fail "launcher appends node and bun to PATH"; fi
+# Bundled tools (the manifest's "bundled"): an installed one is on the agent's
+# PATH the launcher appends and runs from there; the bundle's bin/ links the
+# executables of the tools in mode "path" and of no other.
+bundled_version() {
+  case "$1" in
+    node) node --version ;;
+    bun) bun --version ;;
+    ffmpeg) ffmpeg -version ;;
+    exiftool) exiftool -ver ;;
+    go) go version ;;
+    rust) rustc --version && cargo --version && cc --version ;;
+    *)
+      echo "no version check for the bundled tool $1"
+      return 1
+      ;;
+  esac
+}
+for id in $(jq -r '.bundled | keys[]' "$MANIFEST"); do
+  mode="$(jq -r --arg id "$id" '.bundled[$id].mode' "$MANIFEST")"
+  path="$(jq -r --arg id "$id" '.bundled[$id].path // empty' "$MANIFEST")"
+  case "$mode" in
+    none)
+      if [[ -z "$path" && -z "$(jq -r --arg id "$id" '.versions[$id] // empty' "$MANIFEST")" ]]; then
+        pass "bundled $id: not bundled"
+      else
+        fail "bundled $id: not bundled"
+      fi
+      ;;
+    hidden | path)
+      if [[ -n "$path" ]] && grep -qF ":\$PATH:" "$PI" && grep -qF "$path" "$PI" && (PATH="$path:$PATH" bundled_version "$id") >"$WORK/bundled-$id.log" 2>&1; then
+        pass "bundled $id ($mode): runs from the agent's PATH"
+      else
+        fail "bundled $id ($mode): runs from the agent's PATH" "$WORK/bundled-$id.log"
+      fi
+      ;;
+    *)
+      fail "bundled $id: unknown mode $mode"
+      ;;
+  esac
+  links_match=true
+  for bin in $(jq -r --arg id "$id" '.bundled[$id].bins[]' "$MANIFEST"); do
+    if [[ "$mode" == path ]]; then
+      [[ -x "$BUNDLE/bin/$bin" ]] || { echo "missing: bin/$bin"; links_match=false; }
+    else
+      [[ ! -e "$BUNDLE/bin/$bin" ]] || { echo "unexpected: bin/$bin"; links_match=false; }
+    fi
+  done >"$WORK/bundled-$id-bin.log"
+  if $links_match; then pass "bundled $id ($mode): bin/ links"; else fail "bundled $id ($mode): bin/ links" "$WORK/bundled-$id-bin.log"; fi
+done
 
 # Language servers run (their behavior: nix/test.sh)
 if "$(bin tsgo)" --version >"$WORK/tsgo.log" 2>&1; then pass "tsgo --version"; else fail "tsgo --version" "$WORK/tsgo.log"; fi

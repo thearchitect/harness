@@ -5,8 +5,8 @@ harness extension, the bundled pi packages and the pinned MCP tools. On PATH:
 `pi`, `pi-dev`, `herdr`, `pnpm`, `cage`, `lightpanda`, `playwright-mcp`,
 `chrome-devtools-mcp` (the last ones with telemetry off by default), and the
 runtimes `node`, `npm`, `npx`, `bun`, `bunx` at a low priority (your own
-node or bun wins; `.override { withRuntimes = false; }` leaves them out - pi
-still finds them, appended to its PATH). The bundled MCP servers: `lightpanda`
+node or bun wins). pi also has `ffmpeg`, `ffprobe` and `exiftool`, appended
+to its PATH and not on yours (bundled tools: see Install). The bundled MCP servers: `lightpanda`
 (search and reading), `browser` (a real Chromium through Patchright for logins
 and bot checks; Chromium prebuilt from cache.nixos.org on Linux, Google Chrome
 from Google on macOS), `playwright` and `chromium-devtools` (the user's own
@@ -47,6 +47,27 @@ inputs.harness.url = "github:thearchitect/harness";
 home.packages = [ inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default ];
 nix.settings.extra-substituters = [ "https://github.com/thearchitect/harness/releases/download/nix-cache" ];
 nix.settings.extra-trusted-public-keys = [ "harness-1:YE1emDZFHptBwqvSGZIoVkGgCUwvCrBxoMFA+zps0Dg=" ];
+```
+
+The script installs the default bundle. A configuration chooses the mode of
+each bundled tool with `bundled` (unlisted tools keep their defaults):
+`"none"` leaves it out, `"hidden"` puts it on pi's PATH only (appended, so
+your own or a project's version wins), `"path"` also on yours at a low
+priority.
+
+| tool | executables | default | modes |
+|---|---|---|---|
+| `node` | `node`, `npm`, `npx` | `path` | `hidden`, `path` |
+| `bun` | `bun`, `bunx` | `path` | `hidden`, `path` |
+| `ffmpeg` | `ffmpeg`, `ffprobe` (ffmpeg-headless) | `hidden` | `hidden`, `path` |
+| `exiftool` | `exiftool` | `hidden` | `hidden`, `path` |
+| `go` | `go`, `gofmt` | `none` | `none`, `hidden`, `path` |
+| `rust` | `rustc`, `rustdoc`, `cargo`, clippy, rustfmt, `cc`, `c++` (rustc's linker) | `none` | `none`, `hidden`, `path` |
+
+```nix
+(inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
+  bundled = { go = "path"; rust = "hidden"; ffmpeg = "path"; };
+})
 ```
 
 The script runs `harness-setup` on macOS (so does *update* in the panel); with
@@ -165,7 +186,8 @@ its references with `rg`.
   (`session_shutdown`: reload, `/new`, `/resume`, exit), or is killed with its
   process group if pi dies; a crashed server restarts on the next request (three
   crashes in two minutes need `/lsp restart`). The projects' toolchains (`go`,
-  `cargo`) come from `PATH`.
+  `cargo`) come from `PATH`: the user's, or the bundle's when configured
+  (`bundled`, see Install).
 
 ## Project tree
 
@@ -251,10 +273,10 @@ deployment template `nix flake init -t github:thearchitect/harness#remote`
 ```bash
 export HARNESS_DEV_DIR=~/src/harness   # default: the current directory
 pi-dev                 # the installed bundle with harness from the checkout; /reload after edits
-nix build              # the bundle as users get it
-nix/smoke.sh result    # smoke tests of the built bundle
-nix/test.sh result     # unit tests and tests against the bundle's language servers (needs node, git, go, cargo)
 nix/update.sh          # bump every pin (what CI does on a schedule)
+# Before every commit (AGENTS.md), with the changes staged: the bundle as users
+# get it, its smoke tests, unit tests and tests against its language servers.
+nix develop --command sh -c 'nix build && nix/smoke.sh result && nix/test.sh result'
 ```
 
 Keep the checkout outside `~/.pi/agent/extensions/` (pi would load a second

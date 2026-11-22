@@ -4,10 +4,11 @@
 # The unit tests need node and import the extension's npm dependencies
 # through the checkout's node_modules, pointed at the bundle's as pi-dev does;
 # the server tests drive the bundle's language servers on the fixtures in
-# lsp/testdata and need git, go and cargo in PATH (the projects' toolchains
-# are never part of the bundle); the gateway's tests need zip, unzip and GNU
-# find (`-printf`, as in its image; macOS's own find is BSD). CI:
-#   nix shell nixpkgs#nodejs nixpkgs#git nixpkgs#go nixpkgs#cargo nixpkgs#rustc nixpkgs#zip nixpkgs#unzip nixpkgs#findutils --command nix/test.sh result
+# lsp/testdata and need git, go and cargo in PATH (the bundle leaves the go
+# and rust toolchains out by default); the gateway's tests need zip, unzip and
+# GNU find (`-printf`, as in its image; macOS's own find is BSD). The
+# development shell has them all:
+#   nix develop --command nix/test.sh result
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"

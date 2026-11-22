@@ -1,11 +1,12 @@
 # The harness bundle: a `pi` wrapper that loads the harness extension and the
 # bundled pi packages, plus every pinned MCP tool the extension registers
-# (published to it through $HARNESS_MANIFEST). The project toolchain (go, the
-# project's TypeScript, make, ...) is deliberately NOT part of the bundle: it
-# comes from the user's PATH. node and bun are runtimes of last resort: the
-# launcher appends them to PATH (a project's own node wins), and with
-# `withRuntimes` (default) the bundle also puts them on the user's PATH at a
-# low priority (`.override { withRuntimes = false; }` leaves them out).
+# (published to it through $HARNESS_MANIFEST). Further tools are bundled in a
+# mode each (`bundledTools`; `.override { bundled = { go = "path"; }; }`):
+# "none" leaves the tool out, "hidden" appends it to the agent's PATH only
+# (the user's or the project's own wins), "path" also puts it on the user's
+# PATH through the bundle's bin/ at a low priority. By default node and bun
+# (runtimes of last resort) are on the user's PATH, ffmpeg and exiftool on the
+# agent's only, and the go and rust toolchains are not bundled.
 # On macOS the bundle also carries Ghostty and the Finder Quick Action
 # "Harness" (macos/): `harness-open`, installed by `harness-setup`.
 {
@@ -32,10 +33,18 @@
   fd,
   cage,
   bun,
+  ffmpeg-headless,
+  exiftool,
+  go,
+  rustc,
+  cargo,
+  clippy,
+  rustfmt,
   # The real browser of the `browser` MCP server (flake.nix picks it per platform).
   browser,
   harnessSrc,
-  withRuntimes ? true,
+  # Modes of the bundled tools over their defaults (bundledTools).
+  bundled ? { },
 }:
 let
   system = stdenv.hostPlatform.system;
@@ -62,6 +71,7 @@ let
         ../gate.ts
         ../panel.ts
         ../update.ts
+        ../settings.ts
         ../lsp
         ../tool_project_tree.ts
         ../tool_send_file.ts
@@ -158,6 +168,153 @@ let
     .${system} or (throw "typescript: no native build for ${system}");
   tsgo = "${nodeModules}/@typescript/typescript-${tsgoPlatform}/lib/tsc";
 
+  # Tools bundled in a mode (`bundled` over `default`, one of `modes`), each
+  # its packages with the executables "path" links into the bundle's bin/.
+  # node is pi's own runtime, ffmpeg and exiftool are always the agent's: they
+  # cannot be left out.
+  bundledTools = {
+    node = {
+      default = "path";
+      modes = [
+        "hidden"
+        "path"
+      ];
+      version = nodejs.version;
+      contents = [
+        {
+          package = nodejs;
+          bins = [
+            "node"
+            "npm"
+            "npx"
+          ];
+        }
+      ];
+    };
+    bun = {
+      default = "path";
+      modes = [
+        "hidden"
+        "path"
+      ];
+      version = bun.version;
+      contents = [
+        {
+          package = bun;
+          bins = [
+            "bun"
+            "bunx"
+          ];
+        }
+      ];
+    };
+    ffmpeg = {
+      default = "hidden";
+      modes = [
+        "hidden"
+        "path"
+      ];
+      version = ffmpeg-headless.version;
+      contents = [
+        {
+          package = ffmpeg-headless;
+          bins = [
+            "ffmpeg"
+            "ffprobe"
+          ];
+        }
+      ];
+    };
+    exiftool = {
+      default = "hidden";
+      modes = [
+        "hidden"
+        "path"
+      ];
+      version = exiftool.version;
+      contents = [
+        {
+          package = exiftool;
+          bins = [ "exiftool" ];
+        }
+      ];
+    };
+    go = {
+      default = "none";
+      modes = [
+        "none"
+        "hidden"
+        "path"
+      ];
+      version = go.version;
+      contents = [
+        {
+          package = go;
+          bins = [
+            "go"
+            "gofmt"
+          ];
+        }
+      ];
+    };
+    # The C compiler is rustc's linker.
+    rust = {
+      default = "none";
+      modes = [
+        "none"
+        "hidden"
+        "path"
+      ];
+      version = rustc.version;
+      contents = [
+        {
+          package = rustc;
+          bins = [
+            "rustc"
+            "rustdoc"
+          ];
+        }
+        {
+          package = cargo;
+          bins = [ "cargo" ];
+        }
+        {
+          package = clippy;
+          bins = [
+            "cargo-clippy"
+            "clippy-driver"
+          ];
+        }
+        {
+          package = rustfmt;
+          bins = [
+            "rustfmt"
+            "cargo-fmt"
+          ];
+        }
+        {
+          package = stdenv.cc;
+          bins = [
+            "cc"
+            "c++"
+          ];
+        }
+      ];
+    };
+  };
+  unknownBundled = lib.attrNames (removeAttrs bundled (lib.attrNames bundledTools));
+  bundledModes = lib.mapAttrs (
+    id: tool:
+    let
+      mode = bundled.${id} or tool.default;
+    in
+    assert lib.assertOneOf "bundled.${id}" mode tool.modes;
+    mode
+  ) bundledTools;
+  installedTools = lib.filterAttrs (id: _: bundledModes.${id} != "none") bundledTools;
+  toolsOnPath = lib.filterAttrs (id: _: bundledModes.${id} == "path") bundledTools;
+  toolPackages = tool: map (content: content.package) tool.contents;
+
   # Bundled pi packages, loaded with `-e` in this order.
   piPackages = [
     "@cortexkit/pi-magic-context"
@@ -202,14 +359,23 @@ let
         chrome-devtools-mcp = npmVersion "chrome-devtools-mcp";
         patchright = npmVersion "patchright";
         browser = "${lib.getName browser} ${browser.version}";
-        node = nodejs.version;
-        bun = bun.version;
         herdr = herdr.version;
         pnpm = pnpm.version;
         cage = cage.version;
       }
+      // lib.mapAttrs (_: tool: tool.version) installedTools
       // lib.optionalAttrs stdenv.hostPlatform.isDarwin { ghostty = ghostty-bin.version; }
       // lib.genAttrs piPackages npmVersion;
+      # The modes of the bundled tools, the executables "path" links and the
+      # agent's PATH entries of the installed ones (nix/smoke.sh checks them).
+      bundled = lib.mapAttrs (
+        id: tool:
+        {
+          mode = bundledModes.${id};
+          bins = lib.concatMap (content: content.bins) tool.contents;
+        }
+        // lib.optionalAttrs (bundledModes.${id} != "none") { path = lib.makeBinPath (toolPackages tool); }
+      ) bundledTools;
       # Package directories: pi itself, the bundled pi packages, and typescript
       # (the API of the TypeScript language server, loaded by lsp/).
       packages = {
@@ -271,12 +437,7 @@ let
         ripgrep
         fd
       ]
-    }:$PATH:${
-      lib.makeBinPath [
-        nodejs
-        bun
-      ]
-    }"
+    }:$PATH:${lib.makeBinPath (lib.concatMap toolPackages (lib.attrValues installedTools))}"
     case "''${1-}" in
       ${piSubcommands}) exec ${lib.getExe nodejs} ${piCli} "$@" ;;
     esac
@@ -336,6 +497,8 @@ let
     inherit runtimeShell macosLib workflow;
   };
 in
+assert lib.assertMsg (unknownBundled == [ ])
+  "bundled: unknown tools ${toString unknownBundled} (known: ${toString (lib.attrNames bundledTools)})";
 stdenvNoCC.mkDerivation {
   pname = "harness";
   version = harnessVersion;
@@ -356,11 +519,16 @@ stdenvNoCC.mkDerivation {
     ln -s ${chromeDevtoolsMcpCli}/bin/chrome-devtools-mcp $out/bin/chrome-devtools-mcp
     ln -s ${manifest} $out/share/harness/manifest.json
   ''
-  + lib.optionalString withRuntimes ''
-    for runtime in ${nodejs}/bin/{node,npm,npx} ${bun}/bin/{bun,bunx}; do
-      ln -s "$runtime" $out/bin/
-    done
-  ''
+  + lib.concatMapStrings (
+    tool:
+    lib.concatMapStrings (
+      content:
+      lib.concatMapStrings (bin: ''
+        test -x ${content.package}/bin/${bin}
+        ln -s ${content.package}/bin/${bin} $out/bin/${bin}
+      '') content.bins
+    ) tool.contents
+  ) (lib.attrValues toolsOnPath)
   + lib.optionalString stdenv.hostPlatform.isDarwin ''
     mkdir -p $out/Applications $out/share/harness/macos
     ln -s ${ghosttyApp} $out/Applications/Ghostty.app
@@ -386,6 +554,8 @@ stdenvNoCC.mkDerivation {
       cage
       ;
     piDev = dev;
+    # The toolchains of the bundled language servers (the development shell's, for nix/test.sh).
+    toolchain = toolPackages bundledTools.go ++ toolPackages bundledTools.rust;
   };
 
   meta = {
