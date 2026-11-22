@@ -73,7 +73,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 
 ## Layout
 
-- `index.ts` — the extension: PLAN/BUILD modes (a message plans, `!` builds) and the simple mode (`/simple`, per session: one mode that decides itself whether to answer, change or plan first; writes inside the current directory without confirmation, elsewhere asks; a leading `!` is dropped), mutation gates (one review per change set, shared by `write`/`edit` and the code tools), `/-`, sequential `write`/`edit`/`bash` (a batch containing one runs in order, so dependent calls see its effect), system prompt per run, UI
+- `index.ts` — the extension: PLAN/BUILD modes (a message plans, `!` builds) and the simple mode (`/simple`: one mode that decides itself whether to answer, change or plan first; writes inside the current directory without confirmation, elsewhere asks; a leading `!` is dropped; recorded in the session, and new sessions start with the last choice of simple and madness, see `settings.ts`), mutation gates (one review per change set, shared by `write`/`edit` and the code tools), `/-`, sequential `write`/`edit`/`bash` (a batch containing one runs in order, so dependent calls see its effect), system prompt per run, UI
 - `lsp/` — code intelligence: a facade over the bundle's language servers (see below)
 - `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
 - `tool_send_file.ts` — `send_file` (server profile only): a file to the user in Telegram, delivered by `remote/`
@@ -85,6 +85,7 @@ chromium-devtools). Details and after-install checks: `install/SKILL.md`.
 - `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (`core/`: agents, workspaces, pi processes; `telegram/`: chats; `app/`: the Mini App; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
 - `gate.ts` — the write/edit gate's pure parts: each mode's review by how far a change reaches (scratch space, the current directory, elsewhere) and by profile (the server profile builds without asking), and the gate as plain select/input dialogs outside the TUI
 - `panel.ts` — the side panel (desktop TUI, `Ctrl+\` opens and closes it): a full-height overlay on the right quarter with the madness and simple toggles, *update* and *dependencies*; ↑/↓, Space/Enter, Esc
+- `settings.ts` — the defaults of new sessions (desktop profile): the last chosen simple and madness in `<agent dir>/harness.json`; an existing session keeps the values recorded in it
 - `update.ts` — the bundle's update: the background check of master at startup (one GitHub API request; the pin changes come from the bodies of CI's "Update bundle pins" commits), the install kind (`nix profile` or a system configuration) and the one-press upgrade
 - `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `testing`, `server` (server profile only); the `cage` skill is cage's own `cage skill`, generated at build time (manifest `skills`)
 - `install/SKILL.md` — the install/upgrade skill

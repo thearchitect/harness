@@ -35,6 +35,7 @@ node --test tool_ask_secret.test.ts
 node --test tool_display_file.test.ts
 node --test gate.test.ts
 node --test update.test.ts
+node --test settings.test.ts
 # The browser MCP server against the bundle's browser (headless, offline).
 node --test browser/server.test.ts
 node --test submit_keys.test.ts

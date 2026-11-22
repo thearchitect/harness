@@ -4,7 +4,8 @@
  * Per-message PLAN/BUILD mode or the single SIMPLE mode of the simple variant
  * (custom editor, mode colors, mode selector message), per-mode write/edit
  * gating, the side panel (panel.ts: madness, simple, update, dependencies
- * behind Ctrl+\), the bundle's update (update.ts),
+ * behind Ctrl+\; their last choice seeds new sessions: settings.ts), the
+ * bundle's update (update.ts),
  * and per-cycle "planning/building finished" banners annotated with finish
  * time, duration and USD cost. BUILD
  * write/edit
@@ -70,6 +71,7 @@ import {
 } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureThinkingBlocksVisible } from "./workarounds.ts";
+import { DEFAULTS_FILE, loadDefaults, saveDefault, type Defaults, type Variant } from "./settings.ts";
 import { assembleSystemPrompt, systemPromptProblem } from "./prompt.ts";
 import { bundledMcpServers, claimHarnessInstance, depsReport, lspToolchain, readManifest, readProfile, type Profile } from "./deps.ts";
 import { askGateViaDialogs, changeReview, type ChangeReach, type GateDecision, type TurnMode } from "./gate.ts";
@@ -171,6 +173,8 @@ function applyContextWindowOverrides(model: ExtensionContext["model"]): void {
 const MODE_ENTRY_TYPE = "per-message-mode";
 /** The session's variant, one entry per switch: the last one on the branch holds. */
 const VARIANT_ENTRY_TYPE = "harness-variant";
+/** The session's madness, one entry per switch: the last one on the branch holds. */
+const MADNESS_ENTRY_TYPE = "harness-madness";
 const MODE_SELECTOR_MESSAGE_TYPE = "harness-active-mode";
 const FINISHED_ENTRY_TYPE = "per-message-mode-finished";
 const SYSTEM_PROMPT_ENTRY_TYPE = "harness-system-prompt";
@@ -184,9 +188,8 @@ const LEGACY_SYSTEM_PROMPT_ENTRY_TYPE = "thearchitect-system-prompt";
 
 type SystemPromptEntryData = { text: string; model: string };
 
-/** advanced: PLAN/BUILD per message; simple: one SIMPLE mode. A new session starts advanced. */
-type Variant = "advanced" | "simple";
 type VariantEntryData = { variant: Variant };
+type MadnessEntryData = { enabled: boolean };
 type ModeDetails = { mode: TurnMode; model?: string; effort?: string; finishedAt?: number; durationMs?: number; costUsd?: number; interrupted?: boolean };
 type ColorMode = ReturnType<Theme["getColorMode"]>;
 type EventOf<TType extends ExtensionEvent["type"]> = Extract<
@@ -1142,10 +1145,13 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
  * ----------------------------------------------------------------------------
  * "/madness" (bypasses write/edit permission gates), "/simple" (the simple
  * variant), and the side panel (Ctrl+\\) holding both, the update of the
- * bundle (update.ts) and the dependencies report.
+ * bundle (update.ts) and the dependencies report. Each switch is recorded in
+ * the session and, on the desktop, becomes the default of new sessions
+ * (settings.ts); an existing session keeps its own values.
  * ========================================================================== */
 
   const STATUS_WIDGET_KEY = "harness:status";
+  const defaultsPath = join(getAgentDir(), DEFAULTS_FILE);
 
   // Single status line below the editor: "[simple] ✻ <gate> ✻ session <id>".
   function updateStatusWidget(ctx: ExtensionContext): void {
@@ -1161,25 +1167,80 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     ctx.ui.setWidget(STATUS_WIDGET_KEY, [line], { placement: "belowEditor" });
   }
 
+  /** Switches madness; the switch is recorded in the session and becomes the default of new sessions. */
   function setMadness(ctx: ExtensionContext, enabled: boolean): void {
     madnessEnabled = enabled;
+    pi.appendEntry<MadnessEntryData>(MADNESS_ENTRY_TYPE, { enabled });
+    rememberDefault(ctx, "madness", enabled);
     updateStatusWidget(ctx);
   }
 
-  /** Switches the variant; the switch is recorded in the session and takes effect with the next message. */
+  /** Switches the variant (effective with the next message); the switch is recorded in the session and becomes the default of new sessions. */
   function setVariant(ctx: ExtensionContext, next: Variant): void {
     variant = next;
     pi.appendEntry<VariantEntryData>(VARIANT_ENTRY_TYPE, { variant: next });
+    rememberDefault(ctx, "variant", next);
     updateStatusWidget(ctx);
+  }
+
+  /** Saves a default of new sessions; a failure is reported, the switch itself holds. */
+  function rememberDefault<K extends keyof Defaults>(ctx: ExtensionContext, key: K, value: Defaults[K]): void {
+    try {
+      saveDefault(defaultsPath, key, value);
+    } catch (error) {
+      ctx.ui.notify(`harness: ${key} not saved for new sessions: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
+
+  /** The data of the last entry of the given type on the current branch. */
+  function lastOnBranch<T>(ctx: ExtensionContext, customType: string): T | undefined {
+    const recorded = ctx.sessionManager
+      .getBranch()
+      .findLast((entry) => entry.type === "custom" && entry.customType === customType);
+    return recorded?.type === "custom" ? (recorded.data as T | undefined) : undefined;
   }
 
   /** The variant of the current branch: its last recorded switch, advanced when there is none. */
   function restoreVariant(ctx: ExtensionContext): void {
-    const recorded = ctx.sessionManager
-      .getBranch()
-      .findLast((entry) => entry.type === "custom" && entry.customType === VARIANT_ENTRY_TYPE);
-    const data = recorded?.type === "custom" ? (recorded.data as VariantEntryData | undefined) : undefined;
-    variant = data?.variant === "simple" ? "simple" : "advanced";
+    variant = lastOnBranch<VariantEntryData>(ctx, VARIANT_ENTRY_TYPE)?.variant === "simple" ? "simple" : "advanced";
+  }
+
+  /**
+   * The variant and madness a session starts with. On the desktop a new
+   * session (no messages, no recorded variant) takes the defaults and records
+   * them; an existing one restores its own, advanced and no madness where it
+   * has none. The server has no madness and no defaults.
+   */
+  function restoreSettings(ctx: ExtensionContext): void {
+    const branch = ctx.sessionManager.getBranch();
+    const existing =
+      branch.some((entry) => entry.type === "message") ||
+      lastOnBranch<VariantEntryData>(ctx, VARIANT_ENTRY_TYPE) !== undefined;
+    switch (profile) {
+      case "desktop":
+        if (existing) {
+          restoreVariant(ctx);
+          madnessEnabled = lastOnBranch<MadnessEntryData>(ctx, MADNESS_ENTRY_TYPE)?.enabled === true;
+        } else {
+          const { defaults, problem } = loadDefaults(defaultsPath);
+          if (problem !== undefined) {
+            ctx.ui.notify(`harness: defaults of new sessions not read, built-in ones used: ${problem}`, "warning");
+          } else {
+            // the defaults are read (or none were saved yet)
+          }
+          variant = defaults.variant;
+          madnessEnabled = defaults.madness;
+          pi.appendEntry<VariantEntryData>(VARIANT_ENTRY_TYPE, { variant });
+          pi.appendEntry<MadnessEntryData>(MADNESS_ENTRY_TYPE, { enabled: madnessEnabled });
+        }
+        break;
+      case "server":
+        restoreVariant(ctx);
+        madnessEnabled = false;
+        break;
+      default:
+        throw new Error(`unknown profile: ${String(profile satisfies never)}`);
+    }
   }
 
   function togglePanel(ctx: ExtensionContext): void {
@@ -1318,7 +1379,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
   switch (profile) {
     case "desktop":
       pi.registerCommand("madness", {
-        description: "Toggle full write/edit permission bypass",
+        description: "Toggle full write/edit permission bypass; new sessions start with the last choice",
         handler: async (
           _args: string,
           ctx: ExtensionCommandContext,
@@ -1338,7 +1399,7 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
         },
       });
       pi.registerCommand("simple", {
-        description: "Toggle the simple mode (one mode, no PLAN/BUILD switching) for this session",
+        description: "Toggle the simple mode (one mode, no PLAN/BUILD switching); new sessions start with the last choice",
         handler: async (_args: string, ctx: ExtensionCommandContext): Promise<void> => {
           setVariant(ctx, variant === "simple" ? "advanced" : "simple");
           ctx.ui.notify(
@@ -1542,10 +1603,9 @@ export default async function harnessExtension(pi: ExtensionAPI): Promise<void> 
     (_event: EventOf<"session_start">, ctx: ExtensionContext): void => {
       pendingSubmissionMode = undefined;
       activeMode = "plan";
-      madnessEnabled = false;
       // pi removes extension overlays on session replacement and reload
       panel = undefined;
-      restoreVariant(ctx);
+      restoreSettings(ctx);
       cycleStartTime = undefined;
       baselineCost = 0;
       systemPromptEntryShown = false;
