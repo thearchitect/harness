@@ -1395,33 +1395,47 @@ harness — работа в checkout с обычным циклом сборки
 - **Этап 1.** Сделано: `protocol` — `framing`, `version`, `errors`, `state`, `interactions`,
   `hap`, `node`, `model-ref` с тестами; `client` — `connection`, `ClientModel`, `AgentModel`,
   `WorkbenchModel`, `keymap`, транспорт WebSocket; `testkit/stand` (стенд, сценарная модель);
-  пайплайн `check` и `nix flake check` (`nix/check.nix`), `AGENTS.md`. Осталось: `schemas.ts` и
-  валидация на входе endpoint'ов, тест графа импортов и границ, `Clock`/`Spawner`/`NodeFs` как
-  внедряемые зависимости узла, `client` — переподключение, зоны экрана в `WorkbenchModel`;
-  `testkit` — `control/` и `harness-test`, отчёт `.test-reports/`, драйвер `raw`, `fixtures/`;
-  генератор справочника протокола, проверки документов и языка (13.6).
+  пайплайн `check` и `nix flake check` (`nix/check.nix`), `AGENTS.md`; `schemas.ts` с проверкой
+  на входе узла и агента; тест графа пакетов (`tests/boundaries.test.ts`); `Clock` с
+  `ManualClock` в узле, uplink и `Workbench`; переподключение клиента (`addEndpoint`); зоны
+  экрана, действия, выбор из списка, поиск в `Workbench`; `testkit` — сценарии из шагов,
+  отчёты, `control/` и `harness-test`, драйверы `raw` и `tui`, `fixtures/`; справочник протокола
+  из схем и проверки документов и языка (этап 8). Осталось: `Spawner`/`NodeFs` узла не
+  внедряются (тесты идут на настоящих процессах во временном HOME — отступление 11).
 - **Этап 2.** Сделано: перенос в `packages/extension`, `core/` (режимы, gate, authorize,
   interrupts, settings, prompt), Interactions через хост, `state/store`, `supervisor` и `task_*`,
   `ask_user` на `questions`, `ask_secret` на `secret`, `display_file`, `send_file` клиентам,
-  TUI-диалоги в `presentation/tui`. Осталось: `models/` (ссылки на модели в агенте, M2),
-  чистота всех отрисовщиков (комментарий gate в `details`), строка `claude` в `deps.ts`.
+  TUI-диалоги в `presentation/tui`; `models/` (ссылки на модели, M1/M2, сценарий); комментарий
+  gate в `details`. Осталось: строка `claude` в `deps.ts` (этап 10).
 - **Этап 3.** Сделано: `agent` — `runtime`, `hap-server` (команды pi RPC + `harness_*`), `ui-context`,
-  `interactions`, тема, явное завершение; HAP по fd 3 (отступление 5). Осталось: мост компонентов
-  (`component-bridge.ts`, `harness_component_*`), `harness_spawn_child` (этап 10).
+  `interactions`, тема, явное завершение; HAP по fd 3 (отступление 5); мост компонентов
+  (`component-bridge.ts`, `harness_component_*`, возможности клиента в `hello`, сценарии).
+  Осталось: `harness_spawn_child` (этап 10).
 - **Этап 4.** Сделано: `node` — агенты, сводки, сессии и блокировки, unix socket, настройки
-  (отступление 7), в-процессе транспорт. Осталось: `pool.ts` (лимиты, выгрузка простаивающих),
-  `files.ts` (`files_*`, автодополнение путей), `telemetry.ts`.
+  (отступление 7), в-процессе транспорт; выгрузка простаивающих агентов и лимит (`node.ts`,
+  сценарий `pool`); `files_*` (в `node.ts`); журнал `telemetry.ts`. Осталось: автодополнение
+  путей через протокол в TUI для удалённых узлов.
 - **Этап 5.** Сделано: `tui` (полноэкранный, три колонки, транскрипт, футер, вид задачи,
   отрисовщики пакетов), `cli` (`harness`, `harness node`), бандл без лаунчера `pi` и herdr,
-  smoke-тесты бандла. Осталось: драйвер TUI, растеризатор и галерея (G7), поиск по
-  транскрипту, окна выбора (модель, сессия, дерево, настройки, вход провайдера), выбор узла
-  для новой вкладки, OSC 7501.
+  smoke-тесты бандла; драйвер TUI, растеризатор (G7 закрыт для сетки ячеек и PNG; изображения
+  iTerm2 не проверены) и галерея TUI; поиск по транскрипту; выбор модели и сессии в зоне
+  редактора; выбор узла для новой вкладки; OSC 7501; тема из `ui.theme`. Осталось: окна дерева
+  сессии, настроек, входа провайдера; строки update и dependencies в панели; `!`-bash оператора;
+  догрузка истории при прокрутке вверх.
 - **Этап 6.** Сделано: `auth.ts` (пользователи, устройства, ключи узлов — хэши, 0600),
   `hub.ts` (маршрут, присутствие, настройки пользователей hub), `endpoints/ws.ts`, `uplink.ts`
   (переподключение), `config.ts` (`nodes/<name>.json`), `harness hub`, `harness hub
   user|device|node …`, `harness remote …`, клиент через hub ко многим узлам; сценарий
-  `tests/scenarios/hub.test.ts`. Осталось: NixOS-модуль, коды привязки по QR (этап 9).
-- **Этапы 7–11** не начаты.
+  `tests/scenarios/hub.test.ts`; NixOS-модуль `services.harness.nodes` с VM-тестом.
+  Осталось: коды привязки по QR (этап 9).
+- **Этап 7.** Сделано: Telegram в `experiments/telegram/`, образ Fly на s6 (hub и узлы
+  пользователей от их uid, регистрация узлов при загрузке) с VM-тестом в podman, шаблон
+  `templates/remote` без бота.
+- **Этап 8.** Сделано: `docs/` (index, architecture, pi-mapping, extending, protocol со
+  справочником из схем, operations), раскладка `share/harness/{src,docs,pi}`, секция
+  `harness_docs`, проверки 13.6 (`tests/docs.test.ts`), README по-английски с TODO.
+  Осталось: документы `app` и субагентов — на этапах 9 и 10.
+- **Этапы 9–11** не начаты.
 
 ### Порядок работы
 
@@ -1490,3 +1504,12 @@ CLI-схеме разделов 12.4–12.8, после — переход по 
 10. **Отправка сообщения — Ctrl+Enter и Alt+Enter**: терминалы без протокола клавиатуры
     Kitty не отличают Ctrl+Enter от Enter; отправку делает приложение, а не редактор pi-tui
     (тот занимает Alt+Enter под новую строку).
+11. **`Spawner` и `NodeFs` узла не внедряются**: агенты порождает `AgentLink`, файлы — `node:fs`;
+    тесты идут на настоящих процессах агента со сценарной моделью во временном `HOME` (так проверяется
+    и настоящая сборка), время — через `Clock`. Вернуть, если понадобятся сценарии отказов
+    файловой системы.
+12. **Справочник протокола — `protocol/reference.ts` + `testkit/docs/write-reference.ts`**, а не
+    `protocol/gen-reference.ts`: запись файлов — Node API, а `protocol` изоморфный.
+13. **Инсталляция без бинарного кэша**: публикация кэша выключена (лимит релиза GitHub),
+    `install.sh` и README больше его не предлагают; бандл собирается локально. Вернуть: кэш
+    в другом хранилище (например, cachix).
