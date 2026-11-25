@@ -12,17 +12,17 @@ import { AskUserView } from "#tui/ask-user.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
 import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
-import { ItemsColumn, TabsColumn, type StripActions } from "#tui/columns.ts";
+import { SideStrip, type StripActions } from "#tui/columns.ts";
 import { getTheme } from "#tui/pi-internals.ts";
 import { appWebDir } from "#node/endpoints/static.ts";
 import { startWebApp } from "#node/webapp.ts";
 import { bundledBrowser, gridHtml, screenshot } from "../capture/rasterize.ts";
 import { VirtualTerminal } from "../drivers/terminal.ts";
-import { INTERACTIONS, ITEMS, TABS } from "../fixtures/fixtures.ts";
+import { INTERACTIONS, ITEMS, NODES, TABS } from "../fixtures/fixtures.ts";
 import { reportsRoot } from "../report/report.ts";
 
 /** The strips are only drawn here. */
-const STRIP_INERT: StripActions = { open: () => undefined, leave: () => undefined };
+const STRIP_INERT: StripActions = { open: () => undefined, close: () => undefined, leave: () => undefined };
 
 type Exhibit = { name: string; width: number; component(tui: TUI): Component };
 
@@ -52,29 +52,22 @@ export function exhibits(): Exhibit[] {
   return [
     ...Object.entries(INTERACTIONS).map(([name, request]) => ({ name: `interaction-${name}`, width: 100, component: (tui: TUI) => interaction(tui, request) })),
     {
-      name: "tabs-all-glyphs",
+      // the strip's three blocks: nodes, sessions (every glyph), the active session's items
+      name: "strip-all-glyphs",
       width: 18,
       component: () => {
-        const column = new TabsColumn(theme, STRIP_INERT);
-        column.tabs = TABS;
-        column.active = 1;
-        return column;
+        const strip = new SideStrip(theme, () => 24, STRIP_INERT);
+        strip.content = { nodes: NODES, node: "laptop", tabs: TABS, active: 1, newSession: false, items: ITEMS, selected: "t2", mode: "build" };
+        return strip;
       },
     },
     {
-      name: "tabs-empty",
+      name: "strip-empty",
       width: 18,
-      component: () => new TabsColumn(theme, STRIP_INERT),
-    },
-    {
-      name: "items-tasks-subagents",
-      width: 21,
       component: () => {
-        const column = new ItemsColumn(theme, STRIP_INERT);
-        column.items = ITEMS;
-        column.selected = "t2";
-        column.mode = "build";
-        return column;
+        const strip = new SideStrip(theme, () => 12, STRIP_INERT);
+        strip.content = { nodes: [{ name: "default", label: "inprocess", glyph: "" }], node: "default", tabs: [], active: -1, newSession: true, items: [], selected: "session", mode: "plan" };
+        return strip;
       },
     },
   ];

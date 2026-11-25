@@ -3,22 +3,37 @@
 // fixtures are the same data the TUI gallery draws.
 
 import { View } from "react-native";
-import { INTERACTIONS, ITEMS, TABS } from "#testkit/fixtures/fixtures.ts";
+import { INTERACTIONS, ITEMS, NODES, TABS } from "#testkit/fixtures/fixtures.ts";
 import { useTheme } from "../theme/theme.tsx";
 import { InteractionBlock } from "./Interactions.tsx";
 import { T } from "./primitives.tsx";
-import { ItemsStrip, TabsStrip } from "./Shell.tsx";
+import { ItemsStrip, NodesStrip, TabsStrip } from "./Shell.tsx";
 
 function exhibit(name: string) {
   const interaction = name.startsWith("interaction-") ? INTERACTIONS[name.slice("interaction-".length)] : undefined;
   if (interaction !== undefined) {
     return { width: 720, body: <InteractionBlock request={interaction} from={undefined} answer={() => undefined} /> };
-  } else if (name === "tabs-all-glyphs") {
-    return { width: 220, body: <TabsStrip tabs={TABS} active={1} onGoto={() => undefined} onNew={() => undefined} /> };
-  } else if (name === "tabs-empty") {
-    return { width: 220, body: <TabsStrip tabs={[]} active={0} onGoto={() => undefined} onNew={() => undefined} /> };
-  } else if (name === "items-tasks-subagents") {
-    return { width: 260, body: <ItemsStrip items={ITEMS} selected="t2" onSelect={() => undefined} /> };
+  } else if (name === "strip-all-glyphs") {
+    return {
+      width: 154,
+      body: (
+        <View>
+          <NodesStrip nodes={NODES} chosen="laptop" onChoose={() => undefined} onAdd={() => undefined} />
+          <TabsStrip tabs={TABS} active={1} onGoto={() => undefined} onNew={() => undefined} />
+          <ItemsStrip items={ITEMS} selected="t2" onSelect={() => undefined} />
+        </View>
+      ),
+    };
+  } else if (name === "strip-empty") {
+    return {
+      width: 154,
+      body: (
+        <View>
+          <NodesStrip nodes={[{ name: "default", label: "inprocess", glyph: "" }]} chosen="default" onChoose={() => undefined} onAdd={() => undefined} />
+          <TabsStrip tabs={[]} active={-1} placing onGoto={() => undefined} onNew={() => undefined} />
+        </View>
+      ),
+    };
   } else {
     return undefined;
   }

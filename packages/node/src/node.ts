@@ -12,6 +12,7 @@ import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeHost, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
 import { NODE_OPS } from "#protocol/node.ts";
 import { settingRevision } from "#protocol/settings.ts";
+import { listDirs } from "./dirs.ts";
 import { SNAPSHOT_ENTRIES } from "#protocol/hap.ts";
 import { themeColors } from "./themes.ts";
 import { transcribe } from "./transcribe.ts";
@@ -338,6 +339,15 @@ export class HarnessNode {
           }),
         );
         return { path: dir, items } as NodeOps[K]["result"];
+      }
+      case "dirs_list": {
+        const { path, hidden } = args as NodeOps["dirs_list"]["args"];
+        const full = this.expandHome(path);
+        try {
+          return { ...(await listDirs(full, hidden === true)), home: homedir() } as NodeOps[K]["result"];
+        } catch (error) {
+          throw new HarnessError("not_found", `${full}: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
       case "files_get": {
         const { path } = args as NodeOps["files_get"]["args"];

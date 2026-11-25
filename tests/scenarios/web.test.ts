@@ -18,6 +18,17 @@ export const scenario = defineScenario({
   clients: { web: { kind: "web" }, tui: { kind: "tui" } },
   steps: [
     {
+      name: "the TUI's new session is its window's alone until its first message; then the web shows it too",
+      async run({ stand, clients: { web, tui } }) {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        assert.equal((await web.screen()).tabs.length, 0, "a session without a message stays in its window");
+        stand.script([{ text: "hello from the tui" }]);
+        await tui.type("hello");
+        await tui.submit();
+        await web.waitForScreen((screen) => screen.tabs.length > 0);
+      },
+    },
+    {
       name: "a message from the field gets its answer",
       async run({ stand, clients: { web } }) {
         stand.script([{ text: "the web answer is seven" }]);
@@ -88,7 +99,7 @@ export const scenario = defineScenario({
         const family = await web.page.getByText("the web answer is seven").evaluate((element) => getComputedStyle(element).fontFamily);
         assert.match(family, /Terminus/);
 
-        const edge = web.page.getByRole("slider", { name: "Resize the sessions strip" });
+        const edge = web.page.getByRole("slider", { name: "Resize the strip" });
         const box = await edge.boundingBox();
         assert.ok(box !== null);
         await web.page.mouse.move(box.x + 2, box.y + 200);
@@ -166,15 +177,37 @@ export const scenario = defineScenario({
       name: "tabs: a second one, reordered by dragging (every client sees it), closed from the context menu",
       async run({ stand, clients: { web, tui } }) {
         const before = (await web.screen()).tabs.length;
-        await web.page.getByRole("button", { name: "New session" }).first().click();
-        // a directory: the recent ones, the home, or typed
-        const filter = web.page.getByRole("textbox", { name: /^Filter New session on/ });
-        await filter.fill(join(stand.project, "sub"));
         mkdirSync(join(stand.project, "sub"), { recursive: true });
-        await filter.press("Enter");
+        await web.page.getByRole("button", { name: "New session" }).first().click();
+        // the folder by keys alone: the project is a recent one, → opens it, typing finds sub, Enter starts there
+        const folders = web.page.getByRole("list", { name: "new session folder" });
+        await folders.waitFor();
+        for (const key of "project") {
+          await web.page.keyboard.press(key);
+        }
+        await folders.getByText("filter project▏").waitFor();
+        await web.page.keyboard.press("ArrowRight");
+        await folders.getByText("sub", { exact: true }).waitFor();
+        for (const key of "sub") {
+          await web.page.keyboard.press(key);
+        }
+        await folders.getByText("filter sub▏").waitFor();
+        await web.page.keyboard.press("Enter");
         await web.waitForScreen((screen) => screen.tabs.length === before + 1);
-        const { settings } = await tui.client.homeRequest("settings_get", {});
-        assert.ok((settings["ui.tabs"] as { cwd: string }[]).some((tab) => tab.cwd === join(stand.project, "sub")), "the session runs in the typed directory");
+        // its first message keeps it among the user's tabs
+        stand.script([{ text: "in sub" }]);
+        await web.type("hello sub");
+        await web.submit();
+        await web.page.getByText("in sub").waitFor({ timeout: 15_000 });
+        for (let tries = 0; ; tries += 1) {
+          const { settings } = await tui.client.homeRequest("settings_get", {});
+          if ((settings["ui.tabs"] as { cwd: string }[]).some((tab) => tab.cwd === join(stand.project, "sub"))) {
+            break; // the session runs in the chosen folder, among the user's tabs
+          } else {
+            assert.ok(tries < 100, `the session in sub never joined the user's tabs: ${JSON.stringify(settings["ui.tabs"])}`);
+            await web.page.waitForTimeout(50);
+          }
+        }
         const titles = (await web.screen()).tabs.map((tab) => tab.title);
         const strip = web.page.getByRole("tablist", { name: "sessions" });
         const rows = strip.getByRole("button").filter({ hasNotText: "+ new" });

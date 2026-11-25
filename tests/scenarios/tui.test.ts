@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineScenario, runScenario } from "#testkit/scenario/scenario.ts";
 
@@ -62,7 +62,7 @@ export const scenario = defineScenario({
 
         tui.terminal.resizeTo(70, 30);
         await tui.settle();
-        assert.deepEqual(tui.screen().strips, { left: false, right: false });
+        assert.deepEqual(tui.screen().strips, { left: false });
         await tui.act("strip.tabs");
         assert.deepEqual(tui.screen().zones.overlays, ["tabs"]);
         await tui.act("strip.tabs");
@@ -263,10 +263,13 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "rules part the strips from the main area; a leading ! colors the editor's border for BUILD",
+      name: "a rule parts the strip from the main area, rules part its blocks; a leading ! colors the editor's border for BUILD",
       async run({ clients: { tui } }) {
         const rows = tui.text().split("\n");
-        assert.ok(rows.filter((row) => row.split("│").length >= 3).length > 10, "two rules down the screen");
+        assert.ok(rows.filter((row) => row.slice(0, 20).includes("│")).length > 10, "a rule down the screen after the strip");
+        assert.equal(rows.filter((row) => /^─{18}│/.test(row)).length, 2, "the strip's three blocks");
+        assert.ok(rows.slice(0, 3).some((row) => row.slice(0, 18).includes(tui.client.home ?? "?")), "the client's own node first");
+        assert.ok(rows.some((row) => /^.{0,2}session\s/.test(row)), "the items block starts with session");
         const plain = tui.app.borderMode();
         await tui.type("!");
         assert.equal(tui.app.borderMode(), "build");
@@ -299,6 +302,50 @@ export const scenario = defineScenario({
         assert.ok(zone.kind === "picker");
         await tui.waitForText((screen) => screen.includes("tab") && screen.includes("enter choose") && screen.includes("esc cancel"));
         await tui.act("run.abort");
+      },
+    },
+    {
+      name: "a new session: Ctrl+T chooses its folder in the chat zone by typing alone; the tab is the window's until its first message; Esc cancels",
+      async run({ stand, clients: { tui } }) {
+        const shared = (): { sessionId: string }[] => (tui.client.settings["ui.tabs"] as { sessionId: string }[] | undefined) ?? [];
+        await tui.press("\x14"); // Ctrl+T
+        await tui.waitForText((screen) => screen.includes("folder ⇒") && screen.includes("new session"));
+        assert.equal(tui.screen().input, "newSession");
+        await tui.press("\x1b");
+        await tui.waitForText((screen) => !screen.includes("folder ⇒"));
+        assert.equal(tui.screen().input, "editor");
+
+        // the stand's project is a recent folder: typing its name chooses it, Enter starts there
+        const before = tui.workbench.tabs().length;
+        await tui.press("\x14");
+        await tui.waitForText((screen) => screen.includes("folder ⇒"));
+        for (const key of "project") {
+          await tui.press(key);
+        }
+        await tui.waitForText((screen) => screen.includes("filter project") && screen.includes(stand.project.replace(homedir(), "~")));
+        await tui.press("\r");
+        await tui.waitForText(() => tui.workbench.tabs().length === before + 1 && tui.screen().input === "editor");
+        const draft = tui.workbench.activeTab();
+        assert.equal(draft?.cwd, stand.project);
+        assert.equal(draft?.draft, true);
+        assert.ok(!shared().some((record) => record.sessionId === draft?.sessionId), "not among the user's tabs before a message");
+        stand.script([{ text: "kept" }]);
+        await tui.type("hello");
+        await tui.submit();
+        await tui.waitForText(() => shared().some((record) => record.sessionId === draft?.sessionId));
+
+        // closed before a message, nothing of it remains
+        await tui.press("\x14");
+        await tui.waitForText((screen) => screen.includes("folder ⇒"));
+        for (const key of "project") {
+          await tui.press(key);
+        }
+        await tui.press("\r");
+        await tui.waitForText(() => tui.workbench.activeTab()?.draft === true);
+        const empty = tui.workbench.activeTab();
+        await tui.press("\x04"); // Ctrl+D on the empty editor
+        await tui.waitForText(() => !tui.workbench.tabs().some((tab) => tab.sessionId === empty?.sessionId));
+        assert.ok(!(await tui.client.sessions(tui.client.home ?? "")).some((session) => session.id === empty?.sessionId), "no file of it");
       },
     },
     {

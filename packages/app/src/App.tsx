@@ -381,22 +381,20 @@ function WorkbenchApp() {
     (action: ActionId): void => {
       if (connected === undefined) {
         return;
-      } else if (action === "run.abort" && screen?.input === "dialog") {
-        return; // Esc belongs to the dialog
-      } else if (action === "strip.tabs" || action === "strip.items") {
-        // the keyboard into the strip; a hidden one comes over the screen first
-        const label = action === "strip.tabs" ? "sessions" : "session items";
-        const shown = action === "strip.tabs" ? screen?.strips.left : screen?.strips.right;
-        if (shown === true || screen?.zones.overlays.includes(action === "strip.tabs" ? "tabs" : "items") === true) {
-          focusList(label);
+      } else if ((action === "run.abort" || action === "editor.submit") && (screen?.input === "dialog" || screen?.input === "newSession")) {
+        return; // Esc and Enter belong to the dialog, or to choosing a new session's folder
+      } else if (action === "strip.tabs") {
+        // the keyboard into the strip (its sessions); a hidden one comes over the screen first
+        if (screen?.strips.left === true || screen?.zones.overlays.includes("tabs") === true) {
+          focusList("sessions");
         } else {
-          void connected.workbench.act(action).then(() => setTimeout(() => focusList(label), 0));
+          void connected.workbench.act(action).then(() => setTimeout(() => focusList("sessions"), 0));
         }
       } else {
         void connected.workbench.act(action);
       }
     },
-    [connected, screen?.input, screen?.strips.left, screen?.strips.right, screen?.zones.overlays],
+    [connected, screen?.input, screen?.strips.left, screen?.zones.overlays],
   );
   useEffect(() => listenKeys(act), [act]);
 

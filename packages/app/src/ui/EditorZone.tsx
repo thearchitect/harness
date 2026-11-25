@@ -206,6 +206,12 @@ export function EditorZoneView(props: {
             return <InteractionBlock request={zone.request} from={zone.from} answer={(value) => props.onAnswer(zone.request.id, value)} />;
           case "picker":
             return <PickerBlock key={zone.picker.id} picker={zone.picker} onClose={props.onClosePicker} onScope={props.onPickerScope} />;
+          case "hint":
+            return (
+              <T color="dim" lines={1}>
+                {zone.hints.map((hint) => `${hint.key} ${hint.does}`).join(" · ")}
+              </T>
+            );
           case "component":
             return (
               <Frame title="An extension's dialog" tone="warning">

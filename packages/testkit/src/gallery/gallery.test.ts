@@ -21,7 +21,7 @@ test("every fixture draws; a comparison lists what changed", async () => {
   assert.ok(existsSync(first.index));
   assert.equal(first.web, WebDriver.available() === undefined);
 
-  writeFileSync(join(dir, "tabs-all-glyphs.txt"), "something else\n");
-  const second = await runGallery({ dir: mkdtempSync(join(tmpdir(), "gallery-")), compare: dir, filter: "tabs" });
-  assert.deepEqual(second.changed, ["tabs-all-glyphs"]);
+  writeFileSync(join(dir, "strip-all-glyphs.txt"), "something else\n");
+  const second = await runGallery({ dir: mkdtempSync(join(tmpdir(), "gallery-")), compare: dir, filter: "strip" });
+  assert.deepEqual(second.changed, ["strip-all-glyphs"]);
 });

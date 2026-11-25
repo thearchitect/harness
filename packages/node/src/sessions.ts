@@ -4,7 +4,8 @@
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { readdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { HarnessError } from "#protocol/errors.ts";
 import type { SessionListItem } from "#protocol/node.ts";
 
@@ -12,14 +13,34 @@ export function sessionsDir(dataDir: string): string {
   return join(dataDir, "sessions");
 }
 
+/** pi's directory of a cwd's sessions under the sessions directory (getDefaultSessionDirPath of its session manager). */
+function cwdSessionsDir(dataDir: string, cwd: string): string {
+  return join(sessionsDir(dataDir), `--${resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
+}
+
+/**
+ * The user's saved sessions: of one directory, or all. pi keeps them per directory
+ * (sessions/--<cwd>--/*.jsonl); its lists with a directory given read that directory alone, so all
+ * of them are read directory by directory.
+ */
 export async function listSessions(dataDir: string, cwd?: string): Promise<Omit<SessionListItem, "agent">[]> {
-  const sessions = cwd !== undefined ? await SessionManager.list(cwd, sessionsDir(dataDir)) : await SessionManager.listAll(sessionsDir(dataDir));
+  const sessions =
+    cwd !== undefined
+      ? await SessionManager.list(cwd, cwdSessionsDir(dataDir, cwd))
+      : (
+          await Promise.all(
+            (await readdir(sessionsDir(dataDir), { withFileTypes: true }).catch(() => []))
+              .filter((entry) => entry.isDirectory())
+              .map((entry) => SessionManager.listAll(join(sessionsDir(dataDir), entry.name))),
+          )
+        ).flat();
   return sessions
     .map((session) => ({
       id: session.id,
       path: session.path,
       cwd: session.cwd,
       name: session.name,
+      created: session.created.getTime(),
       modified: session.modified.getTime(),
       messageCount: session.messageCount,
       firstMessage: session.firstMessage,

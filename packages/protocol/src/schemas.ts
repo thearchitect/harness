@@ -86,6 +86,10 @@ export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
   agent_detach: Obj({ agent: Str("The agent id") }, "Stops following an agent; it keeps running. → {}"),
   agent_close: Obj({ agent: Str("The agent id") }, "Stops an agent; its session stays. → {}"),
   files_list: Obj({ path: Str("A directory under the node user's home") }, "Lists a directory. → { path, items }"),
+  dirs_list: Obj(
+    { path: Str("A directory of the node's machine: absolute, ~ or ~/…"), hidden: Opt(Type.Boolean({ description: "Directories whose names start with a dot too" })) },
+    "The directories in a directory, by name, each with hasChildren (it holds directories itself), for choosing where a session starts. → { path, parent, home, dirs }",
+  ),
   files_get: Obj({ path: Str("A file under the node user's home") }, "Reads a file. → { path, base64 }"),
   files_put: Obj({ path: Str("A file under the node user's home"), base64: Str("The content") }, "Writes a file (directories are created). → { path }"),
   theme_get: Obj({ name: Opt(Str("A theme name; the user's ui.theme, else dark, when absent")) }, "A theme's colors as hex for clients that draw it themselves, with the names of the themes there are. → { name, appearance, colors, names }"),

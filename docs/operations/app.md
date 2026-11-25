@@ -24,10 +24,24 @@ builds are not published yet.
 
 The same in the TUI and the app:
 
-- `Alt+←` / `Alt+→` take the keyboard into the sessions strip / the session's items (a strip
-  hidden on a narrow screen comes over it): `↑`/`↓` move, `Enter` (or `Space`) opens, `Esc` goes
-  back to the editor; on a tab `Delete` closes it. A click opens a row, the middle button closes a
+- The strip on the left has three blocks, without titles: the nodes (your own first — `inprocess`
+  in the window that holds it — then the ones you reach, `+ add` to pair a hub; one glyph each:
+  `⊘` offline, `◆` a session waits for you, `●` something works), the chosen node's sessions (`+ new`
+  last) and the active session's items (`session` first in its mode's color, then its tasks and
+  subagents). Choosing a node shows its sessions and opens its last active one; new sessions start
+  there and the panel's HARNESS rows act on it.
+- `Alt+←` takes the keyboard into the strip (over the screen when it is too narrow for it): one
+  cursor walks all three blocks with `↑`/`↓`, `Enter` (or `Space`) opens, `Esc` goes back to the
+  editor; on a session `Delete` closes its tab. A click opens a row, the middle button closes a
   tab, the pointer lights a row up.
+- `Ctrl+T` (or `+ new`) chooses the new session's folder in the chat zone, by typing alone: the
+  folders of recent sessions (newest first) under `folder ⇒`, which browses the node's folders.
+  Typing filters, `↑`/`↓` choose, `→` opens a folder, `←` goes up, `/` opens the best match (`har/cr/`
+  walks down), `~` or `/` first browse from the home or the root, `Enter` starts the session there,
+  `Esc` cancels; a leading dot shows hidden folders. A session without a message is the window's
+  alone and leaves nothing when closed; its first message makes it one of your tabs everywhere.
+- `harness` reopens the window as it was (no tabs: the folder choice); `harness <dir>` (`.` for
+  here) opens a new session in it.
 - `Ctrl+\` opens the harness panel on the right: MODE (madness, simple — switches that keep the
   panel open; new sessions start with the last choice), SESSION (its name — a field that takes
   typing as soon as it is selected and names the session as you type, no Enter; the implementer —
@@ -57,7 +71,7 @@ The same in the TUI and the app:
   (`~/.harness/uploads/`) and into the message as `@path`.
 - Notifications (off by default, `/settings`) when a session starts waiting or finishes and the
   window is not in front.
-- The strips' widths change by dragging their edges (`ui.web.panes`); tabs reorder by dragging
+- The strip's width changes by dragging its edge (`ui.web.panes`); tabs reorder by dragging
   (for every client of yours), close with the middle button, and have a context menu (right
   click; a long press on touch): close, stop the run, copy the id. Items have one too (stop a
   task, copy the id); hovering a row shows its node, directory and state.

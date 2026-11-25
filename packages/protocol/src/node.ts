@@ -45,6 +45,8 @@ export type SessionListItem = {
   path: string;
   cwd: string;
   name?: string;
+  /** When the session was created (ms). */
+  created: number;
   modified: number;
   messageCount: number;
   firstMessage?: string;
@@ -68,6 +70,8 @@ export type NodeOps = {
   agent_detach: { args: { agent: string }; result: Record<string, never> };
   agent_close: { args: { agent: string }; result: Record<string, never> };
   files_list: { args: { path: string }; result: { path: string; items: FileItem[] } };
+  /** The directories in a directory of the node's machine, for choosing where a session starts: by name, each saying whether it has directories itself. */
+  dirs_list: { args: { path: string; hidden?: boolean }; result: { path: string; parent: string | undefined; home: string; dirs: DirItem[] } };
   files_get: { args: { path: string }; result: { path: string; base64: string } };
   files_put: { args: { path: string; base64: string }; result: { path: string } };
   /** A file the operator hands to a session (dropped, shared, picked): kept in the node's uploads, its path returned for `@path`. */
@@ -84,6 +88,9 @@ export type NodeOps = {
   /** Stops every agent and its processes and starts the node again: in the same process when a client holds it, by its supervisor when it is a service. */
   node_restart: { args: Record<string, never>; result: Record<string, never> };
 };
+
+/** A directory in dirs_list: `hasChildren` when it holds directories itself (it opens with →). */
+export type DirItem = { name: string; path: string; hasChildren: boolean };
 
 /** Who runs a node: a client process (a TUI or web-app window holds it) or a service (`harness node`). */
 export type NodeHost = "client" | "service";
@@ -102,6 +109,7 @@ export const NODE_OPS: readonly NodeOp[] = [
   "agent_detach",
   "agent_close",
   "files_list",
+  "dirs_list",
   "files_get",
   "files_put",
   "files_upload",

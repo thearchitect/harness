@@ -167,6 +167,15 @@ Lists a directory. → { path, items }
 |---|---|---|---|
 | `path` | string | yes | A directory under the node user's home |
 
+### `dirs_list`
+
+The directories in a directory, by name, each with hasChildren (it holds directories itself), for choosing where a session starts. → { path, parent, home, dirs }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `path` | string | yes | A directory of the node's machine: absolute, ~ or ~/… |
+| `hidden` | boolean |  | Directories whose names start with a dot too |
+
 ### `files_get`
 
 Reads a file. → { path, base64 }

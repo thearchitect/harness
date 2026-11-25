@@ -30,7 +30,7 @@ the node user's `ui-settings.json`. Clients read them with `settings_get` and ch
 | `ui.tabs` | The open session tabs, in order: `{ node, sessionId, sessionFile, cwd, seen }`; `seen` clears the ✓/✗ of what the user has looked at. |
 | `ui.theme` | The theme (pi's built-in name or a file in `themes/`). |
 | `ui.font.chat`, `ui.font.chrome` | The app's fonts of its two zones: `{ family, size }`, family `jetbrains-mono`, `iosevka-term`, `terminus` or `system` ([app.md](app.md)). |
-| `ui.web.panes` | The app's strip widths: `{ left, right }` in pixels. |
+| `ui.web.panes` | The app's strip width: `{ left }` in pixels. |
 | `ui.web.notifications` | The app's notifications when a session waits (default off). |
 
 ## Defaults of new sessions

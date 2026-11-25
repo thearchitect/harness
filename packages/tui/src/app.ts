@@ -29,18 +29,19 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ClientModel } from "#client/model/client-model.ts";
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
-import { LEFT_STRIP_MIN, RIGHT_STRIP_MIN, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Workbench } from "#client/workbench/workbench.ts";
+import { LEFT_STRIP_MIN, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Workbench } from "#client/workbench/workbench.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { modeOfText } from "#protocol/modes.ts";
 import { modeColor } from "#extension/presentation/modes.ts";
 import { GateDialog, selectListTheme } from "#extension/presentation/tui/gate.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
 import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
-import { ItemsColumn, Lines, TabsColumn, VRule, Workspace } from "./columns.ts";
+import { Lines, SideStrip, VRule, Workspace, type StripRow } from "./columns.ts";
+import { NewSessionView } from "./new-session.ts";
 import { Footer } from "./footer.ts";
 import type { Renderers } from "./presentation.ts";
 import { HarnessPanel, PANEL_MIN_WIDTH, PANEL_WIDTH } from "./panel.ts";
-import { PickerView } from "./picker.ts";
+import { hintLine, PickerView } from "./picker.ts";
 import { RemoteAutocompleteProvider } from "./remote-complete.ts";
 import { AskUserView } from "./ask-user.ts";
 import { TranscriptView, type TranscriptOptions } from "./transcript.ts";
@@ -49,7 +50,6 @@ import { getTheme, mermaidTransformer, piKeybindings, systemClipboard, themeCont
 
 // the strips: narrow, the transcript has the width
 const LEFT_WIDTH = 18;
-const RIGHT_WIDTH = 21;
 
 export type AppOptions = {
   client: ClientModel;
@@ -190,8 +190,8 @@ export class App {
   private readonly theme: ThemeController;
   private readonly cwd: string;
   private readonly onQuit: () => void;
-  private readonly tabsColumn: TabsColumn;
-  private readonly itemsColumn: ItemsColumn;
+  private readonly strip: SideStrip;
+  private newSessionView: NewSessionView | undefined;
   private readonly transcript: TranscriptView;
   private readonly transcriptScroll: ScrollView;
   private loadingOlder = false;
@@ -240,31 +240,9 @@ export class App {
     });
     const theme = (): Theme => getTheme();
     const failed = (error: unknown): void => this.workbench.notify("error", error instanceof Error ? error.message : String(error));
-    this.tabsColumn = new TabsColumn(theme, {
-      open: (index) => {
-        this.leaveStrip();
-        void (index < this.workbench.tabs().length ? this.act(`tabs.goto.${index + 1}`) : this.act("tabs.new")).catch(failed);
-      },
-      close: (index) => {
-        if (index < this.workbench.tabs().length) {
-          void this.workbench.closeTab(index).catch(failed);
-        } else {
-          // "+ new" is not a tab
-        }
-      },
-      leave: () => this.leaveStrip(),
-    });
-    this.itemsColumn = new ItemsColumn(theme, {
-      open: (index) => {
-        const tab = this.workbench.activeTab();
-        const item = this.itemsColumn.itemAt(index);
-        this.leaveStrip();
-        if (tab !== undefined && item !== undefined) {
-          this.workbench.select(tab, item.id);
-        } else {
-          // no session, or the row went away
-        }
-      },
+    this.strip = new SideStrip(theme, () => this.tui.terminal.rows, {
+      open: (row) => void this.openStripRow(row).catch(failed),
+      close: (tab) => void this.workbench.closeTab(tab.index).catch(failed),
       leave: () => this.leaveStrip(),
     });
     this.transcript = new TranscriptView(this.tui, theme, this.renderers, this.cwd, this.transcriptOptions());
@@ -286,20 +264,16 @@ export class App {
       { component: this.status, basis: "auto" },
       { component: this.footer, basis: "auto" },
     ]);
-    const rule = (): VRule => new VRule(theme, () => this.tui.terminal.rows);
     const left = (viewport: { width: number }): boolean => viewport.width >= LEFT_STRIP_MIN;
-    const right = (viewport: { width: number }): boolean => viewport.width >= RIGHT_STRIP_MIN;
     this.tui.setLayoutRoot(
       new Workspace(
         [
-          { component: new ScrollView(this.tabsColumn), basis: LEFT_WIDTH, visible: left },
-          { component: rule(), basis: 1, visible: left },
+          { component: this.strip, basis: LEFT_WIDTH, visible: left },
+          { component: new VRule(theme, () => this.tui.terminal.rows), basis: 1, visible: left },
           { component: main, basis: 0, grow: 1 },
-          { component: rule(), basis: 1, visible: right },
-          { component: new ScrollView(this.itemsColumn), basis: RIGHT_WIDTH, visible: right },
         ],
         // the pointer over anything else: no strip row lit
-        () => [this.tabsColumn.clearHover(), this.itemsColumn.clearHover()].includes(true),
+        () => this.strip.clearHover(),
       ),
     );
     this.tui.addInputListener((data) => this.onKey(data));
@@ -357,11 +331,16 @@ export class App {
       // the same session
     }
 
-    this.tabsColumn.tabs = screen.tabs;
-    this.tabsColumn.active = screen.active;
-    this.itemsColumn.mode = screen.agent?.state.mode ?? tab?.mode ?? "plan";
-    this.itemsColumn.items = screen.items;
-    this.itemsColumn.selected = screen.selected;
+    this.strip.content = {
+      nodes: screen.nodes,
+      node: screen.node,
+      tabs: screen.tabs,
+      active: screen.active,
+      newSession: screen.newSession !== undefined,
+      items: screen.items,
+      selected: screen.selected,
+      mode: screen.agent?.state.mode ?? tab?.mode ?? "plan",
+    };
     this.footer.model = screen.zones.footer.agent;
     this.footer.node = screen.zones.footer.node;
 
@@ -421,6 +400,17 @@ export class App {
             ...(subagent?.text ?? "").split("\n"),
           ];
         }
+        break;
+      }
+      case "newSession": {
+        if (this.newSessionView?.choice !== main.choice) {
+          this.newSessionView = new NewSessionView(main.choice, getTheme, () => this.tui.terminal.rows - 4, (error) =>
+            this.workbench.notify("error", error instanceof Error ? error.message : String(error)),
+          );
+        } else {
+          // the same choice: it redraws from its model
+        }
+        this.swapMain(this.newSessionView);
         break;
       }
       default:
@@ -532,7 +522,9 @@ export class App {
           ? `interaction:${zone.request.id}`
           : zone.kind === "component"
             ? `component:${zone.component.componentId}`
-            : `picker:${zone.picker.id}:${zone.picker.scope ?? 0}`;
+            : zone.kind === "hint"
+              ? "hint"
+              : `picker:${zone.picker.id}:${zone.picker.scope ?? 0}`;
     if (id === this.editorShown) {
       return;
     } else {
@@ -569,6 +561,18 @@ export class App {
           this.editorComponent = view;
           this.editorZone.addChild(view);
           this.tui.setFocus(view);
+          break;
+        }
+        case "hint": {
+          // the main zone takes the keyboard (choosing a new session's folder); its keys show here
+          const hint = new Text(hintLine(getTheme(), zone.hints), 0, 0);
+          this.editorComponent = this.newSessionView;
+          this.editorZone.addChild(hint);
+          if (this.newSessionView !== undefined) {
+            this.tui.setFocus(this.newSessionView);
+          } else {
+            // drawn with the main zone, which comes first
+          }
           break;
         }
         default:
@@ -660,9 +664,7 @@ export class App {
         return handle;
       }
       case "tabs":
-        return this.tui.showOverlay(this.tabsColumn, { width: LEFT_WIDTH, anchor: "top-left", nonCapturing: true });
-      case "items":
-        return this.tui.showOverlay(this.itemsColumn, { width: RIGHT_WIDTH, anchor: "top-right", nonCapturing: true });
+        return this.tui.showOverlay(this.strip, { width: LEFT_WIDTH, anchor: "top-left", nonCapturing: true });
       default:
         throw new Error(`unknown overlay: ${String(kind satisfies never)}`);
     }
@@ -752,10 +754,10 @@ export class App {
     setImmediate(() => (this.screen !== undefined && this.screen.zones.main.kind === "transcript" ? this.loadOlderAtTop(this.screen) : undefined));
     const action = actionOf(data);
     const input = this.screen?.input ?? "editor";
-    const inStrip = this.stripFocus !== undefined && (this.stripFocus === "tabs" ? this.tabsColumn : this.itemsColumn).focused;
+    const inStrip = this.stripFocused && this.strip.focused;
     const inPanel = this.overlayHandles.has("panel");
-    if ((inStrip || inPanel) && (action === undefined || action === "run.abort" || action === "editor.submit" || action === "editor.newline")) {
-      return undefined; // the strip's or the panel's own keys: arrows, Enter, Space, Delete, Esc
+    if ((inStrip || inPanel || input === "newSession") && (action === undefined || action === "run.abort" || action === "editor.submit" || action === "editor.newline")) {
+      return undefined; // the strip's, the panel's or the folder choice's own keys: arrows, Enter, Space, Delete, Esc, typing
     } else if (matchesKey(data, "ctrl+c" as never)) {
       // as in pi: Ctrl+C clears the editor; in dialogs and lists it is theirs (cancel)
       if (input === "editor" || input === "subagent" || input === "task") {
@@ -821,12 +823,11 @@ export class App {
   async act(action: ActionId): Promise<void> {
     if (action === "app.quit") {
       this.onQuit();
-    } else if (action === "strip.tabs" || action === "strip.items") {
-      const side = action === "strip.tabs" ? "tabs" : "items";
-      if (this.stripFocus === side) {
+    } else if (action === "strip.tabs") {
+      if (this.stripFocused) {
         this.leaveStrip();
       } else {
-        this.enterStrip(side);
+        this.enterStrip();
       }
     } else {
       await this.workbench.act(action);
@@ -838,33 +839,65 @@ export class App {
     }
   }
 
-  /** The strip the keyboard is in (Alt+←/→), if any. */
-  private stripFocus: "tabs" | "items" | undefined;
+  /** A strip row opened (Enter, a click): a node, `+ add`, a session, `+ new`, an item. */
+  private async openStripRow(row: StripRow): Promise<void> {
+    switch (row.kind) {
+      case "node":
+        // the keyboard stays: the node's sessions are what comes next
+        await this.workbench.chooseNode(row.node.name);
+        break;
+      case "add":
+        this.leaveStrip();
+        this.workbench.addNode();
+        break;
+      case "tab":
+        this.leaveStrip();
+        await this.workbench.act(`tabs.goto.${this.workbench.nodeTabs().findIndex((tab) => tab.index === row.tab.index) + 1}` as ActionId);
+        await this.loadCompletions().catch(() => undefined);
+        break;
+      case "new":
+        this.leaveStrip();
+        await this.workbench.act("tabs.new");
+        break;
+      case "item": {
+        const tab = this.workbench.activeTab();
+        this.leaveStrip();
+        if (tab !== undefined) {
+          this.workbench.select(tab, row.item.id);
+        } else {
+          // no session
+        }
+        break;
+      }
+      default:
+        throw new Error(`unknown strip row: ${JSON.stringify(row satisfies never)}`);
+    }
+  }
 
-  /** The keyboard into a strip; a strip hidden on a narrow screen comes over it first. */
-  private enterStrip(side: "tabs" | "items"): void {
+  /** Whether the keyboard is in the strip (Alt+←). */
+  private stripFocused = false;
+
+  /** The keyboard into the strip; hidden on a narrow screen, it comes over it first. */
+  private enterStrip(): void {
     this.leaveStrip();
-    const strip = side === "tabs" ? this.tabsColumn : this.itemsColumn;
-    const width = this.tui.terminal.columns;
-    const hidden = side === "tabs" ? width < LEFT_STRIP_MIN : width < RIGHT_STRIP_MIN;
-    if (hidden && !(this.screen?.zones.overlays.includes(side) ?? false)) {
-      this.workbench.toggleOverlay(side);
+    const hidden = this.tui.terminal.columns < LEFT_STRIP_MIN;
+    if (hidden && !(this.screen?.zones.overlays.includes("tabs") ?? false)) {
+      this.workbench.toggleOverlay("tabs");
     } else {
       // shown already
     }
-    this.stripFocus = side;
-    strip.enter();
-    this.tui.setFocus(strip);
+    this.stripFocused = true;
+    this.strip.enter();
+    this.tui.setFocus(this.strip);
     this.tui.requestRender();
   }
 
   /** The keyboard back to the editor zone; an overlaid strip goes away. */
   private leaveStrip(): void {
-    const side = this.stripFocus;
-    if (side !== undefined) {
-      this.stripFocus = undefined;
-      if (this.screen?.zones.overlays.includes(side) === true) {
-        this.workbench.toggleOverlay(side);
+    if (this.stripFocused) {
+      this.stripFocused = false;
+      if (this.screen?.zones.overlays.includes("tabs") === true) {
+        this.workbench.toggleOverlay("tabs");
       } else {
         // the strip stays in its column
       }

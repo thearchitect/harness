@@ -33,11 +33,11 @@ import { HarnessNode } from "#node/node.ts";
 import { listenUnix, socketPath } from "#node/endpoints/unix.ts";
 import { listenWs } from "#node/endpoints/ws.ts";
 import { Uplink } from "#node/uplink.ts";
-import { hubAdmin, remoteAdmin } from "./admin.ts";
+import { hubAdmin, redeemPairing, remoteAdmin } from "./admin.ts";
 import { claudeBridge } from "./claude-bridge.ts";
 import { piCommand } from "./pi-command.ts";
 import { canExecUpdate, checkUpdates, detectInstall, execUpdate, updateHint, updateLines, type Install, type UpdateState } from "./update.ts";
-import { readRemotes } from "./remotes.ts";
+import { readRemotes, writeRemotes } from "./remotes.ts";
 import { App, clientThemes } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
 
@@ -250,6 +250,14 @@ async function runTui(args: string[]): Promise<void> {
   }
   workbench = new Workbench(client, {
     cwd,
+    holdsHome: () => local.node !== undefined,
+    // + add in the strip: a hub's address and its one-time code; the token goes to remotes.json
+    addHub: async (url, code) => {
+      const name = new URL(url).hostname;
+      const { token } = await redeemPairing(url, code);
+      writeRemotes(home, [...readRemotes(home).filter((remote) => remote.name !== name), { name, url, token }]);
+      await client.addEndpoint(async () => NodeConnection.open(await wsTransport(url), "tui", token, TUI_CAPABILITIES), { home: false });
+    },
     themes: () => clientThemes(home),
     update: {
       hint: () => updateHint(updateState, Date.now()),
@@ -260,7 +268,8 @@ async function runTui(args: string[]): Promise<void> {
   });
   const renderers = await loadRenderers(cwd, piExtensions());
 
-  // What this start opens: the session asked for, the latest of this directory, or a new one.
+  // What this start opens: the session asked for; the latest of this directory; a new one in the
+  // directory given; else the window as it was, or choosing a new session's folder without tabs.
   if (values.session !== undefined || values.continue === true) {
     const sessions = await client.sessions(nodeName);
     const wanted =
@@ -273,8 +282,12 @@ async function runTui(args: string[]): Promise<void> {
       process.stderr.write(values.session !== undefined ? `no session ${values.session}\n` : "no session in this directory yet: starting a new one\n");
       await workbench.newTab(nodeName, cwd);
     }
-  } else {
+  } else if (positionals.length > 0) {
     await workbench.newTab(nodeName, cwd);
+  } else if (workbench.tabs().length === 0) {
+    workbench.openNewSession(nodeName);
+  } else {
+    // the window's tabs: the active one opens (start)
   }
   // --model: the session starts on this model reference (a family takes its newest model)
   const started = workbench.activeTab();
@@ -356,7 +369,8 @@ async function main(): Promise<void> {
     case "-h":
       process.stdout.write(
         [
-          "harness [dir] [-c] [--session <id>] [-m <model>]   the TUI: a new session in dir (default: here);",
+          "harness [dir] [-c] [--session <id>] [-m <model>]   the TUI: without dir the window as it was (no tabs:",
+          "                                            choose a folder); with dir a new session in it (. is here);",
           "                                            -c the latest of dir; model: provider/family[:thinking] or an id",
           "harness node [--name <name>]                a node for this user",
           "harness hub [--name <name>] [--listen h:p]  a node with the hub role",

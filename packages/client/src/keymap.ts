@@ -18,8 +18,7 @@ export const ACTIONS = {
   "model.cycle": { keys: ["ctrl+p"], description: "Next model" },
   "thinking.cycle": { keys: ["shift+tab"], description: "Next thinking level" },
   "tools.expand": { keys: ["ctrl+e"], description: "Expand or collapse tool output" },
-  "strip.tabs": { keys: ["alt+left"], description: "The keyboard into the session tabs (over the screen when it is too narrow for them); again or Esc: back" },
-  "strip.items": { keys: ["alt+right"], description: "The keyboard into the session's items (over the screen when it is too narrow for them); again or Esc: back" },
+  "strip.tabs": { keys: ["alt+left"], description: "The keyboard into the strip: nodes, sessions, items (over the screen when it is too narrow for it); again or Esc: back" },
   "transcript.search": { keys: ["ctrl+f"], description: "Search the transcript" },
   "app.quit": { keys: ["ctrl+q"], description: "Quit (a node this window holds stops with it: asked first while agents work or other windows use it)" },
 } as const;

@@ -13,10 +13,10 @@ import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#pr
 import type { ActionId } from "../keymap.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
 import { agentKey, type ClientModel } from "../model/client-model.ts";
+import { NewSession } from "./new-session.ts";
 
 /** Screen widths (columns; the app converts them to `ch`) below which a strip hides behind an overlay. */
 export const LEFT_STRIP_MIN = 72;
-export const RIGHT_STRIP_MIN = 100;
 /** How long a notice stays in the status line. */
 export const NOTICE_MS = 15_000;
 /** How often an open task view refreshes its output. */
@@ -43,6 +43,16 @@ export type Picker = {
 export type KeyHint = { key: string; does: string };
 
 /** The hint line of a picker: every key it takes, each with what it does. */
+/** The keys of choosing a new session's folder, in the editor's place. */
+export const NEW_SESSION_HINTS: KeyHint[] = [
+  { key: "↑↓", does: "select" },
+  { key: "→", does: "open" },
+  { key: "←", does: "up" },
+  { key: "type", does: "filter" },
+  { key: "enter", does: "create here" },
+  { key: "esc", does: "cancel" },
+];
+
 export function pickerHints(picker: Picker): KeyHint[] {
   return [
     { key: "↑↓", does: "select" },
@@ -53,14 +63,23 @@ export function pickerHints(picker: Picker): KeyHint[] {
   ];
 }
 
-/** What lies over the screen: the harness panel (over the right strip) and hidden strips. */
-export type OverlayKind = "panel" | "tabs" | "items";
+/** What lies over the screen: the harness panel (on the right) and the left strip when the screen is too narrow for it. */
+export type OverlayKind = "panel" | "tabs";
+
+/**
+ * A row of the strip's top block: a node this client reaches (its own first, named `inprocess` in
+ * the window that holds it), one glyph for all its sessions: ⊘ offline, ◆ one waits for the
+ * operator, ● something works.
+ */
+export type NodeRow = { name: string; label: string; glyph: "⊘" | "◆" | "●" | "" };
 
 export type StatusLine = { level: "info" | "warning" | "error" | "working"; text: string };
 
 /** A subagent: its row in the session's state, and for a `harness` subagent its own agent's transcript. */
 export type MainZone =
   | { kind: "transcript" }
+  /** Choosing where a new session starts (Ctrl+T, + new). */
+  | { kind: "newSession"; choice: NewSession }
   | { kind: "task"; taskId: string; task: TaskInfo | undefined; output: string }
   | { kind: "subagent"; id: string; subagent: SubagentInfo | undefined; agent: AgentModel | undefined };
 
@@ -69,6 +88,8 @@ export type EditorZone =
   /** `from`: the subagent that asks (an interaction of a subagent of this session). */
   | { kind: "interaction"; request: InteractionRequest; from?: string }
   | { kind: "picker"; picker: Picker }
+  /** The keys of what the main zone shows in place of the editor (choosing a folder). */
+  | { kind: "hint"; hints: KeyHint[] }
   /** An extension's component drawn in the agent (terminal clients only; others say they cannot show it). */
   | { kind: "component"; component: BridgedComponent };
 
@@ -85,7 +106,7 @@ export type Zones = {
 };
 
 /** Where typed text goes now. */
-export type InputTarget = "editor" | "dialog" | "picker" | "component" | "search" | "task" | "subagent";
+export type InputTarget = "editor" | "dialog" | "picker" | "component" | "search" | "task" | "subagent" | "newSession";
 
 /** A search of the transcript: the query, the keys of the matching items (oldest first), the current one. */
 export type Search = { query: string; matches: string[]; index: number };
@@ -112,9 +133,15 @@ export function itemText(item: TranscriptItem): string {
 }
 
 export type Screen = {
-  strips: { left: boolean; right: boolean };
+  strips: { left: boolean };
+  /** The strip's three blocks: the nodes, the chosen node's sessions, the active session's items. */
+  nodes: NodeRow[];
+  node: string | undefined;
+  /** The chosen node's tabs (each with its index among all tabs); `active` indexes these. */
   tabs: Tab[];
   active: number;
+  /** A new session being placed on this node: its row in the sessions block. */
+  newSession: string | undefined;
   tab: Tab | undefined;
   agent: AgentModel | undefined;
   items: Item[];
@@ -168,6 +195,10 @@ export type Tab = TabRecord & {
   mode: RunMode;
   /** Why the tab cannot open now (its node is offline, its session is gone). */
   unavailable: string | undefined;
+  /** Its index among all tabs (what activate, goto and closeTab take). */
+  index: number;
+  /** A session without a message yet: this window's alone until its first message. */
+  draft: boolean;
 };
 
 export type ItemKind = "session" | "task" | "subagent";
@@ -300,6 +331,10 @@ export type WorkbenchOptions = {
   uiSettings?: () => UiSetting[];
   /** Brings a file of a node to this device (the app downloads it); without it the path is shown. */
   offerFile?: (node: string, path: string) => void;
+  /** Whether this window holds its home node (the TUI's local node in its process): its row reads `inprocess`. */
+  holdsHome?: () => boolean;
+  /** `+ add` of the nodes block: pairs this client with a hub (its address, a one-time code). */
+  addHub?: (url: string, code: string) => Promise<void>;
 };
 
 /** A row of /settings a UI adds: choosing it runs `choose` (which may open its own list). */
@@ -307,7 +342,21 @@ export type UiSetting = { value: string; label: string; description?: string; ch
 
 export class Workbench {
   readonly client: ClientModel;
-  active = 0;
+  /** The active tab, by identity: other clients' changes of the tab set keep it. */
+  private activeKey: { node: string; sessionId: string } | undefined;
+  /** The node the strip shows the sessions of (where new sessions start, what HARNESS acts on). */
+  private chosenNode: string | undefined;
+  /** The last active tab of each node (choosing a node opens it again). */
+  private readonly lastActive = new Map<string, string>();
+  /**
+   * Tabs of sessions without a message yet: this window's alone (pi writes no file for them); the
+   * first message puts them in the shared tab set (ui.tabs).
+   */
+  private drafts: TabRecord[] = [];
+  /** Choosing where a new session starts. */
+  private newSessionChoice: NewSession | undefined;
+  private readonly holdsHome: () => boolean;
+  private readonly addHub: WorkbenchOptions["addHub"];
   picker: Picker | undefined;
   overlays: OverlayKind[] = [];
   toolsExpanded = false;
@@ -339,6 +388,110 @@ export class Workbench {
     this.themes = options.themes ?? (() => []);
     this.uiSettings = options.uiSettings ?? (() => []);
     this.offerFile = options.offerFile;
+    this.holdsHome = options.holdsHome ?? (() => false);
+    this.addHub = options.addHub;
+  }
+
+  /** The index of the active tab among all tabs (0 without tabs). */
+  get active(): number {
+    const key = this.activeKey;
+    return Math.max(0, key !== undefined ? this.tabs().findIndex((tab) => sameTab(tab, key)) : 0);
+  }
+
+  /**
+   * The node the strip shows: chosen, else the active tab's, else the home node when this user runs
+   * agents on it (a hub may only keep their settings), else the first node reached.
+   */
+  node(): string | undefined {
+    const home = this.client.home;
+    return this.chosenNode ?? this.activeTab()?.node ?? (home !== undefined && this.client.connections.has(home) ? home : [...this.client.connections.keys()][0]);
+  }
+
+  /** The chosen node's tabs, each with its index among all. */
+  nodeTabs(): Tab[] {
+    const node = this.node();
+    return this.tabs().filter((tab) => tab.node === node);
+  }
+
+  /** The nodes block: this client's own node first, then the others it reaches; one glyph each. */
+  nodes(): NodeRow[] {
+    const home = this.client.home;
+    const names = [...new Set([...(home !== undefined ? [home] : []), ...this.client.connections.keys(), ...this.client.nodes.keys(), ...this.client.offline.keys()])];
+    return names.map((name) => {
+      const agents = [...this.client.agents.values()].filter((agent) => agent.node === name);
+      const glyph = this.client.offline.has(name) || !this.client.connections.has(name)
+        ? "⊘"
+        : agents.some((agent) => agent.summary.waiting > 0 || agent.summary.status === "waiting")
+          ? "◆"
+          : agents.some((agent) => agent.summary.status === "running")
+            ? "●"
+            : "";
+      return { name, label: name === home && this.holdsHome() ? "inprocess" : name, glyph };
+    });
+  }
+
+  /** Chooses a node in the strip: its last active tab opens again, or choosing a folder for a new session there. */
+  async chooseNode(node: string): Promise<void> {
+    if (!this.client.connections.has(node)) {
+      this.notify("warning", `node ${node} is offline`);
+    } else {
+      this.chosenNode = node;
+      const tabs = this.tabs();
+      const last = this.lastActive.get(node);
+      const index = tabs.findIndex((tab) => tab.node === node && (last === undefined || tab.sessionId === last));
+      const fallback = tabs.findIndex((tab) => tab.node === node);
+      if (index >= 0 || fallback >= 0) {
+        await this.goto(index >= 0 ? index : fallback);
+      } else {
+        this.openNewSession(node);
+      }
+    }
+  }
+
+  /** `+ add` in the nodes block: a hub's address, then the one-time code its admin made (harness hub device add). */
+  addNode(): void {
+    const addHub = this.addHub;
+    if (addHub === undefined) {
+      this.notify("warning", "this client adds hubs elsewhere (its pairing screen)");
+    } else {
+      this.openPicker({
+        id: "add-hub",
+        title: "Add a hub: its address (wss://…)",
+        items: [],
+        custom: "the hub's address",
+        choose: (url) =>
+          this.openPicker({
+            id: "add-hub-code",
+            title: `Pairing code for ${url} (harness hub device add on the hub)`,
+            items: [],
+            custom: "the one-time code",
+            choose: (code) => addHub(url, code),
+          }),
+      });
+    }
+  }
+
+  /** Choosing where a new session starts on a node, in the chat zone (new-session.ts). */
+  openNewSession(node: string): void {
+    const choice = new NewSession(node, {
+      list: (path, hidden) => this.client.connection(node).request("dirs_list", { path, hidden }),
+      sessions: () => this.client.sessions(node),
+      create: async (path) => {
+        this.newSessionChoice = undefined;
+        await this.newTab(node, path);
+      },
+      cancel: () => {
+        this.newSessionChoice = undefined;
+        this.client.changed();
+      },
+      changed: () => this.client.changed(),
+      now: () => this.clock.now(),
+      failed: (message) => this.notify("error", message),
+    });
+    this.chosenNode = node;
+    this.newSessionChoice = choice;
+    this.client.changed();
+    void choice.start();
   }
 
   /* ----- the screen ----- */
@@ -355,8 +508,7 @@ export class Workbench {
   }
 
   screen(width: number, editor: { mode: RunMode }): Screen {
-    const tabs = this.tabs();
-    const tab = tabs[Math.min(this.active, tabs.length - 1)];
+    const tab = this.activeTab();
     const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
     if (tab?.agent !== undefined && agent === undefined && tab.unavailable === undefined) {
       // the active tab's agent became known (another client opened it, the node reported it): follow it
@@ -366,7 +518,8 @@ export class Workbench {
     }
     const items = tab !== undefined ? this.items(tab, agent?.state) : [];
     const selected = tab !== undefined ? this.selectedItem(tab) : "session";
-    const main = this.mainZone(selected, agent, tab);
+    const choice = this.newSessionChoice;
+    const main: MainZone = choice !== undefined ? { kind: "newSession", choice } : this.mainZone(selected, agent, tab);
     this.followTask(main.kind === "task" ? main.taskId : undefined);
     const asking = tab?.agent !== undefined ? this.asking(tab.node, tab.agent.id, agent) : undefined;
     const request = asking?.request;
@@ -375,16 +528,22 @@ export class Workbench {
     const editorZone: EditorZone =
       this.picker !== undefined
         ? { kind: "picker", picker: this.picker }
-        : request !== undefined
+        : choice !== undefined
+          ? { kind: "hint", hints: NEW_SESSION_HINTS }
+          : request !== undefined
           ? { kind: "interaction", request, ...(asking?.from !== undefined ? { from: asking.from } : {}) }
           : inline !== undefined
             ? { kind: "component", component: inline }
             : { kind: "editor", mode: agent?.running === true ? agent.state.mode : editor.mode };
     const queue = agent?.session?.queue;
+    const nodeTabs = this.nodeTabs();
     return {
-      strips: { left: width >= LEFT_STRIP_MIN, right: width >= RIGHT_STRIP_MIN },
-      tabs,
-      active: this.active,
+      strips: { left: width >= LEFT_STRIP_MIN },
+      nodes: this.nodes(),
+      node: this.node(),
+      tabs: nodeTabs,
+      active: choice !== undefined ? -1 : nodeTabs.findIndex((candidate) => tab !== undefined && sameTab(candidate, tab)),
+      newSession: choice?.node,
       tab,
       agent,
       items,
@@ -397,15 +556,17 @@ export class Workbench {
           search: this.search(agent),
         },
         editor: editorZone,
-        status: this.statusLines(tabs, tab, agent),
+        status: this.statusLines(this.tabs(), tab, agent),
         footer: { node: tab?.node ?? "", agent },
-        overlays: this.overlays.filter((overlay) => (overlay === "tabs" ? width < LEFT_STRIP_MIN : overlay === "items" ? width < RIGHT_STRIP_MIN : true)),
+        overlays: this.overlays.filter((overlay) => (overlay === "tabs" ? width < LEFT_STRIP_MIN : true)),
         componentOverlay,
       },
       input:
         editorZone.kind === "picker"
           ? "picker"
-          : componentOverlay !== undefined || editorZone.kind === "component"
+          : editorZone.kind === "hint"
+            ? "newSession"
+            : componentOverlay !== undefined || editorZone.kind === "component"
             ? "component"
             : editorZone.kind === "interaction"
             ? "dialog"
@@ -1091,19 +1252,37 @@ export class Workbench {
     };
     try {
       if (action.startsWith("tabs.goto.")) {
-        await this.goto(Number(action.slice("tabs.goto.".length)) - 1);
+        // Alt+N: the Nth session of the chosen node
+        const target = this.nodeTabs()[Number(action.slice("tabs.goto.".length)) - 1];
+        if (target !== undefined) {
+          await this.goto(target.index);
+        } else {
+          // no such tab
+        }
       } else {
         const named = action as Exclude<ActionId, `tabs.goto.${number}`>;
         switch (named) {
           case "tabs.next":
           case "tabs.prev": {
-            const count = this.tabs().length;
-            await this.goto(count === 0 ? 0 : (this.active + (action === "tabs.next" ? 1 : count - 1)) % count);
+            const tabs = this.nodeTabs();
+            const at = tabs.findIndex((candidate) => tab !== undefined && sameTab(candidate, tab));
+            const target = tabs[tabs.length === 0 ? 0 : (Math.max(0, at) + (action === "tabs.next" ? 1 : tabs.length - 1)) % tabs.length];
+            if (target !== undefined) {
+              await this.goto(target.index);
+            } else {
+              // no tabs on this node
+            }
             break;
           }
-          case "tabs.new":
-            await this.newTabOnNode();
+          case "tabs.new": {
+            const node = this.node();
+            if (node === undefined || !this.client.connections.has(node)) {
+              this.notify("warning", "no node to start a session on: none of yours is online");
+            } else {
+              this.openNewSession(node);
+            }
             break;
+          }
           case "tabs.close":
             await this.closeTab(this.active);
             break;
@@ -1126,9 +1305,6 @@ export class Workbench {
             break;
           case "strip.tabs":
             this.toggleOverlay("tabs");
-            break;
-          case "strip.items":
-            this.toggleOverlay("items");
             break;
           case "model.select":
             await this.openModelPicker();
@@ -1168,51 +1344,6 @@ export class Workbench {
       this.notify("error", error instanceof Error ? error.message : String(error));
     }
     this.client.changed();
-  }
-
-  /** A new session: on the home node in the client's directory; with several nodes, the user picks one. */
-  private async newTabOnNode(): Promise<void> {
-    const nodes = [...this.client.connections.keys()];
-    // the home node, if this user runs agents on it (a hub keeps their settings but may not)
-    const home = this.client.home !== undefined && this.client.connections.has(this.client.home) ? this.client.home : nodes[0];
-    if (home === undefined) {
-      this.notify("warning", "no node to start a session on: none of yours is online");
-    } else if (nodes.length <= 1) {
-      await this.newTabIn(home);
-    } else {
-      this.openPicker({
-        id: "new-session",
-        title: "New session on",
-        items: nodes.map((node) => ({ value: node, label: node, description: this.cwd !== undefined && node === this.client.home ? this.cwd : "choose a directory" })),
-        choose: (node) => this.newTabIn(node),
-      });
-    }
-  }
-
-  /**
-   * A new session on a node: in this client's directory when the node is its own; otherwise (and in
-   * UIs without a directory, the app) in a directory chosen from the node's recent ones, its home,
-   * or a typed path.
-   */
-  private async newTabIn(node: string): Promise<void> {
-    if (this.cwd !== undefined && node === this.client.home) {
-      await this.newTab(node, this.cwd);
-    } else {
-      const recent = (await this.client.sessions(node).catch(() => []))
-        .sort((a, b) => b.modified - a.modified)
-        .map((session) => session.cwd)
-        .filter((cwd, index, all) => all.indexOf(cwd) === index)
-        .slice(0, 30);
-      this.openPicker({
-        id: "new-session-directory",
-        title: `New session on ${node}: directory (type a path)`,
-        items: [{ value: "~", label: "~", description: "the node user's home" }, ...recent.map((cwd) => ({ value: cwd, label: cwd }))],
-        custom: "a path on the node",
-        choose: async (cwd) => {
-          await this.newTab(node, cwd);
-        },
-      });
-    }
   }
 
   private async goto(index: number): Promise<void> {
@@ -1409,6 +1540,11 @@ export class Workbench {
           await api.call(tab.agent.id, { type: "harness_task_input", taskId: task.id, data: `${text}\n` });
         } else {
           await api.call(tab.agent.id, { type: "harness_prompt", text, mode });
+          if (tab.draft) {
+            await this.keepDraft(tab);
+          } else {
+            // a kept session already
+          }
         }
       } catch (error) {
         this.notify("error", error instanceof Error ? error.message : String(error));
@@ -1417,7 +1553,9 @@ export class Workbench {
   }
 
   tabs(): Tab[] {
-    return tabRecords(this.client.settings).map((record) => {
+    const shared = tabRecords(this.client.settings);
+    const drafts = this.drafts.filter((draft) => !shared.some((record) => sameTab(record, draft)));
+    return [...shared, ...drafts].map((record, index) => {
       const agent = [...this.client.agents.values()].find((candidate) => candidate.node === record.node && candidate.sessionId === record.sessionId);
       const unavailable = this.client.offline.has(record.node) ? `node ${record.node} is offline` : this.client.connections.has(record.node) ? undefined : `node ${record.node} is not connected`;
       // a subagent that waits for the operator makes its session wait too
@@ -1429,18 +1567,22 @@ export class Workbench {
         title: agent?.summary.title !== undefined && agent.summary.title !== "" ? agent.summary.title : agent?.name ?? record.cwd.split("/").pop() ?? record.sessionId.slice(0, 8),
         mode: agent?.summary.mode ?? "plan",
         unavailable,
+        index,
+        draft: index >= shared.length,
       };
     });
   }
 
   activeTab(): Tab | undefined {
     const tabs = this.tabs();
-    return tabs[Math.min(this.active, tabs.length - 1)];
+    const key = this.activeKey;
+    return (key !== undefined ? tabs.find((tab) => sameTab(tab, key)) : undefined) ?? tabs.find((tab) => tab.node === this.chosenNode) ?? tabs[0];
   }
 
   /** The items of a session: itself first, then its tasks and subagents on one level (subagents' own children indented). */
   items(tab: Tab, state: HarnessState | undefined): Item[] {
-    const session: Item = { kind: "session", id: "session", label: tab.title, detail: tab.mode.toUpperCase(), glyph: tab.glyph === "⊘" ? "⊘" : tab.glyph, depth: 0 };
+    // the strip's sessions block above names it already: the row is just `session`, in its mode's color
+    const session: Item = { kind: "session", id: "session", label: "session", detail: tab.mode.toUpperCase(), glyph: tab.glyph === "⊘" ? "⊘" : tab.glyph, depth: 0 };
     const seen = this.tasksSeen.get(tab.sessionId);
     const now = this.clock.now();
     const tasks: Item[] = (state?.tasks ?? []).map((task) => ({
@@ -1497,10 +1639,17 @@ export class Workbench {
   async activate(index: number): Promise<void> {
     const tabs = this.tabs();
     if (tabs.length === 0) {
-      this.active = 0;
+      this.activeKey = undefined;
     } else {
-      this.active = Math.max(0, Math.min(index, tabs.length - 1));
-      const tab = tabs[this.active];
+      const tab = tabs[Math.max(0, Math.min(index, tabs.length - 1))];
+      if (tab !== undefined) {
+        this.activeKey = { node: tab.node, sessionId: tab.sessionId };
+        this.chosenNode = tab.node;
+        this.lastActive.set(tab.node, tab.sessionId);
+        this.newSessionChoice = undefined;
+      } else {
+        // tabs is not empty
+      }
       if (tab?.agent !== undefined) {
         await this.client.follow(tab.node, tab.agent.id);
         await this.markSeen(tab);
@@ -1531,13 +1680,24 @@ export class Workbench {
   }
 
   /** Starts an agent for a new session on the node and opens it as the last tab. */
+  /**
+   * A new session on the node, in `cwd`: an agent and a tab of this window alone (a draft), which
+   * joins the shared tab set with its first message; closed before that, nothing of it remains.
+   */
   async newTab(node: string, cwd: string): Promise<Tab | undefined> {
     const { agent } = await this.client.connection(node).request("agent_start", { cwd });
     this.client.agents.set(agentKey(node, agent.id), agent);
     const record: TabRecord = { node, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
-    await this.updateTabs((records) => (records.some((candidate) => sameTab(candidate, record)) ? records : [...records, record]));
-    await this.activate(this.tabIndex(record));
+    this.drafts = [...this.drafts, record];
+    await this.activate(this.tabs().findIndex((tab) => sameTab(tab, record)));
     return this.activeTab();
+  }
+
+  /** A draft's first message is sent: it joins the shared tab set (every client of the user sees it). */
+  private async keepDraft(tab: Tab): Promise<void> {
+    const record: TabRecord = { node: tab.node, sessionId: tab.sessionId, sessionFile: tab.agent?.sessionFile ?? tab.sessionFile, cwd: tab.cwd };
+    await this.updateTabs((records) => (records.some((candidate) => sameTab(candidate, record)) ? records : [...records, record]));
+    this.drafts = this.drafts.filter((draft) => !sameTab(draft, record));
   }
 
   /** Opens a stored session: an agent for it (the node's, if one runs already), then a tab. */
@@ -1567,14 +1727,38 @@ export class Workbench {
   }
 
   /** Closes a tab (the agent keeps running on its node). */
+  /** Closes a tab: its agent keeps running on its node; a draft's agent stops (nothing of it remains). */
   async closeTab(index: number): Promise<void> {
-    const closed = tabRecords(this.client.settings)[index];
-    if (closed !== undefined) {
-      await this.updateTabs((records) => records.filter((record) => !sameTab(record, closed)));
-      await this.activate(Math.min(this.active, tabRecords(this.client.settings).length - 1));
+    const closed = this.tabs()[index];
+    if (closed === undefined) {
+      return; // no such tab
+    } else if (closed.draft) {
+      this.drafts = this.drafts.filter((draft) => !sameTab(draft, closed));
+      if (closed.agent !== undefined) {
+        await this.client
+          .connection(closed.node)
+          .request("agent_close", { agent: closed.agent.id })
+          .catch(() => undefined);
+      } else {
+        // no agent to stop
+      }
     } else {
-      // no such tab
+      await this.updateTabs((records) => records.filter((record) => !sameTab(record, closed)));
     }
+    const left = this.tabs().filter((tab) => tab.node === closed.node);
+    const next = left[Math.min(left.length - 1, this.nodeTabIndexBefore(closed, left))];
+    if (next !== undefined) {
+      await this.activate(next.index);
+    } else {
+      this.activeKey = undefined;
+      this.client.changed();
+    }
+  }
+
+  /** Where a closed tab was among its node's remaining tabs. */
+  private nodeTabIndexBefore(closed: Tab, left: Tab[]): number {
+    const before = this.tabs().filter((tab) => tab.node === closed.node && tab.index < closed.index).length;
+    return Math.max(0, Math.min(before, left.length - 1));
   }
 
   async moveTab(from: number, to: number): Promise<void> {
@@ -1584,7 +1768,7 @@ export class Workbench {
         const rest = records.filter((record) => !sameTab(record, moved));
         return [...rest.slice(0, to), moved, ...rest.slice(to)];
       });
-      this.active = Math.max(0, this.tabIndex(moved));
+      this.client.changed();
     } else {
       // no such tab
     }
