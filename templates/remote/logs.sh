@@ -1,22 +1,20 @@
 #!/usr/bin/env bash
-# The gateway's journal (/data/gateway/log/YYYY-MM-DD.jsonl on the volume),
+# The event log of the hub or of a user's node (~/.harness/log/node-<name>.jsonl of its user),
 # filtered locally with jq:
 #
-#   cage run @root - ./logs.sh [--since 24h|7d] [--level info|warn|error] [--user NAME] [--kind PREFIX]
+#   cage run @root - ./logs.sh [--node hub|NAME] [--since 24h|7d] [--event PREFIX]
 #
-# One JSON event per line: {ts, level, kind, user?, chat?, agent?, dir?, ...}.
-# Wakes a sleeping machine (ssh needs it running).
+# One JSON event per line: {at, event, ...}.
 set -euo pipefail
 : "${FLY_APP:?run through cage run with ops:fly.env}" "${FLY_API_TOKEN:?run through cage run with ops:fly.env}"
 
-since="24h" level="" user="" kind=""
+node="hub" since="24h" event=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --node) node="$2"; shift 2 ;;
     --since) since="$2"; shift 2 ;;
-    --level) level="$2"; shift 2 ;;
-    --user) user="$2"; shift 2 ;;
-    --kind) kind="$2"; shift 2 ;;
-    *) echo "usage: logs.sh [--since 24h|7d] [--level info|warn|error] [--user NAME] [--kind PREFIX]" >&2; exit 2 ;;
+    --event) event="$2"; shift 2 ;;
+    *) echo "usage: logs.sh [--node hub|NAME] [--since 24h|7d] [--event PREFIX]" >&2; exit 2 ;;
   esac
 done
 case "$since" in
@@ -25,14 +23,10 @@ case "$since" in
   *) echo "logs.sh: --since takes hours (24h) or days (7d)" >&2; exit 2 ;;
 esac
 from="$(date -u -d "@$(( $(date +%s) - seconds ))" +%Y-%m-%dT%H:%M:%S)"
-days=$(( seconds / 86400 + 1 ))
+user="$([[ "$node" == hub ]] && echo harness || echo "$node")"
+file="/data/home/$user/.harness/log/node-$node.jsonl"
 
-machine="$(flyctl machine list -a "$FLY_APP" --json | jq -r '.[0].id')"
-flyctl machine start "$machine" -a "$FLY_APP" >/dev/null 2>&1 || true
-files="$(for i in $(seq "$days" -1 0); do printf '/data/gateway/log/%s.jsonl ' "$(date -u -d "-$i day" +%F)"; done)"
-flyctl ssh console -a "$FLY_APP" -q -C "sh -c 'cat $files 2>/dev/null'" \
-  | jq -c --arg from "$from" --arg level "$level" --arg user "$user" --arg kind "$kind" '
-      select(.ts >= $from)
-      | select($level == "" or .level == $level)
-      | select($user == "" or .user == $user)
-      | select($kind == "" or (.kind | startswith($kind)))'
+flyctl ssh console -a "$FLY_APP" -q -C "sh -c 'cat $file.1 $file 2>/dev/null'" \
+  | jq -c --arg from "$from" --arg event "$event" '
+      select(.at >= $from)
+      | select($event == "" or (.event | startswith($event)))'

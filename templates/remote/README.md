@@ -1,82 +1,42 @@
 # Remote harness
 
-A [harness](https://github.com/thearchitect/harness) agent on a Fly.io
-machine, used through a Telegram bot: every whitelisted user works in their
-own home under their own uid; the private chat with the bot and every group
-they add it to are workspaces with at most one agent each. Created with `nix flake init -t github:thearchitect/harness#remote`.
+A [harness](https://github.com/thearchitect/harness) hub on a Fly.io machine: every user works in
+their own home under their own uid, through their node on the machine; their TUI (`harness`) and
+the harness app connect to the hub over `wss://<app>.fly.dev`. Created with
+`nix flake init -t github:thearchitect/harness#remote`.
 
-- `remote.yaml` — the bot, the users (whitelist), limits, initial pi settings
-- `.cage/` — secrets ([cage](https://github.com/themakers/cage)): the bot token
-  and webhook secret for the machine, the users' API keys, the deploy token
-- `fly.toml` — one machine with a volume; it sleeps when idle and a webhook
-  wakes it
+- `remote.yaml` — the users (name, uid, admin) and the initial settings of new users
+- `.cage/` — secrets ([cage](https://github.com/themakers/cage)): the users' API keys, the deploy
+  token, the machine identity
+- `fly.toml` — one machine with a volume, always on
 - `bootstrap.sh` — creates the Fly app, volume, machine secret, deploy token
 - `deploy.sh` — builds the image (`nix build .#image`) and deploys it
-- `move-secrets.sh` — moves a user's Telegram secrets into `.cage`
-- `logs.sh` — the gateway's journal
+- `logs.sh` — the event logs of the hub and the users' nodes
 - `.github/workflows/deploy.yml` — deploys every push to master
 
 ## Setup
 
 Inside `nix develop` (flyctl, skopeo, cage):
 
-1. **Bot.** Create it with @BotFather. Bot Settings → Mini App: enable it
-   with the URL `https://<app>.fly.dev/app/` and make it the bot's main
-   Mini App (the status lines open it). Keep *Threaded Mode* off.
-2. **Configuration.** Edit `remote.yaml` (app URL, users with their numeric
-   Telegram ids and SSH public keys) and `fly.toml` (`app`, region).
-3. **Secrets.** Edit `.cage/cage.yaml` (keys), then:
+1. **Configuration.** Edit `remote.yaml` (users) and `fly.toml` (`app`, region).
+2. **Secrets.** Edit `.cage/cage.yaml` (keys), then:
    ```bash
    cage keygen -comment fly-machine ops:fly-machine-identity   # → recipients.fly-machine
    cage keygen -comment actions-ci ops:ci-cage-identity        # → recipients.actions-ci
-   cage set -stdin telegram.env TELEGRAM_BOT_TOKEN < token.txt && rm token.txt
-   cage set -gen random:alnum:48 telegram.env TELEGRAM_WEBHOOK_SECRET
    cage set -stdin alice:llm.env DEEPSEEK_API_KEY < key.txt && rm key.txt
    ```
-4. **Fly.** `flyctl auth login`, then `./bootstrap.sh`.
-5. **Repository and CI.** Commit, push to a private repository, and give CI
-   its identity without printing it:
+3. **Fly.** `flyctl auth login`, then `./bootstrap.sh`.
+4. **Repository and CI.** Commit, push to a private repository, and give CI its identity without
+   printing it:
    ```bash
    cage dump -o ci.key ops:ci-cage-identity && gh secret set CAGE_SSH_IDENTITY < ci.key; rm ci.key
    ```
-6. **Deploy.** `cage run @root - ./deploy.sh` (or push).
-7. **Users.** Each user writes `/key` to the bot: their server SSH key. Add
-   it as their `server-<name>` recipient, `cage encrypt`, commit: their API
-   keys reach their agents from then on. They can also keep secrets of their
-   own (`/secrets`) and log in to OAuth providers (`/login`).
-
-## Using it
-
-- **Workspaces.** The private chat with the bot, and every group you add it
-  to and make an admin (it reads only your messages there). Each holds at
-  most one agent.
-- **Agents.** `/new [path]` starts one in the workspace (without a path: the
-  Mini App's directory list); the agent there before goes to the
-  background and keeps working. `/detach` sends the agent to the
-  background, `/close` ends it (its session stays in the history). A
-  background agent writes to the private chat only when it needs you or is
-  done, with an *Attach here* button.
-- **Runs.** A message plans; a message starting with `!` builds (without
-  confirmations; planning never writes). Writing during a run steers it;
-  `/stop` or *Stop* on the last block aborts. Every block — thinking, a tool
-  call, the answer — is a message of its own and stays; the final answer is
-  pinned. `/status` (and `/start`) shows the agent and the others; `/diff`
-  sends the changes of the agent's directory as a file.
-- **Files.** Files you send (and those of the message you reply to) land in
-  `~/tmp/<chat>-<message>/` and are listed to the agent. A voice message is
-  transcribed (OpenAI, your `/login` → OpenAI Codex), the transcript shows in
-  the chat and goes to the agent. The agent sends files back with a comment
-  (`send_file`, pinned); folders as a zip.
-- **Mini App.** Status lines (the banner, the agent's header, "No agent
-  here.") open it: the agent here (model, thinking, stop, detach, close),
-  your agents (move here or to another workspace, close), your workspaces, the session history
-  (resume here); *Files* (browse ~, new folder, download, start an agent
-  there) and *Models* (favorites with their thinking level, the default for
-  new agents). `/sessions`, `/model`, `/thinking` link to it.
-- **Tools.** The agents have gh, glab, go, rust, zig, python (pydicom),
-  ffmpeg, ImageMagick, exiftool, dcmtk and more, and install others into
-  their home (mise, uv, npm, cargo, go install).
-- `/login`, `/secrets`, `/key` work in any workspace; admins also get errors
-  in real time and `/logs`.
+5. **Deploy.** `cage run @root - ./deploy.sh` (or push).
+6. **Devices.** An admin pairs each device of a user (the token is printed once):
+   ```bash
+   flyctl ssh console -a <app> -C "setpriv --reuid=harness --regid=harness --clear-groups env HOME=/data/home/harness harness hub device add alice --name laptop"
+   ```
+   On the device: `harness remote add fly wss://<app>.fly.dev` and paste the token. `harness`
+   then shows the user's node (`alice`) next to the local one.
 
 Operations (build, test, deploy, secrets, users): `AGENTS.md`.

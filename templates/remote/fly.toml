@@ -1,5 +1,5 @@
-# One machine with a volume. It sleeps: the gateway exits when idle, and a
-# Telegram webhook wakes it through the Fly proxy.
+# One machine with a volume, always on: the hub keeps the users' nodes, agents and background
+# tasks running, and devices connect to it at any time.
 app = "my-harness"
 primary_region = "ams"
 kill_signal = "SIGTERM"
@@ -13,24 +13,24 @@ kill_timeout = 30
   destination = "/data"
   initial_size = "20gb"
 
-# The machine's cage identity (bootstrap.sh), written as a file at boot.
+# The machine's cage identity (bootstrap.sh), written as a file at boot: it decrypts the users'
+# envs (.cage/store/envs/user-<name>.cage) for their nodes.
 [[files]]
   guest_path = "/run/harness/machine-identity"
   secret_name = "HARNESS_MACHINE_IDENTITY"
 
+# The hub's WebSocket endpoint; Fly terminates TLS (wss://<app>.fly.dev).
 [http_service]
   internal_port = 8080
   force_https = true
   auto_start_machines = true
-  # The proxy cannot see the agents' work; the gateway stops the machine itself.
   auto_stop_machines = "off"
-  min_machines_running = 0
+  min_machines_running = 1
 
 [[restart]]
-  # An idle exit (code 0) leaves the machine stopped; a crash restarts it.
-  policy = "on-failure"
+  policy = "always"
 
-# Builds (go, rust) and up to 4 pi processes (≈300 MB each).
+# Builds (go, rust) and the users' agents (≈300 MB each).
 [[vm]]
   size = "shared-cpu-2x"
   memory = "4gb"
