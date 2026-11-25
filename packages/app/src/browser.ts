@@ -17,6 +17,22 @@ export function notifyOperator(_title: string, _body: string): void {
   // no notifications while the app is in the background yet
 }
 
+/** Files to the device: the share sheet in the native builds (stage 11). */
+export function saveFile(_name: string, _base64: string): void {
+  throw new Error("saving files on this device comes with the native builds");
+}
+
+/** The document and photo pickers come with the native builds (stage 11). */
+export function pickFiles(): Promise<{ name: string; base64: string }[]> {
+  return Promise.reject(new Error("picking files on this device comes with the native builds"));
+}
+
+export const VOICE_SUPPORTED = false;
+
+export function recordVoice(): Promise<() => Promise<{ base64: string; mime: string }>> {
+  return Promise.reject(new Error("voice input on this device comes with the native builds"));
+}
+
 export function addressedSession(): { node: string; sessionId: string } | undefined {
   return undefined;
 }

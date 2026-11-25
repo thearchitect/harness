@@ -199,6 +199,23 @@ A file the operator hands to a session (dropped, shared, picked), kept in the no
 | `name` | string | yes | The file's name |
 | `base64` | string | yes |  |
 
+### `transcribe`
+
+Speech to text on the node with its user's OpenAI login (gpt-4o-transcribe). → { text }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `base64` | string | yes | The recording |
+| `mime` | string | yes | Its type, e.g. audio/webm |
+
+### `logs_tail`
+
+The node's event log, newest last; its own user, or a hub's admins. → { lines }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `lines` | integer |  |  |
+
 ### `settings_get`
 
 The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }

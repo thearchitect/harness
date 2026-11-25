@@ -99,7 +99,7 @@ export type Screen = {
   prefill: { key: string; text: string } | undefined;
 };
 
-export type PanelRow = { value: "madness" | "simple" | "implementer" | "subagents" | "dependencies" | "update"; label: string; description: string };
+export type PanelRow = { value: "madness" | "simple" | "implementer" | "subagents" | "dependencies" | "logs" | "update"; label: string; description: string };
 
 /** The bundle's update, as the client's process knows it (the TUI's: cli/src/update.ts). */
 export type UpdateHook = {
@@ -177,6 +177,17 @@ function subagentGlyph(subagent: SubagentInfo): Glyph {
       return " ";
     default:
       throw new Error(`unknown subagent state: ${String(subagent.state satisfies never)}`);
+  }
+}
+
+/** A node event (telemetry JSONL) as one line: time, event, its fields. */
+function logLine(line: string): string {
+  try {
+    const { at, event, ...rest } = JSON.parse(line) as { at?: string; event?: string; [key: string]: unknown };
+    const fields = Object.entries(rest).map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+    return [at?.slice(11, 19) ?? "", event ?? "?", ...fields].join(" ");
+  } catch {
+    return line;
   }
 }
 
@@ -744,6 +755,7 @@ export class Workbench {
       { value: "implementer", label: `implementer: ${state.implementer}`, description: "self or a subagent profile (builder)" },
       { value: "subagents", label: "subagents", description: "the profiles this session may call" },
       { value: "dependencies", label: "dependencies", description: "the bundle, Claude Code, bundled versions" },
+      { value: "logs", label: "logs", description: "the events of the node you came in through (its user, a hub's admins)" },
       ...(this.update !== undefined ? [{ value: "update" as const, label: `update · ${this.update.hint()}`, description: this.update.canRun() ? "upgrade and restart" : "nothing to do here" }] : []),
     ];
   }
@@ -761,6 +773,13 @@ export class Workbench {
         await this.update.run();
       } else {
         this.notify("info", `update: ${this.update?.hint() ?? "not available here"}`);
+      }
+    } else if (value === "logs") {
+      try {
+        const { lines } = await this.client.homeRequest("logs_tail", { lines: 300 });
+        this.showList("logs", `Log of ${this.client.home ?? "the node"}`, [...lines].reverse().map((line) => ({ label: logLine(line) })));
+      } catch (error) {
+        this.notify("error", error instanceof Error ? error.message : String(error));
       }
     } else if (tab?.agent === undefined || agent === undefined) {
       this.notify("warning", "no session");

@@ -82,8 +82,37 @@ function rowsOf(agent: AgentModel): Row[] {
   return rows;
 }
 
-function ToolRow({ call, result, live, expanded }: { call: Block; result: Message | undefined; live: ToolRun | undefined; expanded: boolean }) {
+/** What send_file's result offers (extension/tools/send_file.ts). */
+type SentFile = { path: string; name: string; size: number; comment: string };
+
+function sentFileOf(result: Message | undefined): SentFile | undefined {
+  const details = result?.details as Partial<SentFile> | undefined;
+  return result?.isError !== true && typeof details?.path === "string" && typeof details.name === "string" ? (details as SentFile) : undefined;
+}
+
+/** A file the agent sent: its comment and a button that brings it to this device. */
+function SentFileRow({ file, onDownload }: { file: SentFile; onDownload: (path: string, name: string) => void }) {
   const theme = useTheme();
+  return (
+    <View style={{ backgroundColor: theme.colors.toolSuccessBg, paddingHorizontal: 8, paddingVertical: 4, gap: 4 }}>
+      <T zone="chat" selectable>
+        {file.comment}
+      </T>
+      <View style={{ flexDirection: "row" }}>
+        <Button label={`Download ${file.name} (${Math.max(1, Math.round(file.size / 1024))} KB)`} onPress={() => onDownload(file.path, file.name)} />
+      </View>
+    </View>
+  );
+}
+
+function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; result: Message | undefined; live: ToolRun | undefined; expanded: boolean; onDownload: (path: string, name: string) => void }) {
+  const theme = useTheme();
+  const sent = call.name === "send_file" ? sentFileOf(result) : undefined;
+  if (sent !== undefined) {
+    return <SentFileRow file={sent} onDownload={onDownload} />;
+  } else {
+    // every other tool: its title, arguments and output
+  }
   const [open, setOpen] = useState<boolean | undefined>(undefined);
   const shown = open ?? expanded;
   const done = result !== undefined;
@@ -237,7 +266,7 @@ function CustomEntry({ type, data }: { type: string; data: unknown }) {
   }
 }
 
-export function Transcript({ agent, expanded, onLoadOlder }: { agent: AgentModel; expanded: boolean; onLoadOlder: () => void }) {
+export function Transcript({ agent, expanded, onLoadOlder, onDownload }: { agent: AgentModel; expanded: boolean; onLoadOlder: () => void; onDownload: (path: string, name: string) => void }) {
   const list = useRef<FlatList<Row>>(null);
   const [following, setFollowing] = useState(true);
   const rows = useMemo(() => rowsOf(agent), [agent, agent.items, agent.streaming, agent.tools.size]);
@@ -254,7 +283,7 @@ export function Transcript({ agent, expanded, onLoadOlder }: { agent: AgentModel
         keyExtractor={(row) => row.key}
         renderItem={({ item: row }) =>
           row.kind === "tool" ? (
-            <ToolRow call={row.call} result={row.result} live={row.live} expanded={expanded} />
+            <ToolRow call={row.call} result={row.result} live={row.live} expanded={expanded} onDownload={onDownload} />
           ) : row.kind === "streaming" ? (
             <Assistant message={row.message} />
           ) : (

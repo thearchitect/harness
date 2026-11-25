@@ -10,10 +10,10 @@ import { realpath, stat } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import { Type } from "typebox";
 
-/** Telegram's limit for files a bot sends. */
-export const SEND_LIMIT = 50 * 1024 * 1024;
+/** Files travel to clients inside one protocol frame (files_get, base64, frames up to 64 MiB). */
+export const SEND_LIMIT = 40 * 1024 * 1024;
 
-/** What the gateway reads from the result (remote/telegram/view.ts). */
+/** What clients read from the result to offer the file. */
 export type SentFileDetails = { path: string; name: string; size: number; comment: string };
 
 /** The file to send, or why it cannot be sent. */
@@ -29,7 +29,7 @@ export async function checkFile(cwd: string, path: string, comment: string): Pro
   } else if (!info.isFile()) {
     throw new Error(`${path} is not a regular file`);
   } else if (info.size > SEND_LIMIT) {
-    throw new Error(`${path} is ${(info.size / 1048576).toFixed(1)} MB: Telegram takes at most 50 MB from a bot`);
+    throw new Error(`${path} is ${(info.size / 1048576).toFixed(1)} MB: send_file takes at most ${SEND_LIMIT / 1048576} MB; split it or leave it on the machine and say where`);
   } else {
     const real = await realpath(absolute);
     return { path: real, name: basename(real), size: info.size, comment: comment.trim() };
@@ -43,7 +43,7 @@ export function registerSendFile(pi: ExtensionAPI): void {
     description: [
       "Send one file to the operator's devices (download or share), with a comment that says what it is.",
       "For several files or a directory, pack them first: zip -r /tmp/<name>.zip <paths>, then send the zip.",
-      "At most 50 MB.",
+      `At most ${SEND_LIMIT / 1048576} MB.`,
     ].join(" "),
     promptSnippet: "Send a file to the operator's devices with a comment",
     promptGuidelines: [

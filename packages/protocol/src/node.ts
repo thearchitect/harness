@@ -72,6 +72,10 @@ export type NodeOps = {
   files_put: { args: { path: string; base64: string }; result: { path: string } };
   /** A file the operator hands to a session (dropped, shared, picked): kept in the node's uploads, its path returned for `@path`. */
   files_upload: { args: { name: string; base64: string }; result: { path: string } };
+  /** Speech to text on the node, with its user's OpenAI login (the app's voice input). */
+  transcribe: { args: { base64: string; mime: string }; result: { text: string } };
+  /** The node's event log, newest last: for its own user, and on a hub for the hub's admins. */
+  logs_tail: { args: { lines?: number }; result: { lines: string[] } };
   settings_get: { args: Record<string, never>; result: { settings: Record<string, unknown> } };
   settings_set: { args: { key: string; value: unknown }; result: { settings: Record<string, unknown> } };
   /** A theme's colors as hex (pi's tokens plus pageBg and cardBg), for clients that draw it themselves. */
@@ -95,6 +99,8 @@ export const NODE_OPS: readonly NodeOp[] = [
   "files_get",
   "files_put",
   "files_upload",
+  "transcribe",
+  "logs_tail",
   "settings_get",
   "settings_set",
   "theme_get",

@@ -10,6 +10,8 @@ import { defineScenario, runScenario } from "#testkit/scenario/scenario.ts";
 
 export const scenario = defineScenario({
   name: "tui basics",
+  // a short snapshot: a few dozen entries make a session with older entries to load
+  stand: { snapshotEntries: 20 },
   clients: { tui: { kind: "tui" } },
   steps: [
     {
@@ -74,10 +76,10 @@ export const scenario = defineScenario({
     {
       name: "scrolling to the top of a long session loads its older entries",
       async run({ clients: { tui } }) {
-        for (let index = 0; index < 220; index += 1) {
+        for (let index = 0; index < 30; index += 1) {
           await tui.workbench.operatorBash(`echo line-${index}`, true);
         }
-        // open it again: the snapshot holds the latest 200 entries
+        // open it again: the snapshot holds the latest 20 entries
         const tab = tui.workbench.activeTab();
         assert.ok(tab?.agent !== undefined);
         await tui.client.unfollow(tab.node, tab.agent.id);
@@ -143,6 +145,10 @@ export const scenario = defineScenario({
         const report = tui.screen().zones.editor;
         assert.ok(report.kind === "picker" && report.picker.items.some((item) => item.label.startsWith("Claude Code: ")));
         assert.ok(report.kind === "picker" && report.picker.items.some((item) => item.label === "Subagents:"));
+        await tui.act("run.abort");
+        await tui.workbench.choosePanel("logs");
+        const logs = tui.screen().zones.editor;
+        assert.ok(logs.kind === "picker" && logs.picker.items.some((item) => / agent_start agent=/.test(item.label)), "the node's events, newest first");
         await tui.act("run.abort");
       },
     },

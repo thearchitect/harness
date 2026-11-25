@@ -97,6 +97,9 @@ export type SessionView = {
   usage: { costUsd: number; contextTokens?: number; contextPercent?: number };
 };
 
+/** The latest entries a snapshot brings by default, and a page of older ones: a screen and some scrolling. */
+export const SNAPSHOT_ENTRIES = 200;
+
 export type SnapshotData = {
   /** The newest `limit` session entries of the current branch, oldest first. */
   entries: unknown[];

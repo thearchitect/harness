@@ -13,7 +13,20 @@ import { modeOfText } from "#protocol/modes.ts";
 // platform modules (`*.web.ts` next to the native one) are imported without an extension: Metro picks the file
 import { forgetDevice, readEndpoint, saveDevice, type Endpoint } from "./connect/endpoint";
 import { listenKeys } from "./keyboard";
-import { addressedSession, addressSession, notifyOperator, NOTIFICATIONS_SUPPORTED, onAddressChange, onFilesDropped, requestNotifications, showAttention } from "./browser";
+import {
+  addressedSession,
+  addressSession,
+  notifyOperator,
+  NOTIFICATIONS_SUPPORTED,
+  onAddressChange,
+  onFilesDropped,
+  pickFiles,
+  recordVoice,
+  requestNotifications,
+  saveFile,
+  showAttention,
+  VOICE_SUPPORTED,
+} from "./browser";
 import { appSettings } from "./settings.ts";
 import { loadFonts } from "./theme/fonts";
 import { charWidth, DEFAULT_THEME, ThemeContext, zoneOf, type Colors, type Theme } from "./theme/theme.tsx";
@@ -21,7 +34,7 @@ import type { Completion } from "./ui/EditorZone.tsx";
 import { Gallery } from "./ui/Gallery.tsx";
 import { Pairing } from "./ui/Pairing.tsx";
 import { T } from "./ui/primitives.tsx";
-import { Shell } from "./ui/Shell.tsx";
+import { Shell, type DeviceActions } from "./ui/Shell.tsx";
 
 /** `themeNames`: the themes the home node has (theme_get), for /settings. */
 type Connected = { client: ClientModel; workbench: Workbench; endpoint: Endpoint; themeNames: string[] };
@@ -226,23 +239,63 @@ function WorkbenchApp() {
     }
   }, [connected]);
 
-  // files dropped on the window go to the session's machine and into the message as @path
-  useEffect(() => {
-    if (connected === undefined) {
-      return;
+  // files handed to the session (dropped on the window, picked) go to its node and into the message as @path
+  const upload = useCallback(
+    (files: { name: string; base64: string }[]): void => {
+      const tab = connected?.workbench.activeTab();
+      if (connected === undefined || tab === undefined) {
+        connected?.workbench.notify("warning", "open a session to hand it files");
+      } else {
+        void Promise.all(files.map((file) => connected.client.connection(tab.node).request("files_upload", { name: file.name, base64: file.base64 })))
+          .then((stored) => setEditorText((text) => `${text}${text === "" || text.endsWith(" ") ? "" : " "}${stored.map((file) => `@${file.path}`).join(" ")} `))
+          .catch((reason: unknown) => connected.workbench.notify("error", `upload: ${String(reason)}`));
+      }
+    },
+    [connected],
+  );
+  useEffect(() => (connected !== undefined ? onFilesDropped(globalThis.document?.body, upload) : undefined), [connected, upload]);
+
+  // a voice message: recorded here, transcribed on the session's node, inserted into the message
+  const [stopRecording, setStopRecording] = useState<(() => Promise<{ base64: string; mime: string }>) | undefined>(undefined);
+  const voice = (): void => {
+    const tab = connected?.workbench.activeTab();
+    if (connected === undefined || tab === undefined) {
+      connected?.workbench.notify("warning", "open a session to talk to");
+    } else if (stopRecording === undefined) {
+      recordVoice()
+        .then((stop) => setStopRecording(() => stop))
+        .catch((reason: unknown) => connected.workbench.notify("error", `microphone: ${String(reason)}`));
     } else {
-      return onFilesDropped(globalThis.document?.body, (files) => {
-        const tab = connected.workbench.activeTab();
-        if (tab === undefined) {
-          connected.workbench.notify("warning", "open a session to drop files into");
-        } else {
-          void Promise.all(files.map((file) => connected.client.connection(tab.node).request("files_upload", { name: file.name, base64: file.base64 })))
-            .then((stored) => setEditorText((text) => `${text}${text === "" || text.endsWith(" ") ? "" : " "}${stored.map((file) => `@${file.path}`).join(" ")} `))
-            .catch((reason: unknown) => connected.workbench.notify("error", `upload: ${String(reason)}`));
-        }
-      });
+      setStopRecording(undefined);
+      connected.workbench.notify("info", "transcribing…");
+      void stopRecording()
+        .then((audio) => connected.client.connection(tab.node).request("transcribe", audio))
+        .then(({ text }) => setEditorText((current) => `${current}${current === "" || current.endsWith(" ") ? "" : " "}${text}`))
+        .catch((reason: unknown) => connected.workbench.notify("error", `voice: ${reason instanceof Error ? reason.message : String(reason)}`));
     }
-  }, [connected]);
+  };
+
+  const device: DeviceActions = {
+    download: (path, name) => {
+      const tab = connected?.workbench.activeTab();
+      if (connected !== undefined && tab !== undefined) {
+        void connected.client
+          .connection(tab.node)
+          .request("files_get", { path })
+          .then((file) => saveFile(name, file.base64))
+          .catch((reason: unknown) => connected.workbench.notify("error", `download: ${reason instanceof Error ? reason.message : String(reason)}`));
+      } else {
+        // no session: no node to fetch from
+      }
+    },
+    attach: () => {
+      void pickFiles()
+        .then(upload)
+        .catch((reason: unknown) => connected?.workbench.notify("error", String(reason)));
+    },
+    voice: VOICE_SUPPORTED ? voice : undefined,
+    recording: stopRecording !== undefined,
+  };
 
   // the agent's (or a branch's) text for the editor, once per key
   useEffect(() => {
@@ -350,7 +403,7 @@ function WorkbenchApp() {
       <T color={error !== undefined ? "error" : "muted"}>{error ?? "connecting…"}</T>
     </View>
   ) : (
-    <Shell screen={screen} workbench={connected.workbench} editorText={editorText} onEditorText={setEditorText} onSubmit={submit} completions={completions} onComplete={complete} onLoadOlder={loadOlder} panes={connected.client.settings["ui.web.panes"]} onPanes={(panes) => void connected.client.setting("ui.web.panes", panes)} />
+    <Shell screen={screen} workbench={connected.workbench} editorText={editorText} onEditorText={setEditorText} onSubmit={submit} completions={completions} onComplete={complete} onLoadOlder={loadOlder} device={device} panes={connected.client.settings["ui.web.panes"]} onPanes={(panes) => void connected.client.setting("ui.web.panes", panes)} />
   );
   return <ThemeContext.Provider value={theme}>{body}</ThemeContext.Provider>;
 }

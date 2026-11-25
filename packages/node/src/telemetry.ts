@@ -2,7 +2,7 @@
 // (connections, agents starting and exiting, refusals), never message texts, prompts or secrets.
 // For operators and test reports; it rotates at 10 MB (the previous file keeps the suffix .1).
 
-import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const ROTATE_BYTES = 10 * 1024 * 1024;
@@ -26,6 +26,16 @@ export class Telemetry {
     mkdirSync(dir, { recursive: true });
     this.path = join(dir, `node-${node}.jsonl`);
     this.now = now;
+  }
+
+  /** The last `count` events, oldest first. */
+  tail(count: number): string[] {
+    try {
+      const lines = readFileSync(this.path, "utf8").split("\n").filter((line) => line !== "");
+      return lines.slice(-count);
+    } catch {
+      return []; // nothing logged yet
+    }
   }
 
   log(event: TelemetryEvent): void {

@@ -34,7 +34,11 @@ export class Hub implements HubRole {
   }
 
   mayUseLocal(user: string): boolean {
-    return this.auth.users().some((candidate) => candidate.name === user && candidate.admin) || this.auth.mayUse(user, this.node.config.name);
+    return this.isAdmin(user) || this.auth.mayUse(user, this.node.config.name);
+  }
+
+  isAdmin(user: string): boolean {
+    return this.auth.users().some((candidate) => candidate.name === user && candidate.admin);
   }
 
   settingsFor(user: string): SettingsStore {

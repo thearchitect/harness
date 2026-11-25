@@ -3,7 +3,9 @@
 // the same tabs, glyphs and items — compared by meaning, never by pixels.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WebDriver } from "#testkit/drivers/web.ts";
@@ -92,6 +94,45 @@ export const scenario = defineScenario({
             assert.ok(tries < 100, "the strip's width was not kept");
             await web.page.waitForTimeout(50);
           }
+        }
+      },
+    },
+    {
+      name: "a file the agent sends downloads to this device",
+      async run({ stand, clients: { web } }) {
+        const report = join(stand.project, "report.txt");
+        writeFileSync(report, "the report");
+        stand.script([{ toolCalls: [{ name: "send_file", args: { path: report, comment: "Your report" } }] }, { text: "sent" }]);
+        await web.type("send me the report");
+        await web.submit();
+        const button = web.page.getByRole("button", { name: /^Download report\.txt/ });
+        await button.waitFor({ timeout: 15_000 });
+        const [download] = await Promise.all([web.page.waitForEvent("download"), button.click()]);
+        assert.equal(download.suggestedFilename(), "report.txt");
+        assert.equal(readFileSync(await download.path(), "utf8"), "the report");
+      },
+    },
+    {
+      name: "a voice message is transcribed on the session's node into the message",
+      async run({ stand, clients: { web } }) {
+        const received: string[] = [];
+        const server = createServer((request, response) => {
+          received.push(String(request.headers.authorization));
+          request.resume();
+          request.on("end", () => response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ text: "spoken words" })));
+        });
+        await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+        process.env.HARNESS_TRANSCRIBE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/audio/transcriptions`;
+        writeFileSync(join(stand.dataDir, "auth.json"), JSON.stringify({ scenario: { type: "api_key", key: "scripted" }, openai: { type: "api_key", key: "sk-voice" } }));
+        try {
+          await web.page.getByRole("button", { name: "Record a voice message" }).click();
+          await web.page.getByRole("button", { name: "Stop recording" }).click();
+          await web.page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement | null)?.value.includes("spoken words") === true, undefined, { timeout: 15_000 });
+          assert.deepEqual(received, ["Bearer sk-voice"]);
+          await web.page.getByRole("textbox", { name: "Message" }).fill("");
+        } finally {
+          server.close();
+          delete process.env.HARNESS_TRANSCRIBE_URL;
         }
       },
     },

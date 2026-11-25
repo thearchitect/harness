@@ -20,6 +20,17 @@ builds are not published yet.
   address. Without `--url`, enter the code into the pairing form.
   `hub.url` in the hub's `nodes/<name>.json` sets the address once.
 
+## Files, voice, logs
+
+- A file an agent sends (`send_file`) shows with its comment and a Download button; it comes from
+  the session's node.
+- `+` next to the editor picks files (and dropping them on the window does the same): they go to
+  the session's node (`~/.harness/uploads/`) and into the message as `@path`.
+- `●` records a voice message; the session's node transcribes it with its user's OpenAI login
+  (`gpt-4o-transcribe`; `/login` there first) and the text goes into the message.
+- The panel (`Ctrl+\`) has the logs of the node you came in through: its own user sees them, and
+  on a hub its admins.
+
 ## What the browser adds
 
 - The page title and icon show `◆ N` while N sessions wait for you.

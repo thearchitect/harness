@@ -49,6 +49,8 @@ export type StandOptions = {
   /** The node's clock (summaries, idle unloading, backoff); the system's by default. */
   clock?: Clock;
   maxAgents?: number;
+  /** Entries of an attach's snapshot (the node's default when absent): small, to test loading older ones. */
+  snapshotEntries?: number;
 };
 
 export async function createStand(options: StandOptions = {}): Promise<Stand> {
@@ -100,6 +102,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     users: options.users,
     clock: options.clock,
     maxAgents: options.maxAgents,
+    snapshotEntries: options.snapshotEntries,
   });
   const connections: NodeConnection[] = [];
   let server: Server | undefined;

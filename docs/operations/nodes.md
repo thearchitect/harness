@@ -40,4 +40,5 @@
 
 Each node logs events to `~/.harness/log/node-<name>.jsonl` (connections, refusals, agents
 starting, exiting, unloading; never message texts or secrets) and each agent's output to
-`~/.harness/log/agents/<id>.log`.
+`~/.harness/log/agents/<id>.log`. Clients show a node's events in the panel (`logs_tail`): to
+the node's own user, and on a hub to its admins.

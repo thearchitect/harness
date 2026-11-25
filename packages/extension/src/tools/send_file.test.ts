@@ -19,7 +19,7 @@ describe("send_file", () => {
     await assert.rejects(checkFile(dir, "report.txt", " "), /comment is required/);
     await assert.rejects(checkFile(dir, "folder", "x"), /is a directory: zip it first \(zip -r \/tmp\/folder\.zip folder\)/);
     await assert.rejects(checkFile(dir, "missing", "x"), /missing does not exist/);
-    await assert.rejects(checkFile(dir, "huge.bin", "x"), /50\.0 MB: Telegram takes at most 50 MB/);
+    await assert.rejects(checkFile(dir, "huge.bin", "x"), /40\.0 MB: send_file takes at most 40 MB/);
     rmSync(dir, { recursive: true, force: true });
   });
 });

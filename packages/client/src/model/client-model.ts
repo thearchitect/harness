@@ -2,7 +2,7 @@
 // summaries, the user's settings, and the agents followed in full (the active tab and a few
 // recently visited ones; the rest at summary level). Isomorphic: no Node API.
 
-import type { HapRecord, SnapshotData } from "#protocol/hap.ts";
+import { SNAPSHOT_ENTRIES, type HapRecord, type SnapshotData } from "#protocol/hap.ts";
 import type { AgentInfo, AgentSummary, NodeEvent, NodeInfo, NodeOp, NodeOps, SessionListItem } from "#protocol/node.ts";
 import type { NodeConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
@@ -340,7 +340,7 @@ export class ClientModel {
   private async resync(node: string, agentId: string): Promise<void> {
     const model = this.full.get(agentKey(node, agentId));
     if (model !== undefined) {
-      const snapshot = await this.connection(node).call<SnapshotData>(agentId, { type: "harness_snapshot", limit: 200 });
+      const snapshot = await this.connection(node).call<SnapshotData>(agentId, { type: "harness_snapshot", limit: SNAPSHOT_ENTRIES });
       model.loadSnapshot(snapshot);
     } else {
       // no longer followed
@@ -350,7 +350,7 @@ export class ClientModel {
   async loadOlder(node: string, agentId: string): Promise<void> {
     const model = this.full.get(agentKey(node, agentId));
     if (model !== undefined && model.cursor !== undefined) {
-      const older = await this.connection(node).call<{ entries: unknown[]; cursor?: string }>(agentId, { type: "harness_entries_before", cursor: model.cursor, limit: 200 });
+      const older = await this.connection(node).call<{ entries: unknown[]; cursor?: string }>(agentId, { type: "harness_entries_before", cursor: model.cursor, limit: SNAPSHOT_ENTRIES });
       model.prepend(older.entries, older.cursor);
     } else {
       // nothing older, or not followed

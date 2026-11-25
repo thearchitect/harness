@@ -7,6 +7,7 @@ import type { EditorZone as Zone, Picker, Zones } from "#client/workbench/workbe
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
 import { fontOf, useTheme } from "../theme/theme.tsx";
 import { InteractionBlock } from "./Interactions.tsx";
+import type { DeviceActions } from "./Shell.tsx";
 import { Button, Frame, ListRow, T } from "./primitives.tsx";
 
 export type Completion = { value: string; label: string; description?: string };
@@ -51,7 +52,16 @@ function PickerBlock({ picker, onClose }: { picker: Picker; onClose: () => void 
   );
 }
 
-function Editor(props: { text: string; onText: (text: string) => void; onSubmit: () => void; mode: keyof typeof MODE_COLOR_HEX; completions: Completion[]; onComplete: (completion: Completion) => void; placeholder: string }) {
+function Editor(props: {
+  text: string;
+  onText: (text: string) => void;
+  onSubmit: () => void;
+  mode: keyof typeof MODE_COLOR_HEX;
+  completions: Completion[];
+  onComplete: (completion: Completion) => void;
+  placeholder: string;
+  device: DeviceActions;
+}) {
   const theme = useTheme();
   const onKeyPress = (event: KeyEvent): void => {
     const key = event.nativeEvent;
@@ -93,6 +103,14 @@ function Editor(props: { text: string; onText: (text: string) => void; onSubmit:
           placeholderTextColor={theme.colors.dim}
           style={[fontOf(theme.chat), { flex: 1, color: theme.colors.text, minHeight: 40, maxHeight: 240, outlineStyle: "none" as never }]}
         />
+        <Pressable accessibilityRole="button" accessibilityLabel="Attach files" onPress={props.device.attach} style={{ paddingHorizontal: 4 }}>
+          <T color="muted">+</T>
+        </Pressable>
+        {props.device.voice !== undefined ? (
+          <Pressable accessibilityRole="button" accessibilityLabel={props.device.recording ? "Stop recording" : "Record a voice message"} onPress={props.device.voice} style={{ paddingHorizontal: 4 }}>
+            <T color={props.device.recording ? "error" : "muted"}>{props.device.recording ? "■" : "●"}</T>
+          </Pressable>
+        ) : null}
         <Pressable accessibilityRole="button" accessibilityLabel="Send" onPress={props.onSubmit} style={{ paddingHorizontal: 6 }}>
           <T color="accent">⏎</T>
         </Pressable>
@@ -112,6 +130,7 @@ export function EditorZoneView(props: {
   onAnswer: (interactionId: string, value: unknown) => void;
   onClosePicker: () => void;
   placeholder: string;
+  device: DeviceActions;
 }) {
   const zone = props.zone;
   return (
@@ -127,7 +146,7 @@ export function EditorZoneView(props: {
       {(() => {
         switch (zone.kind) {
           case "editor":
-            return <Editor text={props.text} onText={props.onText} onSubmit={props.onSubmit} mode={zone.mode} completions={props.completions} onComplete={props.onComplete} placeholder={props.placeholder} />;
+            return <Editor text={props.text} onText={props.onText} onSubmit={props.onSubmit} mode={zone.mode} completions={props.completions} onComplete={props.onComplete} placeholder={props.placeholder} device={props.device} />;
           case "interaction":
             return <InteractionBlock request={zone.request} from={zone.from} answer={(value) => props.onAnswer(zone.request.id, value)} />;
           case "picker":

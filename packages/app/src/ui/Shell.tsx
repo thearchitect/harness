@@ -118,13 +118,22 @@ function Footer({ screen }: { screen: Screen }) {
   );
 }
 
-function Main({ screen, workbench, onLoadOlder }: { screen: Screen; workbench: Workbench; onLoadOlder: (agent: AgentModel) => void }) {
+/** What the device does with files and the microphone (the platform's: browser.ts / browser.web.ts). */
+export type DeviceActions = {
+  download(path: string, name: string): void;
+  attach(): void;
+  /** Starts or stops recording a message; undefined where there is no microphone. */
+  voice: (() => void) | undefined;
+  recording: boolean;
+};
+
+function Main({ screen, workbench, onLoadOlder, device }: { screen: Screen; workbench: Workbench; onLoadOlder: (agent: AgentModel) => void; device: DeviceActions }) {
   const main = screen.zones.main;
   const agent = screen.agent;
   switch (main.kind) {
     case "transcript":
       return agent !== undefined ? (
-        <Transcript agent={agent} expanded={screen.toolsExpanded} onLoadOlder={() => onLoadOlder(agent)} />
+        <Transcript agent={agent} expanded={screen.toolsExpanded} onLoadOlder={() => onLoadOlder(agent)} onDownload={device.download} />
       ) : (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 8 }}>
           <T color="muted">No session here.</T>
@@ -151,7 +160,7 @@ function Main({ screen, workbench, onLoadOlder }: { screen: Screen; workbench: W
       );
     case "subagent":
       return main.agent !== undefined ? (
-        <Transcript agent={main.agent} expanded={screen.toolsExpanded} onLoadOlder={() => (main.agent !== undefined ? onLoadOlder(main.agent) : undefined)} />
+        <Transcript agent={main.agent} expanded={screen.toolsExpanded} onLoadOlder={() => (main.agent !== undefined ? onLoadOlder(main.agent) : undefined)} onDownload={device.download} />
       ) : (
         <View style={{ flex: 1, padding: 8, gap: 4 }}>
           <T bold>{`${main.subagent?.profile ?? "subagent"} ${main.id}`}</T>
@@ -221,6 +230,7 @@ export function Shell(props: {
   completions: Completion[];
   onComplete: (completion: Completion) => void;
   onLoadOlder: (agent: AgentModel) => void;
+  device: DeviceActions;
   /** `ui.web.panes` of the user's settings: the strips' widths. */
   panes: unknown;
   onPanes: (panes: Panes) => void;
@@ -245,7 +255,7 @@ export function Shell(props: {
             {!screen.strips.right ? <Button label="Items" onPress={() => void workbench.act("strip.items")} /> : <View />}
           </View>
         ) : null}
-        <Main screen={screen} workbench={workbench} onLoadOlder={props.onLoadOlder} />
+        <Main screen={screen} workbench={workbench} onLoadOlder={props.onLoadOlder} device={props.device} />
         <View style={{ paddingHorizontal: 8, paddingBottom: 4, gap: 2 }}>
           <EditorZoneView
             zone={screen.zones.editor}
@@ -257,6 +267,7 @@ export function Shell(props: {
             onComplete={props.onComplete}
             onAnswer={(id, value) => void workbench.answer(id, value)}
             onClosePicker={() => workbench.closePicker()}
+            device={props.device}
             placeholder={screen.tab === undefined ? "Ctrl+T starts a session" : "Message (Ctrl+Enter sends; a leading ! asks for BUILD)"}
           />
           {screen.zones.status.map((line, index) => (

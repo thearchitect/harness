@@ -56,6 +56,59 @@ export function onAddressChange(listener: () => void): () => void {
   return () => window.removeEventListener("popstate", listener);
 }
 
+async function base64Of(blob: Blob): Promise<string> {
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+/** A file from the session's node, saved by the browser. */
+export function saveFile(name: string, base64: string): void {
+  const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes]));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = name;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+/** Files the user picks (the system's file chooser), as base64 with their names. */
+export function pickFiles(): Promise<{ name: string; base64: string }[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.multiple = true;
+    input.onchange = () => void Promise.all([...(input.files ?? [])].map(async (file) => ({ name: file.name, base64: await base64Of(file) }))).then(resolve);
+    input.click();
+  });
+}
+
+export const VOICE_SUPPORTED = typeof MediaRecorder !== "undefined" && navigator.mediaDevices !== undefined;
+
+/** Starts recording the microphone; the returned stop gives the recording. */
+export async function recordVoice(): Promise<() => Promise<{ base64: string; mime: string }>> {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const recorder = new MediaRecorder(stream);
+  const chunks: Blob[] = [];
+  recorder.ondataavailable = (event) => chunks.push(event.data);
+  recorder.start();
+  return () =>
+    new Promise((resolve) => {
+      recorder.onstop = () => {
+        for (const track of stream.getTracks()) {
+          track.stop();
+        }
+        const blob = new Blob(chunks, { type: recorder.mimeType });
+        void base64Of(blob).then((base64) => resolve({ base64, mime: recorder.mimeType }));
+      };
+      recorder.stop();
+    });
+}
+
 /** Files dropped on `element`, as base64 with their names. */
 export function onFilesDropped(element: unknown, listener: (files: { name: string; base64: string }[]) => void): () => void {
   const target = element as HTMLElement | null;
@@ -73,16 +126,7 @@ export function onFilesDropped(element: unknown, listener: (files: { name: strin
       const files = [...(event.dataTransfer?.files ?? [])];
       if (files.length > 0) {
         event.preventDefault();
-        void Promise.all(
-          files.map(async (file) => {
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            let binary = "";
-            for (let index = 0; index < bytes.length; index += 0x8000) {
-              binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-            }
-            return { name: file.name, base64: btoa(binary) };
-          }),
-        ).then(listener);
+        void Promise.all(files.map(async (file) => ({ name: file.name, base64: await base64Of(file) }))).then(listener);
       } else {
         // a drop of text: the field takes it
       }

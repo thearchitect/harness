@@ -5,13 +5,15 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir, userInfo } from "node:os";
+import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
 import { NODE_OPS } from "#protocol/node.ts";
+import { SNAPSHOT_ENTRIES } from "#protocol/hap.ts";
 import { themeColors } from "./themes.ts";
+import { transcribe } from "./transcribe.ts";
 import { MAX_SUBAGENT_DEPTH, type SubagentLaunch } from "#protocol/state.ts";
 import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
 import { AgentLink, type AgentRecord } from "./agent-link.ts";
@@ -42,6 +44,7 @@ export interface HubRole {
   nodes(user: string): NodeInfo[];
   /** Whether a hub user may use the hub's own node. */
   mayUseLocal(user: string): boolean;
+  isAdmin(user: string): boolean;
   settingsFor(user: string): SettingsStore;
   disconnect(connection: Connection): void;
 }
@@ -64,6 +67,8 @@ export type NodeConfig = {
   idleUnloadMs?: number;
   /** At most this many agents (default MAX_AGENTS). */
   maxAgents?: number;
+  /** Entries of an attach's snapshot; older ones load page by page (default SNAPSHOT_ENTRIES). */
+  snapshotEntries?: number;
 };
 
 type Attachment = { level: AttachLevel; live: boolean };
@@ -210,7 +215,7 @@ export class HarnessNode {
       } else {
         this.refuse(connection, frame, { code: "not_found", message: `no node ${frame.node} here: ${this.config.name} is not a hub` });
       }
-    } else if (frame.k !== "hello" && !(frame.k === "req" && (frame.op === "nodes_list" || frame.op === "settings_get" || frame.op === "settings_set" || frame.op === "theme_get")) && !this.allowed(connection)) {
+    } else if (frame.k !== "hello" && !(frame.k === "req" && (frame.op === "nodes_list" || frame.op === "settings_get" || frame.op === "settings_set" || frame.op === "theme_get" || frame.op === "logs_tail")) && !this.allowed(connection)) {
       this.refuse(connection, frame, { code: "forbidden", message: `${connection.user} may not use node ${this.config.name}` });
     } else {
       switch (frame.k) {
@@ -354,6 +359,18 @@ export class HarnessNode {
         const { key, value } = args as NodeOps["settings_set"]["args"];
         return { settings: this.settingsOf(connection).set(key, value) } as NodeOps[K]["result"];
       }
+      case "transcribe": {
+        const { base64, mime } = args as NodeOps["transcribe"]["args"];
+        return { text: await transcribe(this.config.dataDir, Buffer.from(base64, "base64"), mime) } as NodeOps[K]["result"];
+      }
+      case "logs_tail": {
+        const { lines } = args as NodeOps["logs_tail"]["args"];
+        if (connection.trusted || this.hub?.isAdmin(connection.user) === true) {
+          return { lines: this.telemetry.tail(lines ?? 200) } as NodeOps[K]["result"];
+        } else {
+          throw new HarnessError("forbidden", `the log of ${this.config.name} is for its own user and a hub's admins`);
+        }
+      }
       case "theme_get": {
         const { name } = args as NodeOps["theme_get"]["args"];
         const chosen = name ?? this.settingsOf(connection).read()["ui.theme"];
@@ -371,13 +388,14 @@ export class HarnessNode {
     return path === "~" ? home : path.startsWith("~/") ? join(home, path.slice(2)) : resolve(home, path);
   }
 
+  /** A path of the node user's files: their home, or the temporary directory (where agents put files they send). */
   private userPath(path: string): string {
-    const home = homedir();
     const full = this.expandHome(path);
-    if (full !== home && !full.startsWith(`${home}/`)) {
-      throw new HarnessError("forbidden", `${path} is outside ${home}`);
-    } else {
+    const within = (root: string): boolean => full === root || full.startsWith(`${root}/`);
+    if (within(homedir()) || within(tmpdir())) {
       return full;
+    } else {
+      throw new HarnessError("forbidden", `${path} is outside ${homedir()} and ${tmpdir()}`);
     }
   }
 
@@ -558,7 +576,7 @@ export class HarnessNode {
       this.reportClients(entry);
       const key = `attach.${connection.id}.${id}`;
       entry.requests.set(key, { connection, id: `attach:${id}` });
-      entry.link.send({ type: "harness_snapshot", id: key, limit: 200 });
+      entry.link.send({ type: "harness_snapshot", id: key, limit: this.config.snapshotEntries ?? SNAPSHOT_ENTRIES });
       return undefined;
     }
   }

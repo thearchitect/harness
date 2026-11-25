@@ -46,7 +46,11 @@ export class WebDriver {
     } else {
       const app = await startWebApp({ staticDir, open });
       const { chromium } = await import("playwright-core");
-      const browser = await chromium.launch({ executablePath, args: ["--no-sandbox", "--font-render-hinting=none", "--force-color-profile=srgb"] });
+      // a fake microphone (a tone) that needs no permission prompt: voice input runs unattended
+      const browser = await chromium.launch({
+        executablePath,
+        args: ["--no-sandbox", "--font-render-hinting=none", "--force-color-profile=srgb", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+      });
       const page = await browser.newPage({ viewport: { width: options.width ?? 1400, height: options.height ?? 900 }, deviceScaleFactor: 1 });
       await page.goto(app.url);
       await page.getByRole("tablist", { name: "sessions" }).waitFor({ timeout: 30_000 });
