@@ -1,5 +1,6 @@
 // The keyboard on web: the shared keymap's keys (keymap.ts) turned into the workbench's actions. In
-// the browser some keys belong to the browser (Ctrl+W, Ctrl+T); the desktop window has them all.
+// the browser some keys belong to the browser (Ctrl+T); the desktop window has them all. Ctrl+C is
+// never taken (copying); Ctrl+D closes the tab only from an empty field.
 
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
 
@@ -26,7 +27,11 @@ const EDITOR_OWN = new Set<ActionId>(["editor.submit", "editor.newline"]);
 export function listenKeys(act: (action: ActionId) => void): () => void {
   const onKey = (event: KeyboardEvent): void => {
     const action = actionOfKey(keyName(event));
-    if (action !== undefined && !EDITOR_OWN.has(action)) {
+    const target = event.target as { value?: unknown } | null;
+    const typing = typeof target?.value === "string" && target.value !== "";
+    if (action === "tabs.close" && typing) {
+      // with text, the field deletes forward
+    } else if (action !== undefined && !EDITOR_OWN.has(action)) {
       event.preventDefault();
       act(action);
     } else {

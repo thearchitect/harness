@@ -4,8 +4,9 @@
 // hints show). Loaded from the files of the pinned pi itself, so one instance each;
 // pi-internals.test.ts fails when an update of pi moves one of them.
 
-import type { KeybindingsManager, MarkdownTransformer, SettingsManager, Theme } from "@earendil-works/pi-coding-agent";
-import type { KeybindingsConfig, TUI } from "@earendil-works/pi-tui";
+import type { CustomEntry, EntryRenderer, KeybindingsManager, MarkdownTransformer, SettingsManager, Theme } from "@earendil-works/pi-coding-agent";
+import type { Container, KeybindingsConfig, TUI } from "@earendil-works/pi-tui";
+import type { Clipboard } from "./clipboard.ts";
 
 const PI = import.meta.resolve("@earendil-works/pi-coding-agent");
 
@@ -15,6 +16,9 @@ export const PI_INTERNAL_MODULES = {
   themeController: "./modes/interactive/theme/theme-controller.js",
   mermaid: "./modes/interactive/components/mermaid.js",
   keybindings: "./core/keybindings.js",
+  customEntry: "./modes/interactive/components/custom-entry.js",
+  clipboard: "./utils/clipboard.js",
+  clipboardImage: "./utils/clipboard-image.js",
 } as const;
 
 async function load<T>(path: string): Promise<T> {
@@ -66,6 +70,31 @@ const { createMermaidMarkdownTransformer } = await load<{
 export function mermaidTransformer(settings: () => SettingsManager): MarkdownTransformer {
   return createMermaidMarkdownTransformer({ getMode: () => settings().getMermaidRenderingMode(), theme: getTheme() });
 }
+
+export type CustomEntryComponent = Container & { hasContent(): boolean; setExpanded(expanded: boolean): void };
+
+const customEntryModule = await load<{ CustomEntryComponent: new (entry: CustomEntry<unknown>, renderer: EntryRenderer, outputPad?: number) => CustomEntryComponent }>(
+  PI_INTERNAL_MODULES.customEntry,
+);
+
+/** An extension's entry as pi draws it: a blank line above, the renderer's content, its key hints. */
+export function customEntryComponent(entry: CustomEntry<unknown>, renderer: EntryRenderer, outputPad: number): CustomEntryComponent {
+  return new customEntryModule.CustomEntryComponent(entry, renderer, outputPad);
+}
+
+const clipboardModule = await load<{ readClipboardFilePaths(): Promise<string[] | null>; readClipboardText(): Promise<string | null> }>(PI_INTERNAL_MODULES.clipboard);
+const clipboardImageModule = await load<{
+  readClipboardImage(): Promise<{ bytes: Uint8Array; mimeType: string } | null>;
+  extensionForImageMimeType(mimeType: string): string | null;
+}>(PI_INTERNAL_MODULES.clipboardImage);
+
+/** The system clipboard as pi reads it (native files, images through wl-paste/xclip/the native module, text). */
+export const systemClipboard: Clipboard = {
+  filePaths: () => clipboardModule.readClipboardFilePaths(),
+  image: () => clipboardImageModule.readClipboardImage(),
+  text: () => clipboardModule.readClipboardText(),
+  extensionOf: (mimeType) => clipboardImageModule.extensionForImageMimeType(mimeType) ?? undefined,
+};
 
 const keybindingsModule = await load<{ KeybindingsManager: new (userBindings?: KeybindingsConfig) => KeybindingsManager }>(PI_INTERNAL_MODULES.keybindings);
 

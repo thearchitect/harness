@@ -23,6 +23,10 @@ export const scenario = defineScenario({
         const text = await tui.waitForText((screen) => screen.includes("the answer is forty-two"));
         assert.match(text, /what is the answer\?/);
         assert.equal(tui.screen().zones.editor.kind, "editor");
+        // harness's entries are drawn as pi draws extensions' entries: a blank line above each
+        const lines = (await tui.waitForText((screen) => / finished/.test(screen))).split("\n");
+        const banner = lines.findIndex((line) => / finished/.test(line));
+        assert.match(lines[banner - 1] ?? "", /^[\s│]*$/, "a blank line above the finish banner");
       },
     },
     {
@@ -262,6 +266,25 @@ export const scenario = defineScenario({
         assert.ok(zone.kind === "picker");
         await tui.waitForText((screen) => screen.includes("tab") && screen.includes("enter choose") && screen.includes("esc cancel"));
         await tui.act("run.abort");
+      },
+    },
+    {
+      name: "keys as in pi: Ctrl+C clears the editor, Ctrl+D deletes forward with text and closes the tab without",
+      async run({ clients: { tui } }) {
+        const tabs = tui.workbench.tabs().length;
+        await tui.type("abc");
+        await tui.press("\x03");
+        assert.equal(tui.app.editorText(), "");
+        assert.equal(tui.workbench.tabs().length, tabs, "Ctrl+C neither quits nor closes");
+        await tui.type("abc");
+        await tui.press("\x1b[D"); // ←: the cursor before c
+        await tui.press("\x04");
+        assert.equal(tui.app.editorText(), "ab");
+        assert.equal(tui.workbench.tabs().length, tabs);
+        await tui.press("\x03");
+        await tui.press("\x04");
+        await tui.settle();
+        assert.equal(tui.workbench.tabs().length, tabs - 1, "Ctrl+D on an empty editor closes the tab");
       },
     },
     {

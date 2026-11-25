@@ -20,6 +20,7 @@ import {
 import { Container, Markdown, Spacer, Text, type Component, type MarkdownTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AgentModel, Message, TranscriptItem } from "#client/model/agent-model.ts";
 import { splitPlanMessage, type Plan } from "#protocol/plan.ts";
+import { customEntryComponent } from "./pi-internals.ts";
 import type { Renderers } from "./presentation.ts";
 
 type ToolCall = { type: "toolCall"; id: string; name: string; arguments: unknown };
@@ -234,8 +235,10 @@ export class TranscriptView extends Container {
       case "custom": {
         const renderer = this.renderers.entries.get(item.customType);
         if (renderer !== undefined) {
-          const component = renderer({ type: "custom", customType: item.customType, data: item.data, id: item.key } as never, { expanded: this.expanded } as never, this.theme());
-          if (component !== undefined) {
+          // as pi draws it: a blank line above, the output pad, the key hints
+          const component = customEntryComponent({ type: "custom", customType: item.customType, data: item.data, id: item.key } as never, renderer, this.options.outputPad());
+          component.setExpanded(this.expanded);
+          if (component.hasContent()) {
             this.addChild(component);
           } else {
             // the renderer draws nothing for this entry

@@ -44,7 +44,8 @@ import { PickerView } from "./picker.ts";
 import { RemoteAutocompleteProvider } from "./remote-complete.ts";
 import { AskUserView } from "./ask-user.ts";
 import { TranscriptView, type TranscriptOptions } from "./transcript.ts";
-import { getTheme, mermaidTransformer, piKeybindings, themeController, type ThemeController } from "./pi-internals.ts";
+import { clipboardInsert, spaced, type Clipboard, type PasteTarget } from "./clipboard.ts";
+import { getTheme, mermaidTransformer, piKeybindings, systemClipboard, themeController, type ThemeController } from "./pi-internals.ts";
 
 // the strips: narrow, the transcript has the width
 const LEFT_WIDTH = 18;
@@ -63,6 +64,8 @@ export type AppOptions = {
   onQuit(): void;
   /** The terminal (a virtual one in tests); the process's by default. */
   terminal?: Terminal;
+  /** The system clipboard (a fake one in tests); pi's reading of it by default. */
+  clipboard?: Clipboard;
 };
 
 /**
@@ -179,6 +182,7 @@ class BridgedView implements Component {
 
 export class App {
   private readonly client: ClientModel;
+  private readonly clipboard: Clipboard;
   private readonly workbench: Workbench;
   private readonly tui: TuiAltScreen;
   private readonly renderers: Renderers;
@@ -209,13 +213,13 @@ export class App {
   private searchShownAt: string | undefined;
   private componentOverlay: { id: string; handle: OverlayHandle } | undefined;
   private screen: Screen | undefined;
-  private quitArmed = false;
   private programStatus = "";
 
   constructor(options: AppOptions) {
     installKeybindings(options.keybindings);
     this.settings = options.settings;
     this.client = options.client;
+    this.clipboard = options.clipboard ?? systemClipboard;
     this.workbench = options.workbench;
     this.renderers = options.renderers;
     this.cwd = options.cwd;
@@ -751,16 +755,18 @@ export class App {
     if ((inStrip || inPanel) && (action === undefined || action === "run.abort" || action === "editor.submit" || action === "editor.newline")) {
       return undefined; // the strip's or the panel's own keys: arrows, Enter, Space, Delete, Esc
     } else if (matchesKey(data, "ctrl+c" as never)) {
-      if (this.editor.getText() !== "" && input === "editor") {
+      // as in pi: Ctrl+C clears the editor; in dialogs and lists it is theirs (cancel)
+      if (input === "editor" || input === "subagent" || input === "task") {
         this.editor.setText("");
-        this.quitArmed = false;
-      } else if (this.quitArmed) {
-        this.onQuit();
+        return { consume: true };
       } else {
-        this.quitArmed = true;
-        this.workbench.notify("info", "Ctrl+C again to quit (agents keep running on their node)");
+        return undefined;
       }
+    } else if (matchesKey(data, "ctrl+v" as never) && (input === "editor" || input === "subagent" || input === "task")) {
+      void this.paste();
       return { consume: true };
+    } else if (action === "tabs.close" && !((input === "editor" || input === "subagent" || input === "task") && this.editor.getText() === "")) {
+      return undefined; // Ctrl+D closes the tab only from an empty editor; with text the editor deletes forward
     } else if (action === "editor.submit" && (input === "editor" || input === "subagent" || input === "task")) {
       // the app submits: pi-tui's editor takes Alt+Enter for a new line
       const text = this.editor.getExpandedText();
@@ -783,6 +789,30 @@ export class App {
     } else {
       void this.act(action);
       return { consume: true };
+    }
+  }
+
+  /** Ctrl+V: copied files, an image or text from the system clipboard, as pi pastes them (clipboard.ts). */
+  private async paste(): Promise<void> {
+    const tab = this.workbench.activeTab();
+    const target: PasteTarget =
+      tab === undefined || tab.node === this.client.home
+        ? { local: true }
+        : { local: false, upload: async (name, base64) => (await this.client.connection(tab.node).request("files_upload", { name, base64 })).path };
+    try {
+      const inserted = await clipboardInsert(this.clipboard, target, this.editor.getText().trimStart().startsWith("!"));
+      if (inserted === undefined) {
+        // an empty clipboard
+      } else if (inserted.paths) {
+        const cursor = this.editor.getCursor();
+        const line = this.editor.getText().split("\n")[cursor.line] ?? "";
+        this.editor.insertTextAtCursor(spaced(inserted.text, line[cursor.col - 1] ?? "", line[cursor.col] ?? ""));
+      } else {
+        this.editor.insertTextAtCursor(inserted.text);
+      }
+      this.tui.requestRender();
+    } catch (error) {
+      this.workbench.notify("error", `Failed to paste from clipboard: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

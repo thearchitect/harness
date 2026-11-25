@@ -10,6 +10,9 @@ const EXPORTS: Record<keyof typeof PI_INTERNAL_MODULES, string[]> = {
   themeController: ["InteractiveThemeController"],
   mermaid: ["createMermaidMarkdownTransformer"],
   keybindings: ["KeybindingsManager", "KEYBINDINGS"],
+  customEntry: ["CustomEntryComponent"],
+  clipboard: ["readClipboardFilePaths", "readClipboardText"],
+  clipboardImage: ["readClipboardImage", "extensionForImageMimeType"],
 };
 
 test("pi's internal modules and their exports", async () => {

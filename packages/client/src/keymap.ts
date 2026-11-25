@@ -9,7 +9,7 @@ export const ACTIONS = {
   "tabs.next": { keys: ["ctrl+pageDown"], description: "Next session tab" },
   "tabs.prev": { keys: ["ctrl+pageUp"], description: "Previous session tab" },
   "tabs.new": { keys: ["ctrl+t"], description: "New session" },
-  "tabs.close": { keys: ["ctrl+w"], description: "Close the tab (the agent keeps running)" },
+  "tabs.close": { keys: ["ctrl+d"], description: "Close the session's tab when the editor is empty (with text, Ctrl+D deletes forward)" },
   "tabs.open": { keys: ["ctrl+o"], description: "Open a session" },
   "items.next": { keys: ["alt+down"], description: "Next item of the session (tasks, subagents)" },
   "items.prev": { keys: ["alt+up"], description: "Previous item of the session" },
