@@ -19,7 +19,10 @@ function PickerBlock({ picker, onClose }: { picker: Picker; onClose: () => void 
   const theme = useTheme();
   const [filter, setFilter] = useState("");
   const words = filter.toLowerCase().split(/\s+/).filter((word) => word !== "");
-  const items = picker.items.filter((item) => words.every((word) => `${item.label} ${item.description ?? ""}`.toLowerCase().includes(word)));
+  const matching = picker.items.filter((item) => words.every((word) => `${item.label} ${item.description ?? ""}`.toLowerCase().includes(word)));
+  // a list that takes typed values offers the text itself first
+  const typed = filter.trim();
+  const items = picker.custom !== undefined && typed !== "" && !matching.some((item) => item.value === typed) ? [{ value: typed, label: typed, description: picker.custom }, ...matching] : matching;
   return (
     <Frame title={picker.title} tone="accent">
       <TextInput
@@ -29,7 +32,7 @@ function PickerBlock({ picker, onClose }: { picker: Picker; onClose: () => void 
         onChangeText={setFilter}
         onSubmitEditing={() => (items[0] !== undefined ? void picker.choose(items[0].value) : undefined)}
         onKeyPress={(event: KeyEvent) => (event.nativeEvent.key === "Escape" ? onClose() : undefined)}
-        placeholder="filter"
+        placeholder={picker.custom !== undefined ? `filter, or type ${picker.custom}` : "filter"}
         placeholderTextColor={theme.colors.dim}
         style={[fontOf(theme.chrome), { color: theme.colors.text, borderBottomWidth: 1, borderColor: theme.colors.borderMuted, padding: 2 }]}
       />

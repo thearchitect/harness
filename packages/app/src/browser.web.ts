@@ -3,11 +3,11 @@
 // (`#/<node>/<session>`) so it can be bookmarked and back/forward move between sessions; files
 // dropped on the editor go to the session's machine and into the message as `@path`.
 
-/** `◆ 2 · harness` while two sessions wait; the icon carries the same glyph. */
-export function showAttention(waiting: number): void {
+/** `◆ 2 · harness` while two sessions wait; the icon carries the same glyph in the theme's color. */
+export function showAttention(waiting: number, colors: { waiting: string; idle: string }): void {
   document.title = waiting > 0 ? `◆ ${waiting} · harness` : "harness";
   const glyph = waiting > 0 ? "◆" : "›";
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" font-size="14" text-anchor="middle" fill="${waiting > 0 ? "orange" : "gray"}">${glyph}</text></svg>`;
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><text x="8" y="13" font-size="14" text-anchor="middle" fill="${waiting > 0 ? colors.waiting : colors.idle}">${glyph}</text></svg>`;
   let link = document.querySelector<HTMLLinkElement>("link[rel=icon]");
   if (link === null) {
     link = document.createElement("link");

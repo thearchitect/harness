@@ -3,7 +3,7 @@
 // the same tabs, glyphs and items — compared by meaning, never by pixels.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
@@ -148,10 +148,17 @@ export const scenario = defineScenario({
     },
     {
       name: "tabs: a second one, reordered by dragging (every client sees it), closed from the context menu",
-      async run({ clients: { web, tui } }) {
+      async run({ stand, clients: { web, tui } }) {
         const before = (await web.screen()).tabs.length;
         await web.page.getByRole("button", { name: "New session" }).first().click();
+        // a directory: the recent ones, the home, or typed
+        const filter = web.page.getByRole("textbox", { name: /^Filter New session on/ });
+        await filter.fill(join(stand.project, "sub"));
+        mkdirSync(join(stand.project, "sub"), { recursive: true });
+        await filter.press("Enter");
         await web.waitForScreen((screen) => screen.tabs.length === before + 1);
+        const { settings } = await tui.client.homeRequest("settings_get", {});
+        assert.ok((settings["ui.tabs"] as { cwd: string }[]).some((tab) => tab.cwd === join(stand.project, "sub")), "the session runs in the typed directory");
         const titles = (await web.screen()).tabs.map((tab) => tab.title);
         const strip = web.page.getByRole("tablist", { name: "sessions" });
         const rows = strip.getByRole("button").filter({ hasNotText: "+ new" });

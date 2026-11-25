@@ -364,14 +364,20 @@ export class App {
   /** The load of older entries under way, if any (drivers wait for it). */
   olderLoad: Promise<void> | undefined;
 
+  /** Whether the whole transcript fits on the screen (then its top is on the screen too). */
+  private transcriptFits(): boolean {
+    const height = this.transcriptScroll.viewportHeight;
+    return height > 0 && this.transcript.render(this.transcriptScroll.getContentWidth(this.tui.terminal.columns)).length <= height;
+  }
+
   private loadOlderAtTop(screen: Screen): void {
     const agent = screen.agent;
     const tab = screen.tab;
     const first = agent?.items[0]?.key;
     if (this.loadingOlder || agent === undefined || tab?.agent === undefined || agent.cursor === undefined || first === undefined) {
       return; // loading, nothing older, or nothing shown
-    } else if (this.transcriptScroll.isFollowingEnd || this.transcriptScroll.scrollTop > 0) {
-      return; // not at the top
+    } else if (this.transcriptScroll.scrollTop > 0 || (this.transcriptScroll.isFollowingEnd && !this.transcriptFits())) {
+      return; // not at the top (a transcript shorter than the screen is at its top while it follows the end)
     } else {
       this.loadingOlder = true;
       this.olderLoad = this.client

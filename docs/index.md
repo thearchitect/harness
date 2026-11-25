@@ -25,6 +25,7 @@ the translations in [pi-mapping.md](pi-mapping.md).
 | NixOS | [operations/nixos.md](operations/nixos.md) |
 | Fly.io | [operations/fly.md](operations/fly.md) |
 | Settings and files in `~/.harness` | [operations/settings.md](operations/settings.md) |
+| What the app does with your data | [legal/privacy.md](legal/privacy.md) |
 
 ## Sources
 

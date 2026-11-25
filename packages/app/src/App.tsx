@@ -44,8 +44,8 @@ async function connect(endpoint: Endpoint): Promise<Connected> {
   const client = new ClientModel();
   await client.addEndpoint(async () => NodeConnection.open(await wsTransport(endpoint.url), "app", endpoint.token), { home: true });
   const themeNames: string[] = [];
+  // no directory of its own: new sessions ask for one on their node
   const workbench: Workbench = new Workbench(client, {
-    cwd: "~",
     themes: () => themeNames,
     uiSettings: () => appSettings(client, workbench, { supported: NOTIFICATIONS_SUPPORTED, request: requestNotifications }),
     // an exported session comes to this device
@@ -201,7 +201,7 @@ function WorkbenchApp() {
 
   // attention: the sessions that wait for the operator
   const waiting = screen?.tabs.filter((tab) => tab.glyph === "◆").length ?? 0;
-  useEffect(() => showAttention(waiting), [waiting]);
+  useEffect(() => showAttention(waiting, { waiting: theme.colors.warning, idle: theme.colors.dim }), [waiting, theme.colors.warning, theme.colors.dim]);
   // a system notification when one more session starts waiting (if the user turned them on)
   const waited = useRef(0);
   useEffect(() => {

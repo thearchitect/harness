@@ -2,7 +2,7 @@
 // strips; links open sessions through `harness://` deep links and files come through the share
 // sheet and the file picker in the native builds (stage 11).
 
-export function showAttention(_waiting: number): void {
+export function showAttention(_waiting: number, _colors: { waiting: string; idle: string }): void {
   // the strips' glyphs carry it
 }
 

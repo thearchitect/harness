@@ -4,6 +4,7 @@
 // view follows new ones until the user scrolls up, then "Jump to latest" brings it back.
 
 import { useMemo, useRef, useState } from "react";
+import * as Clipboard from "expo-clipboard";
 import { FlatList, Image, Modal, Pressable, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { AgentModel, Message, ToolRun, TranscriptItem } from "#client/model/agent-model.ts";
 import { MODE_TEXT, isRunMode } from "#protocol/modes.ts";
@@ -147,6 +148,11 @@ function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; re
           {!shown && lines.length > 6 ? `… ${lines.length - 6} more lines\n` : ""}
           {preview}
         </T>
+      ) : null}
+      {shown && text !== "" ? (
+        <View style={{ flexDirection: "row" }}>
+          <Button label="Copy the output" onPress={() => void Clipboard.setStringAsync(text)} />
+        </View>
       ) : null}
       {output
         .filter((block) => block.type === "image" && block.data !== undefined)

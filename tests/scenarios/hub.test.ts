@@ -117,6 +117,8 @@ describe("hub", () => {
     await page.getByRole("button", { name: "New session" }).first().waitFor({ timeout: 30_000 });
     assert.equal(new URL(page.url()).hash, "");
     await page.getByRole("button", { name: "New session" }).first().click();
+    // the app has no directory of its own: the node's home
+    await page.getByRole("button", { name: "~", exact: true }).click();
     await page.getByRole("textbox", { name: "Message" }).waitFor();
     // the new session's agent runs on carol's node
     const local = await home.connect();

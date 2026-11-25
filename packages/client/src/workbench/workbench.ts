@@ -24,7 +24,8 @@ export const TASK_OUTPUT_MS = 700;
 export type PickerItem = { value: string; label: string; description?: string };
 
 /** A choice from a list, drawn in the editor's place. */
-export type Picker = { id: string; title: string; items: PickerItem[]; choose(value: string): Promise<void> };
+/** `custom`: the typed text is a choice of its own when no item matches (a directory, a name). */
+export type Picker = { id: string; title: string; items: PickerItem[]; choose(value: string): Promise<void>; custom?: string };
 
 /** What lies over the screen: the harness panel (over the right strip) and hidden strips. */
 export type OverlayKind = "panel" | "tabs" | "items";
@@ -264,7 +265,8 @@ export class Workbench {
   overlays: OverlayKind[] = [];
   toolsExpanded = false;
   private searchState: { query: string; index: number } | undefined;
-  private readonly cwd: string;
+  /** The client's own directory (the TUI's); undefined: new sessions ask for one (the app). */
+  private readonly cwd: string | undefined;
   private readonly clock: Clock;
   private readonly update: UpdateHook | undefined;
   private readonly themes: () => string[];
@@ -284,7 +286,7 @@ export class Workbench {
 
   constructor(client: ClientModel, options: WorkbenchOptions = {}) {
     this.client = client;
-    this.cwd = options.cwd ?? "/";
+    this.cwd = options.cwd;
     this.clock = options.clock ?? systemClock;
     this.update = options.update;
     this.themes = options.themes ?? (() => []);
@@ -933,14 +935,38 @@ export class Workbench {
     if (home === undefined) {
       this.notify("warning", "no node to start a session on: none of yours is online");
     } else if (nodes.length <= 1) {
-      await this.newTab(home, home === this.client.home ? this.cwd : "~");
+      await this.newTabIn(home);
     } else {
       this.openPicker({
         id: "new-session",
         title: "New session on",
-        items: nodes.map((node) => ({ value: node, label: node, description: node === this.client.home ? this.cwd : "~ (the node user's home)" })),
-        choose: async (node) => {
-          await this.newTab(node, node === this.client.home ? this.cwd : "~");
+        items: nodes.map((node) => ({ value: node, label: node, description: this.cwd !== undefined && node === this.client.home ? this.cwd : "choose a directory" })),
+        choose: (node) => this.newTabIn(node),
+      });
+    }
+  }
+
+  /**
+   * A new session on a node: in this client's directory when the node is its own; otherwise (and in
+   * UIs without a directory, the app) in a directory chosen from the node's recent ones, its home,
+   * or a typed path.
+   */
+  private async newTabIn(node: string): Promise<void> {
+    if (this.cwd !== undefined && node === this.client.home) {
+      await this.newTab(node, this.cwd);
+    } else {
+      const recent = (await this.client.sessions(node).catch(() => []))
+        .sort((a, b) => b.modified - a.modified)
+        .map((session) => session.cwd)
+        .filter((cwd, index, all) => all.indexOf(cwd) === index)
+        .slice(0, 30);
+      this.openPicker({
+        id: "new-session-directory",
+        title: `New session on ${node}: directory (type a path)`,
+        items: [{ value: "~", label: "~", description: "the node user's home" }, ...recent.map((cwd) => ({ value: cwd, label: cwd }))],
+        custom: "a path on the node",
+        choose: async (cwd) => {
+          await this.newTab(node, cwd);
         },
       });
     }
