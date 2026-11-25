@@ -65,6 +65,8 @@ jobs:
           xcrun simctl install "$device" "$APP"
           mkdir -p maestro-out
           status=0
+          # the shared runners start Maestro's iOS driver slowly
+          export MAESTRO_DRIVER_STARTUP_TIMEOUT=300000
           maestro --device "$device" test packages/app/maestro/pair-and-start.yaml -e HUB=http://localhost:8790 -e CODE=${{ steps.hub.outputs.code }} --test-output-dir maestro-out || status=$?
           xcrun simctl spawn "$device" log show --last 10m --predicate 'process == "harness"' > maestro-out/device.log || true
           exit $status
