@@ -3,10 +3,11 @@
 // summaries; the answer in flight at the end. A virtualized list: older entries load at the top, the
 // view follows new ones until the user scrolls up, then "Jump to latest" brings it back.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import { FlatList, Image, Modal, Pressable, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { AgentModel, Message, ToolRun, TranscriptItem } from "#client/model/agent-model.ts";
+import type { ScrollAnchor } from "#client/workbench/view-state.ts";
 import { MODE_TEXT, isRunMode } from "#protocol/modes.ts";
 import { splitPlanMessage, type Plan } from "#protocol/plan.ts";
 import { useTheme, type Token } from "../theme/theme.tsx";
@@ -371,14 +372,61 @@ function CustomEntry({ type, data }: { type: string; data: unknown }) {
   }
 }
 
-export function Transcript({ agent, expanded, onLoadOlder, onDownload }: { agent: AgentModel; expanded: boolean; onLoadOlder: () => void; onDownload: (path: string, name: string) => void }) {
+/**
+ * A session's transcript. `anchor` is where its tab left it (the end it followed, or the entry at
+ * its top): it comes back when the transcript is shown, older entries loading until that entry is
+ * there; `onAnchor` hears where it is as the operator scrolls.
+ */
+export function Transcript({
+  agent,
+  expanded,
+  anchor,
+  onAnchor,
+  onLoadOlder,
+  onDownload,
+}: {
+  agent: AgentModel;
+  expanded: boolean;
+  anchor?: ScrollAnchor;
+  onAnchor?: (anchor: ScrollAnchor) => void;
+  onLoadOlder: () => void;
+  onDownload: (path: string, name: string) => void;
+}) {
   const list = useRef<FlatList<Row>>(null);
-  const [following, setFollowing] = useState(true);
+  const [following, setFollowing] = useState(anchor === undefined || anchor === "follow");
   const rows = useMemo(() => rowsOf(agent), [agent, agent.items, agent.streaming, agent.tools.size]);
+  const top = useRef<string | undefined>(undefined);
+  const restoring = useRef(anchor !== undefined && anchor !== "follow" ? anchor.key : undefined);
+  const onViewable = useRef(({ viewableItems }: { viewableItems: { key: string }[] }) => {
+    top.current = viewableItems[0]?.key;
+  });
   const onScroll = (event: NativeSyntheticEvent<NativeScrollEvent>): void => {
     const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    setFollowing(contentOffset.y + layoutMeasurement.height >= contentSize.height - 24);
+    const atEnd = contentOffset.y + layoutMeasurement.height >= contentSize.height - 24;
+    setFollowing(atEnd);
+    if (restoring.current === undefined) {
+      onAnchor?.(atEnd || top.current === undefined ? "follow" : { key: top.current, offset: 0 });
+    } else {
+      // the tab's own place is coming back
+    }
   };
+  // the tab's place: its entry at the top once the entry is loaded
+  useEffect(() => {
+    const key = restoring.current;
+    if (key === undefined) {
+      return; // following the end
+    } else {
+      const index = rows.findIndex((row) => row.key === key);
+      if (index >= 0) {
+        restoring.current = undefined;
+        setTimeout(() => list.current?.scrollToIndex({ index, animated: false, viewPosition: 0 }), 0);
+      } else if (agent.cursor !== undefined) {
+        onLoadOlder();
+      } else {
+        restoring.current = undefined; // the entry is gone
+      }
+    }
+  }, [rows]);
   return (
     <View style={{ flex: 1 }}>
       <FlatList
@@ -398,6 +446,8 @@ export function Transcript({ agent, expanded, onLoadOlder, onDownload }: { agent
         contentContainerStyle={{ gap: 8, padding: 8 }}
         onScroll={onScroll}
         scrollEventThrottle={64}
+        onViewableItemsChanged={onViewable.current}
+        onScrollToIndexFailed={({ index }) => setTimeout(() => list.current?.scrollToIndex({ index, animated: false, viewPosition: 0 }), 50)}
         onContentSizeChange={() => (following ? list.current?.scrollToEnd({ animated: false }) : undefined)}
         onStartReached={agent.cursor !== undefined ? onLoadOlder : undefined}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}

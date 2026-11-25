@@ -3,6 +3,20 @@
 // (`#/<node>/<session>`) so it can be bookmarked and back/forward move between sessions; files
 // dropped on the editor go to the session's machine and into the message as `@path`.
 
+import { windowState, type ViewStateStore } from "#client/workbench/view-state.ts";
+
+/** The window's state (view-state.ts): this browser's localStorage. */
+export function viewStore(): ViewStateStore {
+  const key = "harness.window-state";
+  return {
+    load: async () => {
+      const stored = localStorage.getItem(key);
+      return stored !== null ? windowState(JSON.parse(stored)) : undefined;
+    },
+    save: async (state) => localStorage.setItem(key, JSON.stringify(state)),
+  };
+}
+
 /** `◆ 2 · harness` while two sessions wait; the icon carries the same glyph in the theme's color. */
 export function showAttention(waiting: number, colors: { waiting: string; idle: string }): void {
   document.title = waiting > 0 ? `◆ ${waiting} · harness` : "harness";

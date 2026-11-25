@@ -10,6 +10,23 @@ import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import * as Sharing from "expo-sharing";
 import { Alert } from "react-native";
+import { windowState, type ViewStateStore } from "#client/workbench/view-state.ts";
+
+/** The window's state (view-state.ts): a file of the app's documents, this device's own. */
+export function viewStore(): ViewStateStore {
+  const file = new File(Paths.document, "window-state.json");
+  return {
+    load: async () => (file.exists ? windowState(JSON.parse(await file.text())) : undefined),
+    save: async (state) => {
+      if (!file.exists) {
+        file.create();
+      } else {
+        // written over
+      }
+      await file.write(JSON.stringify(state));
+    },
+  };
+}
 
 export function showAttention(_waiting: number, _colors: { waiting: string; idle: string }): void {
   // the strips' glyphs carry it

@@ -202,6 +202,24 @@ export class TranscriptView extends Container {
     return component;
   }
 
+  /** The item drawn at a line, and the line's offset in it (where a tab's scroll is kept); undefined past the end. */
+  itemAt(line: number, width: number): { key: string; offset: number } | undefined {
+    const keys = new Map([...this.firstComponent].map(([key, component]) => [component, key]));
+    let at = 0;
+    let current: { key: string; start: number } | undefined;
+    for (const child of this.children) {
+      const key = keys.get(child);
+      current = key !== undefined ? { key, start: at } : current;
+      const height = child.render(width).length;
+      if (line < at + height) {
+        return current !== undefined ? { key: current.key, offset: line - current.start } : undefined;
+      } else {
+        at += height;
+      }
+    }
+    return undefined;
+  }
+
   /** The first line of an item at `width` (for the search to scroll to it); undefined when not drawn. */
   lineOf(key: string, width: number): number | undefined {
     const first = this.firstComponent.get(key);

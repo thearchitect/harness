@@ -29,7 +29,8 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ClientModel } from "#client/model/client-model.ts";
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
-import { LEFT_STRIP_MIN, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Workbench } from "#client/workbench/workbench.ts";
+import { LEFT_STRIP_MIN, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
+import type { ScrollAnchor, TabView } from "#client/workbench/view-state.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { modeOfText } from "#protocol/modes.ts";
 import { modeColor } from "#extension/presentation/modes.ts";
@@ -50,6 +51,9 @@ import { getTheme, mermaidTransformer, piKeybindings, systemClipboard, themeCont
 
 // the strips: narrow, the transcript has the width
 const LEFT_WIDTH = 18;
+/** A tab's scroll comes back within this many frames of its transcript being drawn. */
+const SCROLL_TRIES = 20;
+const SCROLL_RETRY_MS = 20;
 
 export type AppOptions = {
   client: ClientModel;
@@ -205,7 +209,13 @@ export class App {
   private readonly editorZone = new Container();
   private readonly status = new Lines();
   private readonly footer: Footer;
-  private readonly editor: Editor;
+  /** The active tab's editor: each tab has its own (its cursor, undo, history, pasted blocks). */
+  private editor: Editor;
+  private readonly editors = new Map<string, Editor>();
+  /** The tab shown now (`node/sessionId`), whose editor and scroll are in use. */
+  private shownTab: { node: string; sessionId: string } | undefined;
+  /** The scroll of a tab that came back, applied once its transcript is drawn. */
+  private pendingScroll: ScrollAnchor | undefined;
   /** What the editor zone shows now: the editor, an interaction or a picker (by id). */
   private editorShown = "editor";
   private editorComponent: Component | undefined;
@@ -247,7 +257,7 @@ export class App {
     });
     this.transcript = new TranscriptView(this.tui, theme, this.renderers, this.cwd, this.transcriptOptions());
     this.footer = new Footer(theme);
-    this.editor = new Editor(this.tui, { borderColor: (text) => modeColor(this.editorMode(), getTheme().getColorMode(), text), selectList: selectListTheme(getTheme()) }, { paddingX: 1 });
+    this.editor = this.newEditor();
     this.searchBox = new SearchBox(
       (query) => this.workbench.setSearch(query),
       () => this.workbench.stepSearch(-1),
@@ -301,6 +311,107 @@ export class App {
     return this.editorMode();
   }
 
+  private newEditor(): Editor {
+    return new Editor(this.tui, { borderColor: (text) => modeColor(this.editorMode(), getTheme().getColorMode(), text), selectList: selectListTheme(getTheme()) }, { paddingX: 1 });
+  }
+
+  /**
+   * Another tab comes to the screen: the one leaving keeps its scroll, the coming one gets its own
+   * editor (made with its draft the first time) and its scroll back.
+   */
+  private switchTab(tab: Tab | undefined, view: TabView | undefined): void {
+    this.keepScroll();
+    this.shownTab = tab !== undefined ? { node: tab.node, sessionId: tab.sessionId } : undefined;
+    const key = tab !== undefined ? `${tab.node}/${tab.sessionId}` : "";
+    let editor = this.editors.get(key);
+    if (editor === undefined) {
+      editor = this.newEditor();
+      editor.setText(view?.draft ?? "");
+      const shown = this.shownTab;
+      editor.onChange = (text) => (shown !== undefined ? this.workbench.updateView(shown, { draft: text }) : undefined);
+      this.editors.set(key, editor);
+    } else {
+      // the tab's own editor, as it was left
+    }
+    if (this.editorZone.children.includes(this.editor)) {
+      this.editorZone.clear();
+      this.editorZone.addChild(editor);
+      this.tui.setFocus(editor);
+    } else {
+      // something else stands in the editor's place: the editor comes back with it
+    }
+    this.editor = editor;
+    this.pendingScroll = view?.scroll ?? "follow";
+    void this.loadCompletions().catch(() => undefined);
+  }
+
+  /** Where the shown tab's transcript is: following its end, or the entry at its top. */
+  private keepScroll(): void {
+    const shown = this.shownTab;
+    if (shown === undefined || this.pendingScroll !== undefined || this.screen?.zones.main.kind !== "transcript") {
+      return; // nothing shown, its scroll not applied yet, or not its transcript
+    } else if (this.transcriptScroll.isFollowingEnd) {
+      this.workbench.updateView(shown, { scroll: "follow" });
+    } else {
+      const at = this.transcript.itemAt(this.transcriptScroll.scrollTop, this.transcriptScroll.getContentWidth(this.tui.terminal.columns));
+      this.workbench.updateView(shown, { scroll: at ?? "follow" });
+    }
+  }
+
+  /** A tab's scroll back: the end it followed, or its entry at the top (older entries load until it is drawn). */
+  private restoreScroll(screen: Screen): void {
+    const anchor = this.pendingScroll;
+    const agent = screen.agent;
+    const tab = screen.tab;
+    if (anchor === undefined || agent === undefined || tab?.agent === undefined) {
+      return; // nothing to restore, or nothing drawn yet
+    } else if (anchor === "follow") {
+      this.pendingScroll = undefined;
+      this.transcriptScroll.scrollToEnd();
+    } else {
+      const width = this.transcriptScroll.getContentWidth(this.tui.terminal.columns);
+      const line = this.transcript.lineOf(anchor.key, width);
+      if (line !== undefined) {
+        this.pendingScroll = undefined;
+        this.scrollToLine(line + anchor.offset, 0);
+      } else if (agent.cursor !== undefined && !this.loadingOlder) {
+        // older than what is loaded: the entries before it come first
+        this.loadingOlder = true;
+        void this.client
+          .loadOlder(tab.node, tab.agent.id)
+          .catch(() => (this.pendingScroll = "follow"))
+          .finally(() => {
+            this.loadingOlder = false;
+            this.refresh();
+          });
+      } else if (agent.cursor === undefined) {
+        this.pendingScroll = undefined; // the entry is gone
+      } else {
+        // a load is on its way
+      }
+    }
+  }
+
+  /**
+   * Scrolls the transcript to a line once the scroll view knows the transcript's height: it learns
+   * it when it draws, so a line past the height it knew is tried again after the next frames.
+   */
+  private scrollToLine(line: number, tries: number): void {
+    this.transcriptScroll.scrollTo(line, { disableFollow: true });
+    this.tui.requestRender();
+    if (this.transcriptScroll.scrollTop !== line && tries < SCROLL_TRIES) {
+      setTimeout(() => this.scrollToLine(line, tries + 1), SCROLL_RETRY_MS);
+    } else {
+      // there, or the transcript is shorter than the line
+    }
+  }
+
+  /** Keeps the window's state now: the shown tab's scroll and every draft (on quitting). */
+  async keepWindow(): Promise<void> {
+    this.keepScroll();
+    await this.workbench.saveViews();
+  }
+
   private editorMode(): ReturnType<typeof modeOfText>["mode"] {
     return this.workbench.editorMode(this.editor.getText());
   }
@@ -308,7 +419,6 @@ export class App {
   /** Redraws from the workbench's screen. */
   private refresh(): void {
     const theme = getTheme();
-    const previous = this.screen?.agent;
     const screen = this.workbench.screen(this.tui.terminal.columns, { mode: this.editorMode() });
     this.screen = screen;
     this.followTheme();
@@ -325,10 +435,10 @@ export class App {
     } else {
       // nothing unseen in the active tab
     }
-    if (screen.agent !== previous) {
-      this.editor.setText("");
+    if ((tab === undefined) !== (this.shownTab === undefined) || (tab !== undefined && (tab.node !== this.shownTab?.node || tab.sessionId !== this.shownTab.sessionId))) {
+      this.switchTab(tab, screen.view);
     } else {
-      // the same session
+      // the same tab
     }
 
     this.strip.content = {
@@ -365,8 +475,13 @@ export class App {
           // the same expansion
         }
         this.transcript.show(screen.agent);
+        this.restoreScroll(screen);
         this.scrollToMatch(screen);
-        this.loadOlderAtTop(screen);
+        if (this.pendingScroll === undefined) {
+          this.loadOlderAtTop(screen);
+        } else {
+          // the tab's own scroll comes first
+        }
         break;
       }
       case "task": {

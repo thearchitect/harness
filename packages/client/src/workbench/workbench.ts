@@ -14,6 +14,10 @@ import type { ActionId } from "../keymap.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
 import { agentKey, type ClientModel } from "../model/client-model.ts";
 import { NewSession } from "./new-session.ts";
+import { DEFAULT_VIEW, type TabView, type ViewStateStore, type WindowState } from "./view-state.ts";
+
+/** A window's state is kept at most this often. */
+export const VIEW_SAVE_MS = 500;
 
 /** Screen widths (columns; the app converts them to `ch`) below which a strip hides behind an overlay. */
 export const LEFT_STRIP_MIN = 72;
@@ -149,6 +153,8 @@ export type Screen = {
   zones: Zones;
   input: InputTarget;
   toolsExpanded: boolean;
+  /** What the active tab left: its draft, where it was scrolled (a UI restores them when the tab comes back). */
+  view: TabView | undefined;
   /** Text for the editor: a UI puts it in once per `key` (the agent's setEditorText, a branch's message). */
   prefill: { key: string; text: string } | undefined;
 };
@@ -335,6 +341,8 @@ export type WorkbenchOptions = {
   holdsHome?: () => boolean;
   /** `+ add` of the nodes block: pairs this client with a hub (its address, a one-time code). */
   addHub?: (url: string, code: string) => Promise<void>;
+  /** Where this window keeps its state between starts (view-state.ts); none: nothing is kept. */
+  viewStore?: ViewStateStore;
 };
 
 /** A row of /settings a UI adds: choosing it runs `choose` (which may open its own list). */
@@ -359,7 +367,6 @@ export class Workbench {
   private readonly addHub: WorkbenchOptions["addHub"];
   picker: Picker | undefined;
   overlays: OverlayKind[] = [];
-  toolsExpanded = false;
   private searchState: { query: string; index: number } | undefined;
   /** The client's own directory (the TUI's); undefined: new sessions ask for one (the app). */
   private readonly cwd: string | undefined;
@@ -371,8 +378,10 @@ export class Workbench {
   private prefill: Screen["prefill"];
   private prefillCounter = 0;
   private readonly agentPrefillSeen = new WeakMap<AgentModel, number>();
-  /** Selected item per tab (by session id); the session itself when absent. */
-  private readonly selected = new Map<string, string>();
+  /** What each tab left (by `node/sessionId`): this window's own, kept by its store. */
+  private readonly views = new Map<string, TabView>();
+  private readonly viewStore: ViewStateStore | undefined;
+  private viewSave: unknown;
   /** Tasks seen per session: the last task end the user has looked at. */
   private readonly tasksSeen = new Map<string, number>();
   private notice: { level: "info" | "warning" | "error"; message: string; at: number } | undefined;
@@ -390,6 +399,108 @@ export class Workbench {
     this.offerFile = options.offerFile;
     this.holdsHome = options.holdsHome ?? (() => false);
     this.addHub = options.addHub;
+    this.viewStore = options.viewStore;
+  }
+
+  /* ----- what each tab left (view-state.ts) ----- */
+
+  /** What a tab left: its draft, its scroll, its expanded output, its item. */
+  view(tab: { node: string; sessionId: string }): TabView {
+    return this.views.get(`${tab.node}/${tab.sessionId}`) ?? DEFAULT_VIEW;
+  }
+
+  /**
+   * Changes what a tab left. Drafts and scrolling change as the operator types and scrolls: kept
+   * quietly; what the screen shows (the item, expanded output) redraws.
+   */
+  updateView(tab: { node: string; sessionId: string }, change: Partial<TabView>): void {
+    this.views.set(`${tab.node}/${tab.sessionId}`, { ...this.view(tab), ...change });
+    this.scheduleViewSave();
+    if (change.selected !== undefined || change.expanded !== undefined) {
+      this.client.changed();
+    } else {
+      // the UI has it already
+    }
+  }
+
+  /** The window's state to keep: the views of the tabs there are, the active tab, the node, the drafts with text. */
+  windowState(): WindowState {
+    const tabs = this.tabs();
+    const active = this.activeTab();
+    const node = this.chosenNode;
+    return {
+      version: 1,
+      tabs: Object.fromEntries(tabs.filter((tab) => !tab.draft).flatMap((tab) => (this.views.has(`${tab.node}/${tab.sessionId}`) ? [[`${tab.node}/${tab.sessionId}`, this.view(tab)]] : []))),
+      ...(active !== undefined && !active.draft ? { active: { node: active.node, sessionId: active.sessionId } } : {}),
+      ...(node !== undefined ? { node } : {}),
+      drafts: tabs.filter((tab) => tab.draft && this.view(tab).draft !== "").map((tab) => ({ node: tab.node, cwd: tab.cwd, draft: this.view(tab).draft })),
+    };
+  }
+
+  /** At most one save per VIEW_SAVE_MS. */
+  private scheduleViewSave(): void {
+    if (this.viewStore === undefined || this.viewSave !== undefined) {
+      return; // nowhere to keep it, or a save is coming
+    } else {
+      this.viewSave = this.clock.setTimeout(() => {
+        this.viewSave = undefined;
+        void this.saveViews();
+      }, VIEW_SAVE_MS);
+    }
+  }
+
+  /** Keeps the window's state now (on quitting). */
+  async saveViews(): Promise<void> {
+    if (this.viewSave !== undefined) {
+      this.clock.clearTimeout(this.viewSave);
+      this.viewSave = undefined;
+    } else {
+      // no save pending
+    }
+    await this.viewStore?.save(this.windowState()).catch((error: unknown) => this.notify("warning", `the window's state was not kept: ${error instanceof Error ? error.message : String(error)}`));
+  }
+
+  /**
+   * The window as it was: the tabs' views, the active tab and the node; each draft of a session
+   * without a message becomes a new session in its folder with the draft. Call once the nodes are
+   * connected, before the UI starts.
+   */
+  async restoreViews(): Promise<void> {
+    const state = await this.viewStore?.load().catch(() => undefined);
+    if (state === undefined) {
+      return; // a first start, or nothing kept
+    } else {
+      for (const [key, view] of Object.entries(state.tabs)) {
+        this.views.set(key, { ...DEFAULT_VIEW, ...view });
+      }
+      const tabs = this.tabs();
+      const active = state.active;
+      const index = active !== undefined ? tabs.findIndex((tab) => sameTab(tab, active)) : -1;
+      if (index >= 0) {
+        this.activeKey = active;
+        this.chosenNode = active?.node;
+      } else {
+        // the tab is gone: the first one opens
+      }
+      if (state.node !== undefined && (this.client.connections.has(state.node) || this.client.offline.has(state.node))) {
+        this.chosenNode = state.node;
+      } else {
+        // the node is gone: the active tab's or the home node
+      }
+      for (const draft of state.drafts) {
+        if (this.client.connections.has(draft.node)) {
+          const tab = await this.newTab(draft.node, draft.cwd).catch(() => undefined);
+          if (tab !== undefined) {
+            this.updateView(tab, { draft: draft.draft });
+          } else {
+            // the folder is gone
+          }
+        } else {
+          // its node is not here: the draft goes
+        }
+      }
+      this.client.changed();
+    }
   }
 
   /** The index of the active tab among all tabs (0 without tabs). */
@@ -577,7 +688,8 @@ export class Workbench {
                 : main.kind === "subagent"
                   ? "subagent"
                   : "editor",
-      toolsExpanded: this.toolsExpanded,
+      toolsExpanded: tab !== undefined ? this.view(tab).expanded : false,
+      view: tab !== undefined ? this.view(tab) : undefined,
       prefill: this.prefillOf(agent),
     };
   }
@@ -1316,7 +1428,11 @@ export class Workbench {
             await call({ type: "cycle_thinking_level" });
             break;
           case "tools.expand":
-            this.toolsExpanded = !this.toolsExpanded;
+            if (tab !== undefined) {
+              this.updateView(tab, { expanded: !this.view(tab).expanded });
+            } else {
+              // no session
+            }
             break;
           case "run.abort":
             if (!this.dismiss()) {
@@ -1622,11 +1738,11 @@ export class Workbench {
   }
 
   selectedItem(tab: Tab): string {
-    return this.selected.get(tab.sessionId) ?? "session";
+    return this.view(tab).selected;
   }
 
   select(tab: Tab, itemId: string): void {
-    this.selected.set(tab.sessionId, itemId);
+    this.updateView(tab, { selected: itemId });
     if (itemId !== "session") {
       this.tasksSeen.set(tab.sessionId, this.clock.now());
     } else {

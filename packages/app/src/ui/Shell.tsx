@@ -343,7 +343,15 @@ function Main({ screen, workbench, onLoadOlder, device }: { screen: Screen; work
   switch (main.kind) {
     case "transcript":
       return agent !== undefined ? (
-        <Transcript agent={agent} expanded={screen.toolsExpanded} onLoadOlder={() => onLoadOlder(agent)} onDownload={device.download} />
+        <Transcript
+          key={`${screen.tab?.node ?? ""}/${screen.tab?.sessionId ?? ""}`}
+          agent={agent}
+          expanded={screen.toolsExpanded}
+          anchor={screen.view?.scroll}
+          onAnchor={(scroll) => (screen.tab !== undefined ? workbench.updateView(screen.tab, { scroll }) : undefined)}
+          onLoadOlder={() => onLoadOlder(agent)}
+          onDownload={device.download}
+        />
       ) : (
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 8 }}>
           <T color="muted">No session here.</T>

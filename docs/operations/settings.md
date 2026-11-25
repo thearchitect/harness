@@ -17,7 +17,18 @@
   themes/               # themes (pi's format)
   log/                  # node events and agents' output
   uploads/              # files handed to sessions from the app (dropped, picked)
+  ui-state/tui.json     # the TUI windows' state on this machine (below)
 ```
+
+## A window's state
+
+What each tab left — the message being written, where its transcript was scrolled, expanded tool
+output, the item shown — the active tab and the node chosen in the strip belong to the device, not
+to the user: the TUI keeps them in `ui-state/tui.json` (written under its lock and merged by tab, so
+two windows keep each other's tabs; the active tab and node are the window's that closed last), the
+web app in the browser's `localStorage`, the phone apps in a file of their own. They are kept at
+most every half second and on quitting; a draft's cursor comes back at its end. A session without
+a message comes back only with a draft: as a new session in its folder, the draft in it.
 
 ## UI settings
 
@@ -27,7 +38,7 @@ the node user's `ui-settings.json`. Clients read them with `settings_get` and ch
 
 | Key | Meaning |
 |---|---|
-| `ui.tabs` | The open session tabs, in order: `{ node, sessionId, sessionFile, cwd, seen }`; `seen` clears the ✓/✗ of what the user has looked at. |
+| `ui.tabs` | The open session tabs, in order: `{ node, sessionId, sessionFile, cwd, seen }`; `seen` clears the ✓/✗ of what the user has looked at. A session joins them with its first message; changes are made from the current value (`settings_set` `ifRevision`), so clients changing tabs at once keep each other's. |
 | `ui.theme` | The theme (pi's built-in name or a file in `themes/`). |
 | `ui.font.chat`, `ui.font.chrome` | The app's fonts of its two zones: `{ family, size }`, family `jetbrains-mono`, `iosevka-term`, `terminus` or `system` ([app.md](app.md)). |
 | `ui.web.panes` | The app's strip width: `{ left }` in pixels. |

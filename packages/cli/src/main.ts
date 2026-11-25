@@ -40,6 +40,7 @@ import { canExecUpdate, checkUpdates, detectInstall, execUpdate, updateHint, upd
 import { readRemotes, writeRemotes } from "./remotes.ts";
 import { App, clientThemes } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
+import { tuiViewStore } from "#tui/view-store.ts";
 
 const DEFAULT_NODE = "default";
 
@@ -259,6 +260,7 @@ async function runTui(args: string[]): Promise<void> {
       await client.addEndpoint(async () => NodeConnection.open(await wsTransport(url), "tui", token, TUI_CAPABILITIES), { home: false });
     },
     themes: () => clientThemes(home),
+    viewStore: tuiViewStore(home),
     update: {
       hint: () => updateHint(updateState, Date.now()),
       lines: () => updateLines(updateState, install, Date.now()),
@@ -267,6 +269,8 @@ async function runTui(args: string[]): Promise<void> {
     },
   });
   const renderers = await loadRenderers(cwd, piExtensions());
+  // the window as it was left: each tab's draft and scroll, the active tab, the node
+  await workbench.restoreViews();
 
   // What this start opens: the session asked for; the latest of this directory; a new one in the
   // directory given; else the window as it was, or choosing a new session's folder without tabs.
@@ -306,6 +310,7 @@ async function runTui(args: string[]): Promise<void> {
     if (!confirmed && question !== undefined && workbench !== undefined) {
       workbench.confirm(question, "Quit", () => quit(true));
     } else {
+      await app?.keepWindow();
       app?.stop();
       client.dispose();
       await local.close();
@@ -315,6 +320,7 @@ async function runTui(args: string[]): Promise<void> {
   upgrade = () => {
     if (install.kind === "profile") {
       const element = install.element;
+      void app?.keepWindow();
       app?.stop();
       client.dispose();
       void local.close().then(() => execUpdate(element));

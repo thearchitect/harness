@@ -27,6 +27,7 @@ import {
   requestNotifications,
   saveFile,
   showAttention,
+  viewStore,
   VOICE_SUPPORTED,
 } from "./browser";
 import { appSettings } from "./settings.ts";
@@ -49,6 +50,7 @@ async function connect(endpoint: Endpoint): Promise<Connected> {
   // no directory of its own: new sessions ask for one on their node
   const workbench: Workbench = new Workbench(client, {
     themes: () => themeNames,
+    viewStore: viewStore(),
     uiSettings: () => appSettings(client, workbench, { supported: NOTIFICATIONS_SUPPORTED, request: requestNotifications }),
     // an exported session comes to this device
     offerFile: (node, path) =>
@@ -58,6 +60,8 @@ async function connect(endpoint: Endpoint): Promise<Connected> {
         .then((file) => saveFile(path.split("/").at(-1) ?? "file", file.base64))
         .catch((reason: unknown) => workbench.notify("error", `download: ${reason instanceof Error ? reason.message : String(reason)}`)),
   });
+  // the window as it was on this device
+  await workbench.restoreViews();
   return { client, workbench, endpoint, themeNames };
 }
 
@@ -187,6 +191,20 @@ function WorkbenchApp() {
       return drawn;
     }
   }, [connected, version, width, editorText, theme.chrome]);
+
+  // each tab has its own message being written: it comes back with the tab, and is kept as it is typed
+  const shownTab = screen?.tab !== undefined ? `${screen.tab.node}/${screen.tab.sessionId}` : "";
+  useEffect(() => {
+    setEditorText(screen?.view?.draft ?? "");
+  }, [shownTab]);
+  useEffect(() => {
+    const tab = connected?.workbench.activeTab();
+    if (tab !== undefined && `${tab.node}/${tab.sessionId}` === shownTab && connected?.workbench.view(tab).draft !== editorText) {
+      connected?.workbench.updateView(tab, { draft: editorText });
+    } else {
+      // the tab's draft already, or another tab coming
+    }
+  }, [editorText]);
 
   // what this screen shows, by meaning: test drivers compare it with the TUI's (plan 16.4)
   useEffect(() => {

@@ -9,13 +9,20 @@ import type { NodeConnection } from "#client/connection.ts";
 import type { ActionId } from "#client/keymap.ts";
 import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench, type Screen } from "#client/workbench/workbench.ts";
+import type { ViewStateStore } from "#client/workbench/view-state.ts";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { App } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
 import { gridHtml, screenshot } from "../capture/rasterize.ts";
 import { VirtualTerminal } from "./terminal.ts";
 
-export type TuiDriverOptions = { columns?: number; rows?: number; cwd: string };
+export type TuiDriverOptions = {
+  columns?: number;
+  rows?: number;
+  cwd: string;
+  /** Where the window keeps its state: given, it is restored at the start (a TUI started again). */
+  viewStore?: ViewStateStore;
+};
 
 export class TuiDriver {
   readonly terminal: VirtualTerminal;
@@ -35,7 +42,8 @@ export class TuiDriver {
     const terminal = new VirtualTerminal(options.columns ?? 140, options.rows ?? 40);
     const client = new ClientModel();
     const node = await client.addEndpoint(open, { home: true });
-    const workbench = new Workbench(client, { cwd: options.cwd, themes: () => ["dark", "light"] });
+    const workbench = new Workbench(client, { cwd: options.cwd, themes: () => ["dark", "light"], ...(options.viewStore !== undefined ? { viewStore: options.viewStore } : {}) });
+    await workbench.restoreViews();
     // pi's dark theme: the virtual terminal reports no colors of its own
     const settings = SettingsManager.inMemory({ theme: "dark" });
     const app = new App({ client, workbench, renderers: await loadRenderers(options.cwd, []), cwd: options.cwd, settings, onQuit: () => undefined, terminal });

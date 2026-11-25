@@ -281,6 +281,43 @@ export const scenario = defineScenario({
         );
       },
     },
+    {
+      name: "each tab keeps its message being written; the page opened again has it and its active tab",
+      async run({ stand, clients: { web } }) {
+        // a second tab to switch to
+        stand.script([{ text: "second one" }]);
+        await web.page.getByRole("button", { name: "New session" }).first().click();
+        await web.page.getByRole("list", { name: "new session folder" }).waitFor();
+        for (const key of "project") {
+          await web.page.keyboard.press(key);
+        }
+        await web.page.keyboard.press("Enter");
+        await web.type("second");
+        await web.submit();
+        await web.page.getByText("second one").waitFor({ timeout: 15_000 });
+        const field = web.page.getByRole("textbox", { name: "Message" });
+        const tabs = web.page.getByRole("tablist", { name: "sessions" }).getByRole("button").filter({ hasNotText: "+ new" });
+        const count = (await web.waitForScreen((screen) => screen.tabs.length >= 2)).tabs.length;
+
+        await web.type("draft of the last");
+        await tabs.nth(0).click();
+        await web.waitForScreen((screen) => screen.active === 0);
+        assert.equal(await field.inputValue(), "");
+        await web.type("draft of the first");
+        await tabs.nth(count - 1).click();
+        await web.waitForScreen((screen) => screen.active === count - 1);
+        assert.equal(await field.inputValue(), "draft of the last");
+        await tabs.nth(0).click();
+        await web.waitForScreen((screen) => screen.active === 0);
+        assert.equal(await field.inputValue(), "draft of the first");
+
+        // kept within half a second; the page opened again
+        await web.page.waitForTimeout(800);
+        await web.page.reload();
+        await web.waitForScreen((screen) => screen.tabs.length === count && screen.active === 0);
+        await web.page.waitForFunction(() => (document.querySelector('[aria-label="Message"]') as HTMLTextAreaElement | null)?.value === "draft of the first");
+      },
+    },
   ],
 });
 
