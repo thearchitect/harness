@@ -2,7 +2,7 @@
 // `harness remote …` (the client's connections). Secrets are printed once, never stored in clear.
 
 import { parseArgs } from "node:util";
-import { HubAuth } from "#node/auth.ts";
+import { HubAuth, PAIRING_TTL_MS } from "#node/auth.ts";
 import { readNodeConfig } from "#node/config.ts";
 import { readRemotes, writeRemotes } from "./remotes.ts";
 
@@ -28,9 +28,25 @@ async function readHidden(prompt: string): Promise<string> {
   return Buffer.concat(chunks).toString("utf8").split("\n")[0]?.trim() ?? "";
 }
 
-/** The link that pairs a device: the hub's web app with the token in its fragment (never sent to a server). */
-export function pairingLink(url: string, token: string): string {
-  return `${url.replace(/^ws/, "http").replace(/\/$/, "")}/#pair=${encodeURIComponent(token)}`;
+/** The link that pairs a device: the hub's web app with the code in its fragment (never in a request line). */
+export function pairingLink(url: string, code: string): string {
+  return `${url.replace(/^ws/, "http").replace(/\/$/, "")}/#pair=${encodeURIComponent(code)}`;
+}
+
+/** A pairing code exchanged at the hub (POST /pair) for this device's token. */
+export async function redeemPairing(url: string, code: string): Promise<{ user: string; device: string; token: string }> {
+  const response = await fetch(`${url.replace(/^ws/, "http").replace(/\/$/, "")}/pair`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ code }),
+    signal: AbortSignal.timeout(20_000),
+  });
+  const body = (await response.json()) as { user: string; device: string; token: string } | { error: { message: string } };
+  if ("error" in body) {
+    throw new Error(body.error.message);
+  } else {
+    return body;
+  }
 }
 
 async function qrTerminal(text: string): Promise<string> {
@@ -58,16 +74,18 @@ export async function hubAdmin(home: string, args: string[]): Promise<void> {
       break;
     case "device add": {
       const user = positionals[0] ?? usage("harness hub device add <user> --name <device>");
-      const { token } = auth.addDevice(user, values.name ?? usage("harness hub device add <user> --name <device> [--url <hub address>]"));
+      const device = values.name ?? usage("harness hub device add <user> --name <device> [--url <hub address>]");
+      const code = auth.addPairing(user, device, Date.now());
       const url = values.url ?? readNodeConfig(home, "hub").hub?.url;
-      print(`device ${values.name} of ${user}; its token (shown once):\n${token}\non a terminal: harness remote add <name> <hub url>, then paste the token`);
+      print(`device ${device} of ${user}: its pairing code, once and for ${PAIRING_TTL_MS / 60_000} minutes:\n  ${code}`);
+      print("on a terminal: harness remote add <name> <hub url>, then enter the code");
       if (url !== undefined) {
         // the app: this link (or its QR code) pairs the device and opens the hub
-        const link = pairingLink(url, token);
+        const link = pairingLink(url, code);
         print(`in the app or a browser: ${link}`);
         print(await qrTerminal(link));
       } else {
-        print("in the app: paste the token (or give --url <hub address> for a pairing link and QR code)");
+        print("in the app: enter the code (or give --url <hub address> for a pairing link and QR code)");
       }
       break;
     }
@@ -109,12 +127,13 @@ export async function remoteAdmin(home: string, args: string[]): Promise<void> {
       if (name === undefined || url === undefined || !/^wss?:\/\//.test(url)) {
         usage("harness remote add <name> <ws(s)://hub>");
       } else {
-        const token = process.env.HARNESS_TOKEN ?? (await readHidden(`device token for ${name}: `));
-        if (token === "") {
-          throw new Error("no token given");
+        const code = process.env.HARNESS_PAIRING_CODE ?? (await readHidden(`pairing code for ${name} (harness hub device add): `));
+        if (code === "") {
+          throw new Error("no pairing code given");
         } else {
+          const { user, device, token } = await redeemPairing(url, code);
           writeRemotes(home, [...remotes.filter((remote) => remote.name !== name), { name, url, token }]);
-          print(`remote ${name} added`);
+          print(`remote ${name} added: device ${device} of ${user}`);
         }
       }
       break;

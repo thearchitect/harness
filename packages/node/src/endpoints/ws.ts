@@ -7,7 +7,8 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { WebSocketServer, type WebSocket } from "ws";
 import { decodeRecord, encodeRecord } from "#protocol/framing.ts";
-import { toProtocolError } from "#protocol/errors.ts";
+import { HarnessError, toProtocolError } from "#protocol/errors.ts";
+import { systemClock, type Clock } from "#protocol/clock.ts";
 import type { ClientFrame, NodeToHubFrame } from "#protocol/node.ts";
 import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
 import type { Hub, UplinkPeer } from "../hub.ts";
@@ -18,6 +19,8 @@ export type WsEndpointOptions = {
   port: number;
   /** Other HTTP requests (the web app); 404 without it. */
   http?: (request: IncomingMessage, response: ServerResponse) => void;
+  /** Pairing codes expire by it. */
+  clock?: Clock;
 };
 
 function firstFrame(socket: WebSocket): Promise<Record<string, unknown>> {
@@ -114,9 +117,48 @@ async function acceptUplink(hub: Hub, socket: WebSocket): Promise<void> {
   }
 }
 
+const PAIR_BODY_LIMIT = 1024;
+
+/** POST /pair { code } → { user, device, token }: a device exchanges its one-time code (no other credential). */
+function redeem(hub: Hub, clock: Clock, request: IncomingMessage, response: ServerResponse): void {
+  const reply = (status: number, body: object): void => {
+    response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
+  };
+  if (request.method !== "POST") {
+    reply(405, { error: { code: "invalid_record", message: "POST { code }" } });
+  } else {
+    let body = "";
+    request.on("data", (chunk: Buffer) => {
+      body += String(chunk);
+      if (body.length > PAIR_BODY_LIMIT) {
+        request.destroy();
+      } else {
+        // more of it
+      }
+    });
+    request.on("end", () => {
+      try {
+        const { code } = JSON.parse(body) as { code?: unknown };
+        if (typeof code !== "string") {
+          reply(400, { error: { code: "invalid_record", message: "POST { code }" } });
+        } else {
+          reply(200, hub.auth.redeemPairing(code, clock.now()));
+        }
+      } catch (error) {
+        const known = error instanceof HarnessError;
+        reply(known ? 401 : 400, { error: { code: known ? error.code : "invalid_record", message: error instanceof Error ? error.message : String(error) } });
+      }
+    });
+  }
+}
+
 export async function listenWs(node: HarnessNode, hub: Hub, options: WsEndpointOptions): Promise<Server> {
+  const clock = options.clock ?? systemClock;
   const server = createServer((request, response) => {
-    if (options.http !== undefined) {
+    const path = new URL(request.url ?? "/", "http://hub").pathname;
+    if (path === "/pair") {
+      redeem(hub, clock, request, response);
+    } else if (options.http !== undefined) {
       options.http(request, response);
     } else {
       response.writeHead(404).end();

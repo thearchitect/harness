@@ -15,7 +15,7 @@ import { createStand, nextRecord, type Stand } from "#testkit/stand/stand.ts";
 import { WebDriver } from "#testkit/drivers/web.ts";
 import { bundledBrowser } from "#testkit/capture/rasterize.ts";
 import { appWebDir, serveStatic } from "#node/endpoints/static.ts";
-import { pairingLink } from "#cli/admin.ts";
+import { pairingLink, redeemPairing } from "#cli/admin.ts";
 
 function until(condition: () => boolean, timeoutMs = 10_000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -97,7 +97,7 @@ describe("hub", () => {
     stands.push(hubStand, home);
     const hub = new Hub(hubStand.node);
     hub.auth.addUser("carol");
-    const token = hub.auth.addDevice("carol", "browser").token;
+    const code = hub.auth.addPairing("carol", "browser", Date.now());
     const key = hub.auth.addNode("home", ["carol"]).key;
     const server = await listenWs(hubStand.node, hub, { host: "127.0.0.1", port: 0, http: serveStatic(appWebDir() ?? "") });
     cleanups.push(() => server.close());
@@ -112,8 +112,8 @@ describe("hub", () => {
     const browser = await chromium.launch({ executablePath: bundledBrowser(), args: ["--no-sandbox"] });
     cleanups.push(() => void browser.close());
     const page = await browser.newPage();
-    await page.goto(pairingLink(`http://${base}`, token));
-    // the token left the address for the browser's storage; the app shows carol's node
+    await page.goto(pairingLink(`http://${base}`, code));
+    // the code left the address and became this browser's device; the app shows carol's node
     await page.getByRole("button", { name: "New session" }).first().waitFor({ timeout: 30_000 });
     assert.equal(new URL(page.url()).hash, "");
     await page.getByRole("button", { name: "New session" }).first().click();
@@ -124,8 +124,16 @@ describe("hub", () => {
       assert.ok(tries < 400, "no agent started on the home node");
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    // the same browser comes back paired
+    assert.deepEqual(
+      hub.auth.devices().map((device) => `${device.user}/${device.name}`),
+      ["carol/browser"],
+    );
+    // the same browser comes back paired; the code is spent
     await page.goto(`http://${base}/`);
     await page.getByRole("tablist", { name: "sessions" }).waitFor({ timeout: 30_000 });
+    await assert.rejects(redeemPairing(`http://${base}`, code), /unknown pairing code/);
+    const other = await browser.newPage();
+    await other.goto(pairingLink(`http://${base}`, code));
+    await other.getByText(/unknown pairing code/).waitFor({ timeout: 15_000 });
   });
 });

@@ -11,7 +11,28 @@ export type HubUser = { name: string; admin: boolean };
 export type HubDevice = { user: string; name: string; tokenHash: string; created: number };
 export type HubNode = { name: string; keyHash: string; users: string[]; created: number };
 
-type HubData = { users: HubUser[]; devices: HubDevice[]; nodes: HubNode[] };
+/** A device not paired yet: its one-time code (hashed) and when the code expires. */
+export type HubPairing = { user: string; device: string; codeHash: string; expires: number };
+
+type HubData = { users: HubUser[]; devices: HubDevice[]; nodes: HubNode[]; pairings: HubPairing[] };
+
+/** How long a pairing code lasts. */
+export const PAIRING_TTL_MS = 10 * 60 * 1000;
+
+/** Crockford's base32 without I, L, O, U: a code read from a screen and typed on a phone. */
+const CODE_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+/** A pairing code: 15 characters in three groups (75 bits), once and for ten minutes. */
+export function newPairingCode(): string {
+  const bytes = randomBytes(15);
+  const chars = [...bytes].map((byte) => CODE_ALPHABET[byte % 32] ?? "0").join("");
+  return `${chars.slice(0, 5)}-${chars.slice(5, 10)}-${chars.slice(10, 15)}`;
+}
+
+/** A code as typed: case, spaces and dashes do not matter. */
+function normalCode(code: string): string {
+  return code.toUpperCase().replace(/[^0-9A-Z]/g, "");
+}
 
 /** A new secret: 256 bits, URL-safe. */
 export function newSecret(): string {
@@ -106,6 +127,38 @@ export class HubAuth {
 
   revokeDevice(user: string, name: string): void {
     this.write("devices", this.devices().filter((device) => !(device.user === user && device.name === name)));
+  }
+
+  /**
+   * A device to pair: a one-time code that the device exchanges for its token (`redeemPairing`)
+   * within PAIRING_TTL_MS. Pairing again before then replaces the code.
+   */
+  addPairing(user: string, device: string, now: number): string {
+    checkName("device", device);
+    if (!this.users().some((candidate) => candidate.name === user)) {
+      throw new HarnessError("not_found", `no user ${user}`);
+    } else {
+      const code = newPairingCode();
+      const kept = this.read("pairings").filter((pairing) => pairing.expires > now && !(pairing.user === user && pairing.device === device));
+      this.write("pairings", [...kept, { user, device, codeHash: hashSecret(normalCode(code)), expires: now + PAIRING_TTL_MS }]);
+      return code;
+    }
+  }
+
+  /** Exchanges a pairing code for the device's token, once: the code is gone afterwards. */
+  redeemPairing(code: string, now: number): { user: string; device: string; token: string } {
+    const hash = hashSecret(normalCode(code));
+    const pairings = this.read("pairings");
+    const found = pairings.find((pairing) => sameHash(pairing.codeHash, hash));
+    this.write("pairings", pairings.filter((pairing) => pairing !== found && pairing.expires > now));
+    if (found === undefined) {
+      throw new HarnessError("unauthorized", "unknown pairing code: ask for a new one (harness hub device add)");
+    } else if (found.expires <= now) {
+      throw new HarnessError("unauthorized", "the pairing code expired: ask for a new one (harness hub device add)");
+    } else {
+      const { token } = this.addDevice(found.user, found.device);
+      return { user: found.user, device: found.device, token };
+    }
   }
 
   /** The user a device token belongs to. */

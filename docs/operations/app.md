@@ -14,9 +14,10 @@ builds are not published yet.
   this user's node (the running one, or one inside the process). The window's address carries a
   one-time token in its fragment; closing the window ends the command.
 - **Through a hub**: a hub serves the web build on its address. Pair a browser with
-  `harness hub device add <user> --name <device> --url <hub address>`: it prints a link (and its
-  QR code) with the device token in the fragment (`#pair=…`); opening it keeps the token in the
-  browser and removes it from the address. Without `--url`, paste the token into the pairing form.
+  `harness hub device add <user> --name <device> --url <hub address>`: it prints a one-time code,
+  a link with the code in its fragment (`#pair=…`) and the link's QR code; opening the link (within
+  ten minutes, once) exchanges the code for this browser's device token and removes it from the
+  address. Without `--url`, enter the code into the pairing form.
   `hub.url` in the hub's `nodes/<name>.json` sets the address once.
 
 ## What the browser adds

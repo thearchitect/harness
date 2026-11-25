@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { HubAuth } from "./auth.ts";
+import { HubAuth, PAIRING_TTL_MS } from "./auth.ts";
 import { parseListen } from "./config.ts";
 
 test("devices and nodes: secrets are shown once and kept as hashes; access follows the node's users", () => {
@@ -29,6 +29,33 @@ test("devices and nodes: secrets are shown once and kept as hashes; access follo
   auth.removeUser("alice");
   assert.throws(() => auth.userOfToken(token), /unknown device token/);
   assert.equal(auth.mayUse("alice", "work"), false);
+});
+
+test("pairing codes: once, within their time, typed loosely; the device appears only when one is redeemed", () => {
+  const home = mkdtempSync(join(tmpdir(), "auth-"));
+  const auth = new HubAuth(home);
+  auth.addUser("alice");
+  const now = 1_000_000;
+  const code = auth.addPairing("alice", "phone", now);
+  assert.match(code, /^[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}-[0-9A-HJKMNP-TV-Z]{5}$/);
+  assert.deepEqual(auth.devices(), []);
+  assert.ok(!readFileSync(join(home, "hub", "pairings.json"), "utf8").includes(code.replace(/-/g, "")), "only the code's hash is kept");
+
+  const typed = ` ${code.toLowerCase().replace(/-/g, " ")} `;
+  const { user, device, token } = auth.redeemPairing(typed, now + 1000);
+  assert.deepEqual([user, device], ["alice", "phone"]);
+  assert.equal(auth.userOfToken(token), "alice");
+  assert.throws(() => auth.redeemPairing(code, now + 2000), /unknown pairing code/);
+
+  const late = auth.addPairing("alice", "tablet", now);
+  assert.throws(() => auth.redeemPairing(late, now + PAIRING_TTL_MS), /expired/);
+  assert.throws(() => auth.redeemPairing(late, now), /unknown pairing code/, "an expired code is gone");
+  assert.throws(() => auth.addPairing("nobody", "x", now), /no user nobody/);
+
+  const first = auth.addPairing("alice", "watch", now);
+  const second = auth.addPairing("alice", "watch", now);
+  assert.throws(() => auth.redeemPairing(first, now), /unknown pairing code/, "pairing again replaces the code");
+  assert.equal(auth.redeemPairing(second, now).device, "watch");
 });
 
 test("listen addresses", () => {

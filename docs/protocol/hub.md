@@ -5,8 +5,10 @@ it routes a client's frames to the node they name; it keeps each hub user's UI s
 
 ## Devices
 
-A device connects to `wss://<hub>/client` with a device token in its `hello`. Tokens are made by
-`harness hub device add <user> --name <device>` (shown once, stored as a SHA-256 hash). The
+A device connects to `wss://<hub>/client` with a device token in its `hello`. A device gets its
+token by pairing: `harness hub device add <user> --name <device>` makes a one-time code (ten
+minutes, stored as a SHA-256 hash); the device sends it to `POST https://<hub>/pair { code }` and
+receives `{ user, device, token }` (the token stored as a hash; the code is spent). The
 connection is that user's: `nodes_list` shows the hub's node only to admins and users the hub's
 own node lists, and every node the user may use with its presence.
 

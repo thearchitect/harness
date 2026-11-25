@@ -98,7 +98,13 @@ function WorkbenchApp() {
 
   useEffect(() => {
     void loadFonts().finally(() => setFontsReady(true));
-    void readEndpoint().then((found) => setEndpoint(found));
+    void readEndpoint()
+      .then((found) => setEndpoint(found))
+      .catch((reason: unknown) => {
+        // a pairing link whose code failed: say why and ask for a code
+        setError(reason instanceof Error ? reason.message : String(reason));
+        setEndpoint(undefined);
+      });
   }, []);
 
   useEffect(() => {
@@ -331,7 +337,14 @@ function WorkbenchApp() {
   const body = !fontsReady || endpoint === null ? (
     <View style={{ flex: 1, backgroundColor: theme.colors.pageBg }} />
   ) : endpoint === undefined ? (
-    <Pairing error={error} onPair={(token, url) => void saveDevice(token, url).then(setEndpoint)} />
+    <Pairing
+      error={error}
+      onPair={(code, url) =>
+        void saveDevice(code, url)
+          .then(setEndpoint)
+          .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
+      }
+    />
   ) : screen === undefined || connected === undefined ? (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.pageBg }}>
       <T color={error !== undefined ? "error" : "muted"}>{error ?? "connecting…"}</T>
