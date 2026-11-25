@@ -16,9 +16,12 @@ APP="$ROOT/packages/app"
 modules="$(nix build --no-link --print-out-paths "$ROOT#appModules")"
 fonts="$(nix build --no-link --print-out-paths "$ROOT#appFonts")"
 
-# prebuild writes into node_modules' neighbours, not into it: a writable copy is not needed
+# Gradle builds the native libraries inside node_modules (<package>/android/build): a writable copy
 rm -rf "$APP/node_modules"
-ln -s "$modules/node_modules" "$APP/node_modules"
+cp -r --no-preserve=mode,ownership "$modules/node_modules" "$APP/node_modules"
+chmod -R u+x "$APP/node_modules/.bin/" 2>/dev/null || true
+find "$APP/node_modules" -path '*/bin/*' -type f -exec chmod u+x {} +
+find "$APP/node_modules" -name '*.sh' -type f -exec chmod u+x {} +
 mkdir -p "$APP/assets/fonts"
 cp -f "$fonts"/*.ttf "$APP/assets/fonts/"
 chmod u+w "$APP/assets/fonts"/*.ttf

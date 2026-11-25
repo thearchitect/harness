@@ -37,7 +37,8 @@ jobs:
         run: nix shell nixpkgs#nodejs --command nix/app-native.sh android
       - name: Build the APK
         working-directory: packages/app/android
-        run: ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures=x86_64
+        # settings.gradle resolves the React Native and Expo packages with node
+        run: nix shell nixpkgs#nodejs --command ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures=x86_64
       - name: Install Maestro
         run: |
           curl -Ls "https://get.maestro.mobile.dev" | bash
