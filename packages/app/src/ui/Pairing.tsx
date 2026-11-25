@@ -11,8 +11,16 @@ export function Pairing({ error, onPair }: { error: string | undefined; onPair: 
   const theme = useTheme();
   const [url, setUrl] = useState("");
   const [code, setCode] = useState("");
+  const [problem, setProblem] = useState<string | undefined>(undefined);
   const ready = code !== "" && (!ASKS_FOR_URL || url !== "");
-  const pair = (): void => onPair(code.trim(), url.trim());
+  const pair = (): void => {
+    if (ASKS_FOR_URL && !/^(https?|wss?):\/\/[^/\s]+/.test(url.trim())) {
+      setProblem("the hub's address, like https://hub.example");
+    } else {
+      setProblem(undefined);
+      onPair(code.trim(), url.trim());
+    }
+  };
   const input = [fontOf(theme.chrome), { color: theme.colors.text, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 2, padding: 4 }];
   return (
     <View style={{ flex: 1, alignItems: "center", justifyContent: "center", backgroundColor: theme.colors.pageBg, padding: 16 }}>
@@ -21,7 +29,7 @@ export function Pairing({ error, onPair }: { error: string | undefined; onPair: 
         {ASKS_FOR_URL ? (
           <TextInput
             accessibilityLabel="Hub address"
-            value={url}
+            defaultValue=""
             onChangeText={setUrl}
             placeholder="https://hub.example"
             placeholderTextColor={theme.colors.dim}
@@ -34,7 +42,7 @@ export function Pairing({ error, onPair }: { error: string | undefined; onPair: 
         ) : null}
         <TextInput
           accessibilityLabel="Pairing code"
-          value={code}
+          defaultValue=""
           onChangeText={setCode}
           placeholder="XXXXX-XXXXX-XXXXX"
           placeholderTextColor={theme.colors.dim}
@@ -44,7 +52,7 @@ export function Pairing({ error, onPair }: { error: string | undefined; onPair: 
           onSubmitEditing={() => (ready ? pair() : undefined)}
           style={input}
         />
-        {error !== undefined ? <T color="error">{error}</T> : null}
+        {problem !== undefined ? <T color="warning">{problem}</T> : error !== undefined ? <T color="error">{error}</T> : null}
         <Button label="Pair" tone="success" disabled={!ready} onPress={pair} />
       </Frame>
     </View>
