@@ -88,6 +88,12 @@
           inherit bundle;
           # Type check, unit and integration tests of the sources (nix/check.sh).
           tests = pkgs.callPackage ./nix/check.nix { inherit bundle; };
+        }
+        // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          # The NixOS module in a VM: a hub and a node linked to it, as two users.
+          module = import ./nix/module-test.nix { inherit pkgs self; };
+        }
+        // {
           # Every bundled tool on the user's PATH (nix/smoke.sh in CI).
           bundle-full = self.packages.${pkgs.stdenv.hostPlatform.system}.default.override {
             bundled = {
@@ -99,6 +105,9 @@
           };
         }
       );
+
+      # services.harness.nodes.<name>: nodes as systemd services, each as its own user (nix/module.nix).
+      nixosModules.default = import ./nix/module.nix { inherit self; };
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt);
     };

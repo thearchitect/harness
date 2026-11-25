@@ -1,7 +1,7 @@
 // harness — the command line.
 //
 //   harness [-c | --continue] [--session <id>]   the TUI; a new session in the current directory
-//   harness node [--name <name>]                 a node: agents of this user, a unix socket,
+//   harness node [--name <name>] [--config <f>]  a node: agents of this user, a unix socket,
 //                                                links to the hubs of ~/.harness/nodes/<name>.json
 //   harness hub [--name <name>] [--listen h:p]   a node with the hub role: devices and nodes over WebSocket
 //   harness hub user|device|node …               the hub's users, devices and nodes
@@ -52,11 +52,11 @@ function piExtensions(): string[] {
 
 /** A node, and a hub too when asked: its socket, its WebSocket endpoint, its links to hubs. */
 async function runNode(args: string[], asHub: boolean): Promise<void> {
-  const { values } = parseArgs({ args, options: { name: { type: "string" }, listen: { type: "string" } } });
+  const { values } = parseArgs({ args, options: { name: { type: "string" }, listen: { type: "string" }, config: { type: "string" } } });
   const home = harnessHome();
   ensureHome(home);
   const name = values.name ?? (asHub ? "hub" : DEFAULT_NODE);
-  const config = readNodeConfig(home, name);
+  const config = readNodeConfig(home, name, values.config);
   const node = new HarnessNode({ name, dataDir: home, harnessVersion: harnessVersion(), users: config.users });
   const path = socketPath(home, name);
   const server = await listenUnix(node, path);
@@ -71,7 +71,7 @@ async function runNode(args: string[], asHub: boolean): Promise<void> {
   }
 
   const uplinks = (config.hubs ?? []).map((hub) => {
-    const uplink = new Uplink(node, { url: hub.url, key: hubKey(hub), onState: (state, detail) => process.stderr.write(`hub ${hub.url}: ${state}${detail !== undefined ? ` (${detail})` : ""}\n`) });
+    const uplink = new Uplink(node, { url: hub.url, key: () => hubKey(hub), onState: (state, detail) => process.stderr.write(`hub ${hub.url}: ${state}${detail !== undefined ? ` (${detail})` : ""}\n`) });
     uplink.start();
     return uplink;
   });

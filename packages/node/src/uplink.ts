@@ -11,7 +11,8 @@ import type { Connection, HarnessNode } from "./node.ts";
 export type UplinkOptions = {
   /** The hub's WebSocket base: ws(s)://host[:port]. */
   url: string;
-  key: string;
+  /** The node's key, read at every attempt (a key file may appear or change later). */
+  key: string | (() => string);
   onState?: (state: "connected" | "disconnected", detail?: string) => void;
 };
 
@@ -36,10 +37,18 @@ export class Uplink {
   }
 
   private connect(): void {
+    let key: string;
+    try {
+      key = typeof this.options.key === "string" ? this.options.key : this.options.key();
+    } catch (error) {
+      this.options.onState?.("disconnected", error instanceof Error ? error.message : String(error));
+      this.retry();
+      return;
+    }
     const socket = new WebSocket(`${this.options.url.replace(/\/$/, "")}/uplink`);
     this.socket = socket;
     socket.addEventListener("open", () => {
-      socket.send(encodeRecord({ k: "hello", protocol: PROTOCOL_VERSION, client: "node", token: this.options.key }));
+      socket.send(encodeRecord({ k: "hello", protocol: PROTOCOL_VERSION, client: "node", token: key }));
     });
     socket.addEventListener("message", (event) => {
       const decoded = decodeRecord(String(event.data));
@@ -55,17 +64,21 @@ export class Uplink {
       }
       this.channels.clear();
       this.options.onState?.("disconnected");
-      if (!this.stopped) {
-        const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)] ?? 30_000;
-        this.attempt += 1;
-        this.timer = setTimeout(() => this.connect(), delay);
-      } else {
-        // stopped on purpose
-      }
+      this.retry();
     });
     socket.addEventListener("error", () => {
       // "close" follows and schedules the next attempt
     });
+  }
+
+  private retry(): void {
+    if (!this.stopped) {
+      const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)] ?? 30_000;
+      this.attempt += 1;
+      this.timer = setTimeout(() => this.connect(), delay);
+    } else {
+      // stopped on purpose
+    }
   }
 
   private receive(frame: HubToNodeFrame): void {

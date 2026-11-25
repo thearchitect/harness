@@ -13,11 +13,12 @@ export type NodeFileConfig = {
   hub?: { listen: string };
 };
 
-export function readNodeConfig(home: string, name: string): NodeFileConfig {
+/** `path`: an explicit file (the NixOS module's); otherwise ~/.harness/nodes/<name>.json. */
+export function readNodeConfig(home: string, name: string, path?: string): NodeFileConfig {
   try {
-    return JSON.parse(readFileSync(join(home, "nodes", `${name}.json`), "utf8")) as NodeFileConfig;
+    return JSON.parse(readFileSync(path ?? join(home, "nodes", `${name}.json`), "utf8")) as NodeFileConfig;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" && path === undefined) {
       return {};
     } else {
       throw new Error(`nodes/${name}.json: ${error instanceof Error ? error.message : String(error)}`);
