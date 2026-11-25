@@ -1,8 +1,8 @@
 {
   "name": "harness",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Personal pi workflow: PLAN/BUILD and simple modes, side panel, mutation gates, system prompt, bundled MCP tools, one-press updates, code exploration rules, web-research skill; distributed as a Nix bundle",
+  "description": "harness: a multi-session coding agent platform on pi — nodes, hub, protocol, TUI and app, background tasks, subagents; distributed as a Nix bundle",
   "type": "module",
   "author": "The Architect",
   "license": "MIT",
@@ -11,32 +11,17 @@
     "url": "git+https://github.com/thearchitect/harness.git"
   },
   "homepage": "https://github.com/thearchitect/harness#readme",
-  "bugs": {
-    "url": "https://github.com/thearchitect/harness/issues"
-  },
-  "keywords": [
-    "pi",
-    "pi-coding-agent",
-    "extension"
-  ],
   "engines": {
     "node": ">=22.19.0"
   },
-  "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
-  },
-  "peerDependenciesMeta": {
-    "@earendil-works/pi-coding-agent": {
-      "optional": true
-    },
-    "@earendil-works/pi-tui": {
-      "optional": true
-    }
-  },
-  "pi": {
-    "extensions": [
-      "./index.ts"
-    ]
+  "imports": {
+    "#protocol/*": "./packages/protocol/src/*",
+    "#client/*": "./packages/client/src/*",
+    "#node/*": "./packages/node/src/*",
+    "#agent/*": "./packages/agent/src/*",
+    "#extension/*": "./packages/extension/src/*",
+    "#tui/*": "./packages/tui/src/*",
+    "#cli/*": "./packages/cli/src/*",
+    "#testkit/*": "./packages/testkit/src/*"
   }
 }
