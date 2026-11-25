@@ -1,7 +1,10 @@
 # План: платформа harness — узлы, hub, протокол, UI, фоновые задачи, субагенты
 
-Заменяет `claude-implementer-plan.md`: делегирование Claude вошло сюда как движок субагентов (раздел 12) поверх
-общих механизмов платформы.
+Делегирование реализации Claude Code — движок субагентов (раздел 12) поверх общих
+механизмов платформы. Материалы плана: [`probes/`](probes/) — пробы из раздела 3,
+[`fixtures/`](fixtures/) — записи реальных прогонов для будущих тестов (переезжают в тесты
+своего пакета, когда он появится). Документация pi — `docs/` пакета
+`@earendil-works/pi-coding-agent` в бандле; документация Claude Code — https://code.claude.com/docs/en/.
 
 Отметки: `[ ]` — раздел с работой к выполнению, `[x]` — сделан и проверен. Раздел `##`
 отмечается, когда сделаны все его `###` и его собственный текст. Разделы без отметки —
@@ -99,13 +102,13 @@ Harness перестаёт быть расширением, живущим вн�
   `createToolSearchExtension`; `discoverAndLoadExtensions`, `ExtensionRunner`,
   `DefaultResourceLoader`, `SessionManager`, `ModelRuntime`.
 - `ExtensionUIDialogOptions.signal` закрывает диалог программно.
-- События и команды RPC — документированный контракт (`json.md`, `rpc-commands.md`, типы
+- События и команды RPC — документированный контракт (pi `docs/json.md`, `docs/rpc-commands.md`, типы
   `RpcCommand`, `AgentSessionEvent`, `RpcExtensionUIRequest` экспортируются).
 - Тема pi (`theme/dark.json`): OKHSL, ≈60 семантических токенов + `export.pageBg/cardBg`.
 - `@earendil-works/pi-ai` экспортирует faux-провайдер (`fauxProvider`, `fauxAssistantMessage`,
   `fauxToolCall`, `fauxText`, `fauxThinking`) — сценарная модель без сети.
 
-**Под bun 1.4.2 (проба в `bun-probe/sdk.ts`)**
+**Под bun 1.4.2 (проба [`probes/bun-sdk.ts`](probes/bun-sdk.ts))**
 - pi CLI (`--version`) и pi SDK работают.
 - Загружаются без ошибок: harness (checkout), magic-context, ask-user, ollama-cloud,
   deepseek-search, pi-usage, codemode, MCP; все инструменты зарегистрированы.
@@ -120,17 +123,18 @@ Harness перестаёт быть расширением, живущим вн�
   `apiKeySource: "none"` при OAuth, `tools`, `skills`, `plugins`), `rate_limit_event`,
   `system/api_retry`, `assistant`/`user`, `result` (`is_error`, `api_error`, `permission_denials`).
 - Без `CLAUDE_CODE_RETRY_WATCHDOG` исчерпанный лимит сразу даёт `usage_limit_reached`
-  (`claude-probe/out.jsonl`); с ним процесс ждёт сброса, публикуя `rate_limit_event`
+  ([`fixtures/claude/usage-limit.jsonl`](fixtures/claude/usage-limit.jsonl)); с ним процесс ждёт
+  сброса, публикуя `rate_limit_event`
   (`status: "rejected"`, `resetsAt`) и `system/api_retry` (`error: "rate_limit"`,
-  `retry_delay_ms`) (`claude-probe/watchdog.jsonl`).
+  `retry_delay_ms`) ([`fixtures/claude/watchdog.jsonl`](fixtures/claude/watchdog.jsonl)).
 - `--resume <id>`, `--append-system-prompt` (снимок на сессию), `--plugin-dir` (манифест
   необязателен, имя = каталог), `--mcp-config` + `--strict-mcp-config`, `--settings` (JSON),
   `--input-format stream-json` (потоковый ввод), чтение `AGENTS.md` без `CLAUDE.md`.
-- Права: хуки — первый шаг проверки, до правил allow/deny из настроек (permissions.md, «How
-  permissions are evaluated»); `PreToolUse` отвечает `permissionDecision: allow | deny` с
+- Права: хуки — первый шаг проверки, до правил allow/deny из настроек
+  (https://code.claude.com/docs/en/permissions.md, «How permissions are evaluated»); `PreToolUse` отвечает `permissionDecision: allow | deny` с
   причиной. `--permission-prompt-tool mcp__<server>__<tool>` получает то, что дошло до вопроса;
   ответ — один текстовый блок `{"behavior":"allow"}` / `{"behavior":"deny","message":…}`
-  (+ `updatedInput`), без `structuredContent` (errors.md). `--permission-prompts none` —
+  (+ `updatedInput`), без `structuredContent` (https://code.claude.com/docs/en/errors.md). `--permission-prompts none` —
   нерешённое отклоняется.
 - Фоновые задачи Claude в потоке: `task_started` (`task_id`, `tool_use_id`, `task_type`),
   `task_progress`, `task_updated`, `task_notification` (`status`, `summary`, `output_file`),
@@ -159,7 +163,8 @@ Harness перестаёт быть расширением, живущим вн�
   gpt-6.2-sol`.
 - Claude Code: `--model` принимает алиас семейства (`opus`, `sonnet`, …) или полный id; алиас
   раскрывается в новейшую разрешённую версию семейства; `--effort`: `low`, `medium`, `high`,
-  `xhigh`, `max`, `ultracode` (`docs/claude/cli-reference.md`, `docs/claude/errors.md`).
+  `xhigh`, `max`, `ultracode` (https://code.claude.com/docs/en/cli-reference.md,
+  https://code.claude.com/docs/en/errors.md).
 
 **Сборка и окно**
 - Bun без `node_modules` разрешает импорты из глобального кэша по `bun.lock` корня проекта;
@@ -1014,7 +1019,7 @@ claude -p --input-format stream-json --output-format stream-json --verbose
   steering оператором; продолжение.
 - Правило S5 — контракт промпта: текст правила есть в собранном промпте всех режимов, описания
   брифинг-скиллов бандла начинаются с «Only on the operator's explicit request».
-- Unit движка `claude`: разбор stream-json по фикстурам (включая `claude-probe/out.jsonl` и `watchdog.jsonl`);
+- Unit движка `claude`: разбор stream-json по фикстурам (включая [`fixtures/claude/`](fixtures/claude/));
   `decide` по таблице для каждого режима; сборка аргументов и окружения; минимальная версия и
   `capabilities`.
 - Integration с поддельным `claude` (скрипт: stream-json, управляющие запросы, хук и MCP через
