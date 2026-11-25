@@ -21,6 +21,8 @@ appId: dev.harness.app
 - extendedWaitUntil:
     visible: "~"
     timeout: 30000
+# the keyboard rising moves the block: tap once it stands
+- waitForAnimationToEnd
 - tapOn: "~"
 - extendedWaitUntil:
     # iOS names a multiline field by its text: the editor is found by its test id
