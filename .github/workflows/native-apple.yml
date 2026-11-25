@@ -37,7 +37,8 @@ jobs:
           scheme="${workspace%.xcworkspace}"
           nix shell nixpkgs#nodejs --command xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
             -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
-            CODE_SIGNING_ALLOWED=NO | tail -50
+            CODE_SIGN_IDENTITY=- | tail -50
+          # signed to run locally: the keychain (the device token) needs the app's entitlements
           echo "APP=$(ls -d "$PWD"/build/Build/Products/Release-iphonesimulator/*.app | head -1)" >> "$GITHUB_ENV"
       - name: Install Maestro
         run: |

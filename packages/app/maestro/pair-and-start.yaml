@@ -11,8 +11,8 @@ appId: dev.harness.app
 - inputText: ${HUB}
 - tapOn: "Pairing code"
 - inputText: ${CODE}
-- hideKeyboard
-- tapOn: "Pair"
+# the code field's return key pairs
+- pressKey: Enter
 - extendedWaitUntil:
     visible: "New session"
     timeout: 60000
