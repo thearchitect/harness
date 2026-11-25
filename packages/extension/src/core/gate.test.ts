@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
@@ -26,9 +26,21 @@ describe("changeReview", () => {
 });
 
 describe("the change authorizer", () => {
-  // A project directory outside the system temp directory (which is scratch space in every mode).
-  const project = realpathSync(mkdtempSync(join(process.cwd(), ".gate-test-")));
-  after(() => rmSync(project, { recursive: true, force: true }));
+  // The temp directory is scratch space in every mode: the project is its sibling, not inside it.
+  const base = realpathSync(mkdtempSync(join(tmpdir(), "gate-test-")));
+  const project = join(base, "project");
+  const savedTmp = process.env.TMPDIR;
+  mkdirSync(project);
+  mkdirSync(join(base, "tmp"));
+  process.env.TMPDIR = join(base, "tmp");
+  after(() => {
+    if (savedTmp === undefined) {
+      delete process.env.TMPDIR;
+    } else {
+      process.env.TMPDIR = savedTmp;
+    }
+    rmSync(base, { recursive: true, force: true });
+  });
   const ctx = {
     cwd: project,
     sessionManager: { getHeader: () => ({ id: "s1", timestamp: "2026-01-01T00:00:00Z" }) },

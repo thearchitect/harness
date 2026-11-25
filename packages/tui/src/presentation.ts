@@ -20,7 +20,9 @@ import {
   type ToolRendererResolver,
   type ToolRenderers,
 } from "@earendil-works/pi-coding-agent";
-import { pathToFileURL } from "node:url";
+import { readFileSync, statSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { createJiti } from "jiti";
 import { createHarnessExtension } from "#extension/index.ts";
 import { GateCommentRow } from "#extension/presentation/tui/gate.ts";
 
@@ -76,6 +78,16 @@ export class Renderers {
   }
 }
 
+/** The entry files of an extension path: the file itself, or a package's `pi.extensions`. */
+function extensionEntries(path: string): string[] {
+  if (statSync(path).isDirectory()) {
+    const manifest = JSON.parse(readFileSync(join(path, "package.json"), "utf8")) as { pi?: { extensions?: string[] } };
+    return (manifest.pi?.extensions ?? []).map((entry) => resolve(path, entry));
+  } else {
+    return [path];
+  }
+}
+
 /** Renderers for a client: pi's built-ins, harness, codemode, and the bundle's packages. */
 export async function loadRenderers(cwd: string, extensionPaths: readonly string[]): Promise<Renderers> {
   const renderers = new Renderers();
@@ -101,9 +113,11 @@ export async function loadRenderers(cwd: string, extensionPaths: readonly string
   });
   await renderers.load(inert.factory, "harness");
   await renderers.load(createCodemodeExtension(), "codemode");
-  for (const path of extensionPaths) {
+  // Packages ship TypeScript too: loaded as pi loads them (jiti), not by node's own loader.
+  const jiti = createJiti(import.meta.url);
+  for (const path of extensionPaths.flatMap(extensionEntries)) {
     try {
-      const module = (await import(pathToFileURL(path).href)) as { default?: ExtensionFactory };
+      const module = (await jiti.import(path)) as { default?: ExtensionFactory };
       if (typeof module.default === "function") {
         await renderers.load(module.default, path);
       } else {

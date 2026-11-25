@@ -29,7 +29,13 @@ export type Stand = {
   down(): Promise<void>;
 };
 
-export async function createStand(options: { name?: string } = {}): Promise<Stand> {
+export type StandOptions = {
+  name?: string;
+  /** A built bundle (its directory): agents run its sources with its manifest — packages, MCP servers, tools. */
+  bundle?: string;
+};
+
+export async function createStand(options: StandOptions = {}): Promise<Stand> {
   // short: unix socket paths are limited to about 100 bytes
   const root = mkdtempSync(join(tmpdir(), "hs-"));
   const dataDir = join(root, "h");
@@ -40,6 +46,8 @@ export async function createStand(options: { name?: string } = {}): Promise<Stan
   mkdirSync(project, { recursive: true });
   mkdirSync(agentTmp, { recursive: true });
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ defaultProvider: "scenario", defaultModel: "scripted" }));
+  // a configured key: pi checks the provider's auth before every prompt
+  writeFileSync(join(dataDir, "auth.json"), JSON.stringify({ scenario: { type: "api_key", key: "scripted" } }), { mode: 0o600 });
   const scenarioPath = join(root, "scenario.json");
   const requestsPath = join(root, "requests.jsonl");
   writeFileSync(scenarioPath, "[]");
@@ -48,8 +56,13 @@ export async function createStand(options: { name?: string } = {}): Promise<Stan
     name: options.name ?? "test",
     dataDir,
     harnessVersion: "test",
+    agentCommand: options.bundle !== undefined ? [process.execPath, join(options.bundle, "share/harness/app/packages/agent/src/main.ts")] : undefined,
     agentEnv: {
       TMPDIR: agentTmp,
+      // agents of a stand run the checkout without the bundle's MCP servers and packages, or a bundle with all of them
+      HARNESS_MANIFEST: options.bundle !== undefined ? join(options.bundle, "share/harness/manifest.json") : "",
+      // no model catalog refresh from the network: the scripted model is the only one
+      PI_OFFLINE: "1",
       HARNESS_EXTRA_EXTENSIONS: SCENARIO_MODEL_PATH,
       HARNESS_TEST_SCENARIO: scenarioPath,
       HARNESS_TEST_REQUESTS: requestsPath,

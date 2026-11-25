@@ -1,6 +1,7 @@
-# The harness bundle: a `pi` wrapper that loads the harness extension and the
-# bundled pi packages, plus every pinned MCP tool the extension registers
-# (published to it through $HARNESS_MANIFEST). Further tools are bundled in a
+# The harness bundle: the `harness` command (TUI, node, agents: packages/ run
+# by the bundled node), the bundled pi packages its agents load, plus every
+# pinned MCP tool the extension registers (published to it through
+# $HARNESS_MANIFEST). Further tools are bundled in a
 # mode each (`bundledTools`; `.override { bundled = { go = "path"; }; }`):
 # "none" leaves the tool out, "hidden" appends it to the agent's PATH only
 # (the user's or the project's own wins), "path" also puts it on the user's
@@ -25,7 +26,6 @@
   replaceVars,
   runtimeShell,
   ghostty-bin,
-  herdr,
   gopls,
   rust-analyzer,
   pnpm,
@@ -59,37 +59,23 @@ let
   # Components
   # --------------------------------------------------------------------------
 
-  # The harness extension as pi loads it (`-e <dir>` reads package.json "pi").
-  extension = stdenvNoCC.mkDerivation {
-    pname = "harness-extension";
+  # The harness sources as node runs them (TypeScript, types stripped by node):
+  # packages/ resolve each other through package.json `imports` and their npm
+  # dependencies (nix/npm) through node_modules next to it.
+  app = stdenvNoCC.mkDerivation {
+    pname = "harness-app";
     version = harnessVersion;
     src = lib.fileset.toSource {
       root = ../.;
       fileset = lib.fileset.unions [
-        ../index.ts
-        ../deps.ts
-        ../gate.ts
-        ../panel.ts
-        ../update.ts
-        ../settings.ts
-        ../lsp
-        ../tool_project_tree.ts
-        ../tool_send_file.ts
-        ../tool_ask_secret.ts
-        ../tool_display_file.ts
-        ../browser
-        ../workarounds.ts
-        ../prompt.ts
-        ../prompt.yaml
+        ../packages
         ../package.json
-        ../skills
+        ../tsconfig.json
         ../LICENSE
         ../README.md
       ];
     };
     dontBuild = true;
-    # The extension's own npm dependencies (nix/npm) resolve through
-    # node_modules next to index.ts.
     installPhase = ''
       runHook preInstall
       cp -r . $out
@@ -315,28 +301,15 @@ let
   toolsOnPath = lib.filterAttrs (id: _: bundledModes.${id} == "path") bundledTools;
   toolPackages = tool: map (content: content.package) tool.contents;
 
-  # Bundled pi packages, loaded with `-e` in this order.
+  # Bundled pi packages: every agent loads them after the harness extension, in
+  # this order (as package directories: their extensions and skills); the TUI
+  # loads their renderers.
   piPackages = [
     "@cortexkit/pi-magic-context"
-    "pi-ask-user"
     "pi-ollama-cloud"
     "pi-deepseek-search"
     "@narumitw/pi-usage"
   ];
-  # HARNESS_PROFILE=server (the Telegram gateway, remote/) runs without
-  # ask_user: its RPC dialogs cannot render options natively, the model asks
-  # in plain text instead.
-  serverPiPackages = lib.remove "pi-ask-user" piPackages;
-  # `-e <file>` loads only that extension, `-e <dir>` the whole package with
-  # its skills. pi-ask-user loads without its ask-user skill: when and how to
-  # ask is the harness's own rule (prompt.yaml operator_questions and
-  # tool_guidelines.ask_user).
-  piPackageEntries = {
-    "pi-ask-user" = "pi-ask-user/index.ts";
-  };
-  packageFlags =
-    packages:
-    lib.concatMapStringsSep " " (p: "-e ${nodeModules}/${piPackageEntries.${p} or p}") packages;
 
   # The cage skill is cage's own (`cage skill`): it always matches the bundled cage.
   cageSkill = runCommand "cage-skill" { } ''
@@ -359,7 +332,6 @@ let
         chrome-devtools-mcp = npmVersion "chrome-devtools-mcp";
         patchright = npmVersion "patchright";
         browser = "${lib.getName browser} ${browser.version}";
-        herdr = herdr.version;
         pnpm = pnpm.version;
         cage = cage.version;
       }
@@ -383,6 +355,8 @@ let
         typescript = "${nodeModules}/typescript";
       }
       // lib.genAttrs piPackages (p: "${nodeModules}/${p}");
+      # What every agent loads after the harness extension, in order.
+      piExtensions = map (p: "${nodeModules}/${p}") piPackages;
       bin = {
         lightpanda = "${lightpanda}/bin/lightpanda";
         inherit tsgo;
@@ -393,7 +367,6 @@ let
         # The `browser` MCP server runs on the bundle's node.
         node = lib.getExe nodejs;
         browser = lib.getExe browser;
-        herdr = lib.getExe herdr;
         cage = "${cage}/bin/cage"; # cage sets no meta.mainProgram
       };
       # Skills generated from bundled tools (index.ts registers them).
@@ -402,14 +375,6 @@ let
       };
     }
   );
-
-  piCli = "${nodeModules}/@earendil-works/pi-coding-agent/dist/bundle/cli.js";
-
-  # herdr's own pi integration, pinned with its binary (the file
-  # `herdr integration install pi` writes). It listens for the harness
-  # extension's "herdr:blocked" events, so it runs in the same pi process; it is
-  # a no-op outside a herdr pane.
-  herdrPiIntegration = "${herdr}/share/herdr/integrations/pi/herdr-agent-state.ts";
 
   # Bundled tools on PATH, with telemetry off unless the user sets otherwise
   # (as deps.ts runs them).
@@ -422,13 +387,14 @@ let
     exec ${nodeModules}/.bin/chrome-devtools-mcp "$@"
   '';
 
-  # Subcommands pi handles before parsing options (main.ts: auth, package
-  # commands, config, mcp). `-e` must not precede them, or pi takes the
-  # subcommand for a prompt; they do not need the bundled extensions.
+  piCli = "${nodeModules}/@earendil-works/pi-coding-agent/dist/bundle/cli.js";
+
+  # pi's own account and package commands, on the harness data directory:
+  # `harness auth login` signs a provider in for every agent of the user.
   piSubcommands = "auth|install|remove|uninstall|update|list|config|mcp";
 
-  # launcher <extension dir shell expression> → body of the `pi` launcher.
-  launcher = extensionDir: ''
+  # launcher <sources shell expression> → body of the `harness` command.
+  launcher = appDir: ''
     export HARNESS_MANIFEST=${manifest}
     export PI_SKIP_VERSION_CHECK=1
     export PI_TELEMETRY="''${PI_TELEMETRY-0}"
@@ -439,47 +405,36 @@ let
       ]
     }:$PATH:${lib.makeBinPath (lib.concatMap toolPackages (lib.attrValues installedTools))}"
     case "''${1-}" in
-      ${piSubcommands}) exec ${lib.getExe nodejs} ${piCli} "$@" ;;
+      ${piSubcommands})
+        export PI_CODING_AGENT_DIR="''${HARNESS_HOME:-$HOME/.harness}"
+        exec ${lib.getExe nodejs} ${piCli} "$@" ;;
     esac
-    case "''${HARNESS_PROFILE-}" in
-      server) harness_packages=(${packageFlags serverPiPackages}) ;;
-      *) harness_packages=(${packageFlags piPackages}) ;;
-    esac
-    # Discover schemas inside codemode, without promoting tools into model
-    # declarations (tool_search changes invalidate the provider's prompt cache).
-    exec ${lib.getExe nodejs} ${piCli} \
-      --tools +codemode \
-      --exclude-tools tool_search \
-      -e ${extensionDir} \
-      "''${harness_packages[@]}" \
-      -e ${herdrPiIntegration} \
-      "$@"
+    exec ${lib.getExe nodejs} ${appDir}/packages/cli/src/main.ts "$@"
   '';
 
-  # pi-dev: the same launcher (same pinned pi, packages and tools) with the
-  # extension loaded from a harness working tree ($HARNESS_DEV_DIR, default:
-  # the current directory). Edit the checkout, restart pi-dev (or /reload): no
-  # rebuild needed.
-  dev = writeShellScriptBin "pi-dev" (
+  # harness-dev: the same command (same pinned pi, packages and tools) running
+  # a harness working tree ($HARNESS_DEV_DIR, default: the current directory).
+  # Edit the checkout and restart: no rebuild needed.
+  dev = writeShellScriptBin "harness-dev" (
     ''
       HARNESS_DEV_DIR="$(cd "''${HARNESS_DEV_DIR:-$PWD}" && pwd)"
       if [[ "$(${lib.getExe nodejs} -p 'require(process.argv[1]).name' "$HARNESS_DEV_DIR/package.json" 2>/dev/null)" != harness ]]; then
-        echo "pi-dev: $HARNESS_DEV_DIR is not a harness checkout (run it from one or set HARNESS_DEV_DIR)" >&2
+        echo "harness-dev: $HARNESS_DEV_DIR is not a harness checkout (run it from one or set HARNESS_DEV_DIR)" >&2
         exit 1
       fi
-      # The extension's npm dependencies, as in the installed extension: the
-      # checkout's node_modules (gitignored) points at the bundle's.
+      # The npm dependencies, as in the bundle: the checkout's node_modules
+      # (gitignored) points at the bundle's.
       if [[ -L "$HARNESS_DEV_DIR/node_modules" || ! -e "$HARNESS_DEV_DIR/node_modules" ]]; then
         ln -sfn ${nodeModules} "$HARNESS_DEV_DIR/node_modules"
       else
-        echo "pi-dev: $HARNESS_DEV_DIR/node_modules is not a symlink; remove it so pi-dev can point it at the bundle's node_modules" >&2
+        echo "harness-dev: $HARNESS_DEV_DIR/node_modules is not a symlink; remove it so harness-dev can point it at the bundle's node_modules" >&2
         exit 1
       fi
     ''
     + launcher ''"$HARNESS_DEV_DIR"''
   );
 
-  pi = writeShellScriptBin "pi" (launcher extension);
+  harness = writeShellScriptBin "harness" (launcher app);
 
   # macOS: Ghostty and the Finder Quick Action "Harness" (macos/). The
   # workflow is static and finds harness-open in the Nix profiles, so a
@@ -491,7 +446,7 @@ let
   harnessOpen = replaceVars ../macos/harness-open.sh {
     inherit runtimeShell macosLib openScript;
     ghostty = ghosttyApp;
-    pi = "${pi}/bin/pi";
+    harness = "${harness}/bin/harness";
   };
   harnessSetup = replaceVars ../macos/harness-setup.sh {
     inherit runtimeShell macosLib workflow;
@@ -505,13 +460,12 @@ stdenvNoCC.mkDerivation {
   dontUnpack = true;
   installPhase = ''
     runHook preInstall
-    test -f ${herdrPiIntegration}
     mkdir -p $out/bin $out/share/harness
     # A copy, not a symlink: scripts resolve the bundle (and its manifest)
-    # from `readlink -f $(command -v pi)`.
-    install -Dm755 ${pi}/bin/pi $out/bin/pi
-    ln -s ${dev}/bin/pi-dev $out/bin/pi-dev
-    ln -s ${lib.getExe herdr} $out/bin/herdr
+    # from `readlink -f $(command -v harness)`.
+    install -Dm755 ${harness}/bin/harness $out/bin/harness
+    ln -s ${dev}/bin/harness-dev $out/bin/harness-dev
+    ln -s ${app} $out/share/harness/app
     ln -s ${lib.getExe pnpm} $out/bin/pnpm
     ln -s ${cage}/bin/cage $out/bin/cage
     ln -s ${lightpandaCli}/bin/lightpanda $out/bin/lightpanda
@@ -543,26 +497,26 @@ stdenvNoCC.mkDerivation {
   '';
 
   # Not `dev`: stdenv would take a `dev` attribute for the package's
-  # development output and put pi-dev instead of the bundle into the
+  # development output and put harness-dev instead of the bundle into the
   # buildInputs and shells that list the bundle.
   passthru = {
     inherit
-      extension
+      app
       npmTools
       lightpanda
       manifest
       cage
       ;
-    piDev = dev;
+    harnessDev = dev;
     # The toolchains of the bundled language servers (the development shell's, for nix/test.sh).
     toolchain = toolPackages bundledTools.go ++ toolPackages bundledTools.rust;
   };
 
   meta = {
-    description = "pi coding agent with the harness workflow extension and its pinned tools";
+    description = "harness: a multi-session coding agent platform on pi, with its pinned tools";
     homepage = "https://github.com/thearchitect/harness";
     license = lib.licenses.mit;
-    mainProgram = "pi";
+    mainProgram = "harness";
     # Lower than the default (5): the user's own node or bun wins a name
     # collision in a profile or buildEnv.
     priority = 10;

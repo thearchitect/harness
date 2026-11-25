@@ -1,6 +1,6 @@
 #!@runtimeShell@
-# harness-open [DIRECTORY...]: a new Ghostty window running harness (pi) in each
-# directory (default: the current one); the window closes when pi exits. The
+# harness-open [DIRECTORY...]: a new Ghostty window running harness in each
+# directory (default: the current one); the window closes when harness exits. The
 # Finder Quick Action "Harness" runs it with the selected folders.
 set -euo pipefail
 source @macosLib@
@@ -34,12 +34,12 @@ else
   fi
 fi
 
-# pi through the user's login shell, interactive: the PATH of their terminal
+# harness through the user's login shell, interactive: the PATH of their terminal
 # (the projects' toolchains), not the bare one of GUI apps.
 shell="$(dscl . -read "/Users/$(id -un)" UserShell)"
 shell="${shell#UserShell: }"
 if [[ -x "$shell" ]]; then
-  printf -v command '%q -l -i -c %q' "$shell" "exec @pi@"
+  printf -v command '%q -l -i -c %q' "$shell" "exec @harness@"
 else
   die "no login shell for $(id -un) (dscl UserShell: $shell)"
 fi

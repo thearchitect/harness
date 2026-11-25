@@ -1,3 +1,7 @@
+# The check of every push to master and every pull request: `nix flake check` on
+# Linux — the bundle builds, the type check, unit, integration and smoke tests
+# pass (nix/check.nix). Heavy pipelines (native app targets, the full system
+# matrix, updates, releases) are started by hand with `gh workflow run`.
 name: check
 
 on:
@@ -5,26 +9,28 @@ on:
     branches: [master]
   pull_request:
   workflow_dispatch:
-    inputs:
-      force:
-        description: Rebuild even when this revision is already cached
-        type: boolean
-        default: false
 
 concurrency:
   group: check-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build:
+  flake-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
-      actions: read
-      statuses: write
-    uses: ./.github/workflows/build.yml
-    with:
-      ref: ${{ github.sha }}
-      # Cache publication is off: the release hit GitHub's 1000-asset limit
-      # (publish-cache.yml is kept, no workflow calls it).
-      force: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
-    secrets: inherit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+      - name: nix flake check
+        run: nix flake check -L --keep-going 2>&1 | tee flake-check.log
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-check-log
+          path: flake-check.log

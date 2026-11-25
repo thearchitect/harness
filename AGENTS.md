@@ -4,10 +4,15 @@ Before every commit, with the changes staged (`git add`: the flake builds only
 git-tracked files), run the local minimum and commit only when it passes:
 
 ```bash
-nix develop --command sh -c 'nix build && nix/smoke.sh result && nix/test.sh result'
+nix develop --command nix flake check
 ```
 
+It builds the bundle and runs `nix/check.sh` on it: the type check, the unit
+and integration tests, the smoke tests of the built bundle. While working,
+`nix/check.sh [test files…]` runs the same from the checkout (its
+`node_modules` must point at the bundle's: `harness-dev` sets it).
+
 `master` is what users install and update to, and CI checks it only after the
-push. The unit tests import the checkout, so only the built bundle shows what
-users get: a new extension file must be listed in the extension fileset of
-`nix/package.nix`.
+push. The sources run as TypeScript on node (types stripped, no build step):
+a new package directory or source file needs no Nix change; a new npm
+dependency goes into `nix/npm/package.json` and its regenerated lock.
