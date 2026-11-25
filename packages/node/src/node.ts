@@ -9,7 +9,7 @@ import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
-import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeOp, NodeOps } from "#protocol/node.ts";
+import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
 import { NODE_OPS } from "#protocol/node.ts";
 import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
 import { AgentLink, type AgentRecord } from "./agent-link.ts";
@@ -20,8 +20,23 @@ import { SummaryTracker } from "./summary.ts";
 /** One client connection, whatever carries it. */
 export interface Connection {
   readonly id: string;
+  /** Who is on the other end: the node's own OS user (trusted), or a hub user. */
+  readonly user: string;
+  /** The node's own user through a local endpoint (unix socket, in-process): no access check. */
+  readonly trusted: boolean;
   send(frame: NodeFrame): void;
   close(): void;
+}
+
+/** What a hub adds to its node: other nodes behind it, its users and their settings. */
+export interface HubRole {
+  /** A frame for another node: routed to it, or answered with an error. */
+  route(connection: Connection, frame: ClientFrame & { node?: string }): void;
+  nodes(user: string): NodeInfo[];
+  /** Whether a hub user may use the hub's own node. */
+  mayUseLocal(user: string): boolean;
+  settingsFor(user: string): SettingsStore;
+  disconnect(connection: Connection): void;
 }
 
 export type NodeConfig = {
@@ -35,6 +50,8 @@ export type NodeConfig = {
   agentEnv?: Record<string, string>;
   /** Summaries go out at most this often per agent. */
   summaryIntervalMs?: number;
+  /** Hub users allowed on this node through its hubs (the node checks again what the hub checked). */
+  users?: string[];
 };
 
 type Attachment = { level: AttachLevel; live: boolean };
@@ -63,12 +80,33 @@ export class HarnessNode {
   private readonly locks: SessionLocks;
   readonly settings: SettingsStore;
   private counter = 0;
+  hub: HubRole | undefined;
 
   constructor(config: NodeConfig) {
     this.config = config;
     this.locks = new SessionLocks(config.dataDir);
     this.settings = new SettingsStore(config.dataDir);
-    this.settings.onChange((settings) => this.broadcast({ ev: "settings", settings }));
+    this.settings.onChange((settings) => this.settingsChanged(this.settings, settings));
+  }
+
+  /** The settings a connection's user keeps here: a hub user's own, or the node user's. */
+  settingsOf(connection: Connection): SettingsStore {
+    return this.hub !== undefined && !connection.trusted ? this.hub.settingsFor(connection.user) : this.settings;
+  }
+
+  settingsChanged(store: SettingsStore, settings: Record<string, unknown>): void {
+    for (const { connection, welcomed } of this.connections.values()) {
+      if (welcomed && this.settingsOf(connection) === store) {
+        connection.send({ k: "evt", node: this.config.name, event: { ev: "settings", settings } });
+      } else {
+        // another user's settings, or not through the handshake yet
+      }
+    }
+  }
+
+  /** Whether a connection may use this node's agents, sessions and files. */
+  private allowed(connection: Connection): boolean {
+    return connection.trusted || (this.config.users ?? []).includes(connection.user) || (this.hub?.mayUseLocal(connection.user) ?? false);
   }
 
   /* ----- connections ----- */
@@ -80,6 +118,7 @@ export class HarnessNode {
 
   disconnect(connection: Connection): void {
     this.connections.delete(connection.id);
+    this.hub?.disconnect(connection);
     for (const entry of this.agents.values()) {
       entry.attachments.delete(connection);
       for (const [key, request] of entry.requests) {
@@ -105,8 +144,16 @@ export class HarnessNode {
         connection.close();
       } else {
         state.welcomed = true;
-        connection.send({ k: "welcome", protocol: PROTOCOL_VERSION, harness: this.config.harnessVersion, node: this.config.name, user: process.env.USER ?? "" });
+        connection.send({ k: "welcome", protocol: PROTOCOL_VERSION, harness: this.config.harnessVersion, node: this.config.name, user: connection.user });
       }
+    } else if (frame.k !== "hello" && frame.node !== undefined && frame.node !== this.config.name) {
+      if (this.hub !== undefined) {
+        this.hub.route(connection, frame);
+      } else {
+        this.refuse(connection, frame, { code: "not_found", message: `no node ${frame.node} here: ${this.config.name} is not a hub` });
+      }
+    } else if (frame.k !== "hello" && !(frame.k === "req" && (frame.op === "nodes_list" || frame.op === "settings_get" || frame.op === "settings_set")) && !this.allowed(connection)) {
+      this.refuse(connection, frame, { code: "forbidden", message: `${connection.user} may not use node ${this.config.name}` });
     } else {
       switch (frame.k) {
         case "hello":
@@ -121,6 +168,23 @@ export class HarnessNode {
         default:
           connection.send({ k: "res", id: "", ok: false, error: { code: "invalid_record", message: `unknown frame ${String((frame satisfies never as { k: string }).k)}` } });
       }
+    }
+  }
+
+  /** Answers a frame with an error: an operation's response, or the HAP response of an agent request. */
+  refuse(connection: Connection, frame: ClientFrame, error: { code: "not_found" | "forbidden" | "node_offline" | "unauthorized"; message: string }): void {
+    switch (frame.k) {
+      case "req":
+        connection.send({ k: "res", id: frame.id, ok: false, error });
+        break;
+      case "hap":
+        connection.send({ k: "hap", node: frame.node ?? this.config.name, agent: frame.agent, rec: { type: "harness_response", id: String((frame.rec as { id?: unknown }).id ?? ""), ok: false, error } });
+        break;
+      case "hello":
+        connection.send({ k: "refused", error });
+        break;
+      default:
+        break; // a frame of a newer protocol
     }
   }
 
@@ -144,8 +208,10 @@ export class HarnessNode {
   /** Runs one operation; undefined when the answer comes later under the same id (agent_attach). */
   private async operate<K extends NodeOp>(connection: Connection, id: string, op: K, args: NodeOps[K]["args"]): Promise<NodeOps[K]["result"] | undefined> {
     switch (op) {
-      case "nodes_list":
-        return { nodes: [{ name: this.config.name, online: true, roles: ["node"] }] } as NodeOps[K]["result"];
+      case "nodes_list": {
+        const own = this.allowed(connection) ? [{ name: this.config.name, online: true, roles: this.hub !== undefined ? ["node", "hub"] : ["node"] }] : [];
+        return { nodes: [...own, ...(this.hub?.nodes(connection.user) ?? [])] } as NodeOps[K]["result"];
+      }
       case "sessions_list": {
         const { cwd } = args as NodeOps["sessions_list"]["args"];
         const sessions = await listSessions(this.config.dataDir, cwd);
@@ -198,10 +264,10 @@ export class HarnessNode {
         return { path: full } as NodeOps[K]["result"];
       }
       case "settings_get":
-        return { settings: this.settings.read() } as NodeOps[K]["result"];
+        return { settings: this.settingsOf(connection).read() } as NodeOps[K]["result"];
       case "settings_set": {
         const { key, value } = args as NodeOps["settings_set"]["args"];
-        return { settings: this.settings.set(key, value) } as NodeOps[K]["result"];
+        return { settings: this.settingsOf(connection).set(key, value) } as NodeOps[K]["result"];
       }
       default:
         throw new HarnessError("invalid_record", `unknown operation ${String(op satisfies never)}`);
@@ -412,9 +478,10 @@ export class HarnessNode {
     this.broadcast({ ev: "summary", agent: entry.info.id, summary: entry.summary.current });
   }
 
+  /** Agent events go to every connection allowed here (settings go only to their user: settingsChanged). */
   private broadcast(event: NodeEvent): void {
     for (const { connection, welcomed } of this.connections.values()) {
-      if (welcomed) {
+      if (welcomed && this.allowed(connection)) {
         connection.send({ k: "evt", node: this.config.name, event });
       } else {
         // not through the handshake yet

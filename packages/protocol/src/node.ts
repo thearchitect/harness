@@ -92,12 +92,28 @@ export type NodeEvent =
   | { ev: "agents"; agents: AgentInfo[] }
   | { ev: "summary"; agent: string; summary: AgentSummary }
   | { ev: "agent_exited"; agent: string; code: number | null; error?: string }
-  | { ev: "settings"; settings: Record<string, unknown> };
+  | { ev: "settings"; settings: Record<string, unknown> }
+  /** A hub's nodes changed: one came online or went offline. */
+  | { ev: "nodes"; nodes: NodeInfo[] }
+  /** A node behind a hub refused this client's channel (a protocol version mismatch). */
+  | { ev: "refused"; error: ProtocolError };
 
 export type ClientFrame =
   | { k: "hello"; protocol: number; client: string; token?: string }
   | { k: "req"; id: string; node?: string; op: NodeOp; args: unknown }
   | { k: "hap"; node?: string; agent: string; rec: HapRecord };
+
+/**
+ * The link between a node and a hub (the node connects, with its key as the hello token). The hub
+ * carries its clients' frames for the node, each client a channel `conn` with its hub user; the
+ * node answers on the same channel. The node sees each channel as one client connection.
+ */
+export type HubToNodeFrame =
+  | Extract<NodeFrame, { k: "welcome" } | { k: "refused" }>
+  | { k: "route"; conn: string; user: string; frame: ClientFrame }
+  | { k: "route_close"; conn: string };
+
+export type NodeToHubFrame = Extract<ClientFrame, { k: "hello" }> | { k: "route"; conn: string; frame: NodeFrame };
 
 /** What carries a client's frames to a node: a unix socket, a WebSocket, an in-process node. */
 export interface Transport {

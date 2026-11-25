@@ -1,0 +1,89 @@
+// A hub routes a user's device to a node that connected out to it: the device lists the node,
+// starts an agent there and runs a turn; another user cannot reach it; an unknown device token is
+// refused; the node going away shows it offline.
+
+import assert from "node:assert/strict";
+import type { AddressInfo } from "node:net";
+import { after, describe, test } from "node:test";
+import { NodeConnection } from "#client/connection.ts";
+import { ClientModel } from "#client/model/client-model.ts";
+import { wsTransport } from "#client/ws-transport.ts";
+import { Hub } from "#node/hub.ts";
+import { listenWs } from "#node/endpoints/ws.ts";
+import { Uplink } from "#node/uplink.ts";
+import { createStand, nextRecord, type Stand } from "#testkit/stand/stand.ts";
+
+function until(condition: () => boolean, timeoutMs = 10_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+    const timer = setInterval(() => {
+      if (condition()) {
+        clearInterval(timer);
+        resolve();
+      } else if (Date.now() - started > timeoutMs) {
+        clearInterval(timer);
+        reject(new Error("condition not reached"));
+      } else {
+        // keep waiting
+      }
+    }, 20);
+  });
+}
+
+describe("hub", () => {
+  const stands: Stand[] = [];
+  const cleanups: (() => void)[] = [];
+  after(async () => {
+    for (const cleanup of cleanups) {
+      cleanup();
+    }
+    for (const stand of stands) {
+      await stand.down();
+    }
+  });
+
+  test("a device reaches a node behind the hub, runs a turn there; others cannot; the node going away is offline", async () => {
+    const hubStand = await createStand({ name: "hub" });
+    const work = await createStand({ name: "work", users: ["alice"] });
+    stands.push(hubStand, work);
+    work.script([{ toolCalls: [{ name: "bash", args: { command: "echo on-work" } }] }, { text: "done" }]);
+
+    const hub = new Hub(hubStand.node);
+    hub.auth.addUser("alice");
+    hub.auth.addUser("bob");
+    const alice = hub.auth.addDevice("alice", "laptop").token;
+    const bob = hub.auth.addDevice("bob", "phone").token;
+    const key = hub.auth.addNode("work", ["alice"]).key;
+    const server = await listenWs(hubStand.node, hub, { host: "127.0.0.1", port: 0 });
+    cleanups.push(() => server.close());
+    const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    let linked = false;
+    const uplink = new Uplink(work.node, { url, key, onState: (state) => (linked = state === "connected") });
+    uplink.start();
+    cleanups.push(() => uplink.stop());
+    await until(() => linked);
+
+    const client = new ClientModel();
+    const device = await NodeConnection.open(await wsTransport(url), "test", alice);
+    cleanups.push(() => device.close());
+    await client.addConnection(device, { home: true });
+    assert.ok(client.connections.has("work"), "alice sees the work node");
+    assert.equal(client.connections.has("hub"), false, "the hub's own node is not alice's");
+
+    const api = client.connection("work");
+    const { agent } = await api.request("agent_start", { cwd: work.project });
+    await api.request("agent_attach", { agent: agent.id, level: "full" });
+    const ended = nextRecord(device, agent.id, (record) => record.type === "tool_execution_end");
+    await api.call(agent.id, { type: "harness_prompt", text: "go", mode: "plan" });
+    assert.match(JSON.stringify((await ended).result), /on-work/);
+
+    const bobs = await NodeConnection.open(await wsTransport(url), "test", bob);
+    cleanups.push(() => bobs.close());
+    await assert.rejects(bobs.request("agents_list", {}, "work"), /may not use node work/);
+    await assert.rejects(NodeConnection.open(await wsTransport(url), "test", "not-a-token"), /unknown device token/);
+
+    uplink.stop();
+    await until(() => client.offline.has("work"));
+  });
+});

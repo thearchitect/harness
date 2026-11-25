@@ -4,6 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
+import { userInfo } from "node:os";
 import { join } from "node:path";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
 import type { ClientFrame, NodeFrame } from "#protocol/node.ts";
@@ -19,6 +20,8 @@ export function socketPath(dataDir: string, name: string): string {
 function socketConnection(socket: Socket): Connection {
   return {
     id: randomUUID(),
+    user: userInfo().username,
+    trusted: true,
     send(frame: NodeFrame) {
       if (!socket.destroyed) {
         socket.write(encodeRecord(frame));

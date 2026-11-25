@@ -3,9 +3,35 @@
 // recently visited ones; the rest at summary level). Isomorphic: no Node API.
 
 import type { HapRecord, SnapshotData } from "#protocol/hap.ts";
-import type { AgentInfo, AgentSummary, NodeEvent, SessionListItem } from "#protocol/node.ts";
+import type { AgentInfo, AgentSummary, NodeEvent, NodeInfo, NodeOp, NodeOps, SessionListItem } from "#protocol/node.ts";
 import type { NodeConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
+
+/** One node as the client reaches it: its own connection, or a hub's connection routing to it. */
+export class NodeApi {
+  readonly node: string;
+  readonly connection: NodeConnection;
+  /** Frames name the node only when a hub routes them. */
+  private readonly target: string | undefined;
+
+  constructor(node: string, connection: NodeConnection, routed: boolean) {
+    this.node = node;
+    this.connection = connection;
+    this.target = routed ? node : undefined;
+  }
+
+  request<K extends NodeOp>(op: K, args: NodeOps[K]["args"]): Promise<NodeOps[K]["result"]> {
+    return this.connection.request(op, args, this.target);
+  }
+
+  call<T = unknown>(agent: string, record: { type: string; [key: string]: unknown }): Promise<T> {
+    return this.connection.call<T>(agent, record, this.target);
+  }
+
+  tell(agent: string, record: { type: string; [key: string]: unknown }): void {
+    this.connection.tell(agent, record, this.target);
+  }
+}
 
 /** Agents followed in full besides the active one. */
 export const FULL_CACHE = 3;
@@ -17,9 +43,12 @@ export function agentKey(node: string, agentId: string): AgentKey {
 }
 
 export class ClientModel {
-  readonly connections = new Map<string, NodeConnection>();
+  /** Every node this client reaches, by name. */
+  readonly connections = new Map<string, NodeApi>();
   /** The node whose settings this client uses (the local node, or the hub it logged into). */
   home: string | undefined;
+  /** Nodes known through hubs, online or not. */
+  readonly nodes = new Map<string, NodeInfo>();
   readonly agents = new Map<AgentKey, AgentInfo>();
   readonly full = new Map<AgentKey, AgentModel>();
   /** Most recently used first; the head is the active one. */
@@ -39,45 +68,71 @@ export class ClientModel {
     }
   }
 
+  /**
+   * Adds a connection: to a node, or to a hub and every node it routes to for this user. The
+   * home connection's settings are the client's (the local node's, or the hub user's).
+   */
   async addConnection(connection: NodeConnection, options: { home: boolean }): Promise<string> {
-    const node = connection.welcome?.node ?? "node";
-    this.connections.set(node, connection);
-    this.offline.delete(node);
+    const entry = connection.welcome?.node ?? "node";
     if (options.home) {
-      this.home = node;
+      this.home = entry;
     } else {
-      // a remote node besides the home one
+      // a remote node or hub besides the home one
     }
-    connection.onEvent((from, event) => this.onEvent(from, event));
+    connection.onEvent((from, event) => this.onEvent(from, event, connection));
     connection.onHap((from, agent, record) => this.onHap(from, agent, record));
     connection.onClose((reason) => {
-      this.connections.delete(node);
-      this.offline.set(node, reason);
-      for (const key of [...this.agents.keys()]) {
-        if (key.startsWith(`${node}/`)) {
-          this.agents.delete(key);
-          this.full.delete(key);
+      for (const [name, api] of [...this.connections]) {
+        if (api.connection === connection) {
+          this.dropNode(name, reason);
         } else {
-          // another node's agent
+          // reached through another connection
         }
       }
       this.changed();
     });
-    const { agents } = await connection.request("agents_list", {});
-    for (const agent of agents) {
-      this.agents.set(agentKey(node, agent.id), agent);
-      await connection.request("agent_attach", { agent: agent.id, level: "summary" });
+    const { nodes } = await connection.request("nodes_list", {});
+    for (const info of nodes) {
+      this.nodes.set(info.name, info);
+      if (info.online) {
+        await this.addNode(new NodeApi(info.name, connection, info.name !== entry));
+      } else {
+        this.offline.set(info.name, `node ${info.name} is offline`);
+      }
     }
     if (options.home) {
       this.settings = (await connection.request("settings_get", {})).settings;
     } else {
-      // settings come from the home node only
+      // settings come from the home connection only
     }
     this.changed();
-    return node;
+    return entry;
   }
 
-  connection(node: string): NodeConnection {
+  private async addNode(api: NodeApi): Promise<void> {
+    this.connections.set(api.node, api);
+    this.offline.delete(api.node);
+    const { agents } = await api.request("agents_list", {});
+    for (const agent of agents) {
+      this.agents.set(agentKey(api.node, agent.id), agent);
+      await api.request("agent_attach", { agent: agent.id, level: "summary" });
+    }
+  }
+
+  private dropNode(node: string, reason: string): void {
+    this.connections.delete(node);
+    this.offline.set(node, reason);
+    for (const key of [...this.agents.keys()]) {
+      if (key.startsWith(`${node}/`)) {
+        this.agents.delete(key);
+        this.full.delete(key);
+      } else {
+        // another node's agent
+      }
+    }
+  }
+
+  connection(node: string): NodeApi {
     const connection = this.connections.get(node);
     if (connection === undefined) {
       throw new Error(`node ${node} is not connected${this.offline.has(node) ? `: ${this.offline.get(node)}` : ""}`);
@@ -86,8 +141,25 @@ export class ClientModel {
     }
   }
 
-  private onEvent(node: string, event: NodeEvent): void {
+  private onEvent(node: string, event: NodeEvent, via: NodeConnection): void {
     switch (event.ev) {
+      case "nodes":
+        for (const info of event.nodes) {
+          this.nodes.set(info.name, info);
+          if (info.online && !this.connections.has(info.name)) {
+            void this.addNode(new NodeApi(info.name, via, true))
+              .then(() => this.changed())
+              .catch((error: unknown) => this.offline.set(info.name, error instanceof Error ? error.message : String(error)));
+          } else if (!info.online && this.connections.get(info.name)?.connection === via) {
+            this.dropNode(info.name, `node ${info.name} is offline`);
+          } else {
+            // no change for this node
+          }
+        }
+        break;
+      case "refused":
+        this.dropNode(node, event.error.message);
+        break;
       case "agents": {
         const present = new Set(event.agents.map((agent) => agentKey(node, agent.id)));
         for (const agent of event.agents) {

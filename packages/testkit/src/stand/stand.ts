@@ -33,6 +33,8 @@ export type StandOptions = {
   name?: string;
   /** A built bundle (its directory): agents run its sources with its manifest — packages, MCP servers, tools. */
   bundle?: string;
+  /** Hub users allowed on the stand's node through a hub. */
+  users?: string[];
 };
 
 export async function createStand(options: StandOptions = {}): Promise<Stand> {
@@ -68,6 +70,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
       HARNESS_TEST_REQUESTS: requestsPath,
     },
     summaryIntervalMs: 20,
+    users: options.users,
   });
   const connections: NodeConnection[] = [];
   let server: Server | undefined;

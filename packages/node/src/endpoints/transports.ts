@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
+import { userInfo } from "node:os";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
 import type { ClientFrame, NodeFrame, Transport } from "#protocol/node.ts";
 import type { HarnessNode } from "../node.ts";
@@ -55,6 +56,8 @@ export function inProcessTransport(node: HarnessNode): Transport {
   let open = true;
   const connection = {
     id: randomUUID(),
+    user: userInfo().username,
+    trusted: true,
     send(frame: NodeFrame) {
       // a copy, as a wire would make: neither side shares mutable objects with the other
       const copy = JSON.parse(JSON.stringify(frame)) as NodeFrame;

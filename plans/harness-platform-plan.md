@@ -1385,6 +1385,44 @@ harness — работа в checkout с обычным циклом сборки
 Каждый этап заканчивается зелёным `nix flake check`. Ворота фазы 0 на Linux проходятся сразу;
 их macOS-, iOS- и Android-части — на этапе 11.
 
+### Ход работ
+
+Сверяется с разделами 5–16 после каждого шага; раздел получает `[x]`, только когда сделан
+целиком. Пока ни один раздел не закрыт полностью — ниже, что сделано и что осталось по этапам.
+
+- **Этап 0.** G1 закрыт (отступление 4). G2, G4 сняты переходом на node и npm-lock
+  (отступления 1–2). Осталось: G3 (Linux), G7, G8/G9 для web (на этапе 9), G5 (лимит Claude).
+- **Этап 1.** Сделано: `protocol` — `framing`, `version`, `errors`, `state`, `interactions`,
+  `hap`, `node`, `model-ref` с тестами; `client` — `connection`, `ClientModel`, `AgentModel`,
+  `WorkbenchModel`, `keymap`, транспорт WebSocket; `testkit/stand` (стенд, сценарная модель);
+  пайплайн `check` и `nix flake check` (`nix/check.nix`), `AGENTS.md`. Осталось: `schemas.ts` и
+  валидация на входе endpoint'ов, тест графа импортов и границ, `Clock`/`Spawner`/`NodeFs` как
+  внедряемые зависимости узла, `client` — переподключение, зоны экрана в `WorkbenchModel`;
+  `testkit` — `control/` и `harness-test`, отчёт `.test-reports/`, драйвер `raw`, `fixtures/`;
+  генератор справочника протокола, проверки документов и языка (13.6).
+- **Этап 2.** Сделано: перенос в `packages/extension`, `core/` (режимы, gate, authorize,
+  interrupts, settings, prompt), Interactions через хост, `state/store`, `supervisor` и `task_*`,
+  `ask_user` на `questions`, `ask_secret` на `secret`, `display_file`, `send_file` клиентам,
+  TUI-диалоги в `presentation/tui`. Осталось: `models/` (ссылки на модели в агенте, M2),
+  чистота всех отрисовщиков (комментарий gate в `details`), строка `claude` в `deps.ts`.
+- **Этап 3.** Сделано: `agent` — `runtime`, `hap-server` (команды pi RPC + `harness_*`), `ui-context`,
+  `interactions`, тема, явное завершение; HAP по fd 3 (отступление 5). Осталось: мост компонентов
+  (`component-bridge.ts`, `harness_component_*`), `harness_spawn_child` (этап 10).
+- **Этап 4.** Сделано: `node` — агенты, сводки, сессии и блокировки, unix socket, настройки
+  (отступление 7), в-процессе транспорт. Осталось: `pool.ts` (лимиты, выгрузка простаивающих),
+  `files.ts` (`files_*`, автодополнение путей), `telemetry.ts`.
+- **Этап 5.** Сделано: `tui` (полноэкранный, три колонки, транскрипт, футер, вид задачи,
+  отрисовщики пакетов), `cli` (`harness`, `harness node`), бандл без лаунчера `pi` и herdr,
+  smoke-тесты бандла. Осталось: драйвер TUI, растеризатор и галерея (G7), поиск по
+  транскрипту, окна выбора (модель, сессия, дерево, настройки, вход провайдера), выбор узла
+  для новой вкладки, OSC 7501.
+- **Этап 6.** Сделано: `auth.ts` (пользователи, устройства, ключи узлов — хэши, 0600),
+  `hub.ts` (маршрут, присутствие, настройки пользователей hub), `endpoints/ws.ts`, `uplink.ts`
+  (переподключение), `config.ts` (`nodes/<name>.json`), `harness hub`, `harness hub
+  user|device|node …`, `harness remote …`, клиент через hub ко многим узлам; сценарий
+  `tests/scenarios/hub.test.ts`. Осталось: NixOS-модуль, коды привязки по QR (этап 9).
+- **Этапы 7–11** не начаты.
+
 ### Порядок работы
 
 - Работа идёт в `master`: пользователей мало, и они знают, что пока не обновляются.
@@ -1429,4 +1467,26 @@ CLI-схеме разделов 12.4–12.8, после — переход по 
    назначается. В новой системе логика расширения тему не трогает (вид — в `presentation/`),
    а хост агента вызывает `initTheme()`; onnxruntime-node загружается и работает.
    Хост следует запуску pi (`createAgentSessionServices` → `createAgentSessionFromServices` →
-   `createAgentSessionRuntime`, как `main.js`) и завершает процесс явно.
+   `createAgentSessionRuntime`, как `main.js`) и завершает процесс явно. G1 закрыт: промпт
+   harness проходит проверку, бандловые пакеты (magic-context с onnxruntime) и codemode работают
+   в агенте бандла (smoke-тест `tests/smoke/bundle.test.ts`).
+5. **HAP по fd 3, а не по stdin/stdout.** Узел открывает агенту пару сокетов на fd 3; stdout и
+   stderr агента идут в его журнал (`~/.harness/log/agents/<id>.log`). Почему: любой случайный
+   `console.log` расширения иначе ломает поток; перехват stdout pi не экспортирует.
+   `--stdio` для отладки.
+6. **Протокол узла — адресованные кадры вместо каналов `open/data/close`** (7.2). Кадры
+   `hello/welcome/refused`, `req/res` (операции с id), `evt` (события узла), `hap { node?, agent, rec }`.
+   Узел переписывает id запросов к агенту под соединение и возвращает ответ только спросившему.
+   Согласованность снимка без `seq`: `agent_attach { level: "full" }` отвечает снимком агента, а
+   живые записи идут клиенту только после ответа — поток агента упорядочен, поэтому снимок +
+   хвост не теряют и не дублируют записи. Сводки — событие `summary` в `evt`.
+7. **Настройки UI — `~/.harness/ui-settings.json`**, а не `settings.json` (6.1). Почему:
+   `settings.json` пишет сам pi в каждом агенте (модель, thinking); два писателя одного
+   файла теряли бы записи. Ключи те же (`ui.tabs`, `ui.theme`, …), плоские.
+8. **Аккаунты провайдеров — `harness auth|config|mcp|install|list|update …`** передаются в CLI pi
+   на `~/.harness` до того, как вход провайдера по протоколу (URL + код) появится в TUI и `app`.
+9. **Вывод фоновой задачи в TUI — опросом `harness_task_output`** раз в 700 мс, пока открыт
+   вид задачи, а не подпиской. Вернуть: подписка `harness_task_subscribe` с потоком кусков.
+10. **Отправка сообщения — Ctrl+Enter и Alt+Enter**: терминалы без протокола клавиатуры
+    Kitty не отличают Ctrl+Enter от Enter; отправку делает приложение, а не редактор pi-tui
+    (тот занимает Alt+Enter под новую строку).
