@@ -355,8 +355,8 @@ function WorkbenchApp() {
     if (connected !== undefined && tab?.agent !== undefined && fileQuery !== undefined) {
       void connected.client
         .connection(tab.node)
-        .call<{ items: { value: string; label: string; description?: string }[] }>(tab.agent.id, { type: "harness_complete", kind: "file", prefix: fileQuery })
-        .then(({ items }) => setFiles(items.map((item) => ({ value: item.value, label: item.label, description: item.description }))))
+        .call<{ items: string[] }>(tab.agent.id, { type: "harness_complete", kind: "file", prefix: fileQuery })
+        .then(({ items }) => setFiles(items.map((path) => ({ value: path, label: path }))))
         .catch(() => setFiles([]));
     } else {
       setFiles([]);
@@ -370,7 +370,8 @@ function WorkbenchApp() {
     if (editorText.startsWith("/")) {
       setEditorText(completion.value);
     } else {
-      setEditorText(editorText.replace(/@(\S*)$/, `@${completion.value} `));
+      // a directory stays open for its entries; a file ends the mention
+      setEditorText(editorText.replace(/@(\S*)$/, `@${completion.value}${completion.value.endsWith("/") ? "" : " "}`));
     }
   };
 

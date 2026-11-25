@@ -108,6 +108,21 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "@ completes the session's files in a block above the field; a directory stays open",
+      async run({ stand, clients: { web } }) {
+        mkdirSync(join(stand.project, "notes"), { recursive: true });
+        writeFileSync(join(stand.project, "notes", "plan.md"), "");
+        const field = web.page.getByRole("textbox", { name: "Message" });
+        await field.fill("see @no");
+        const completions = web.page.getByRole("list", { name: "completions" });
+        await completions.getByRole("button", { name: "notes/" }).click();
+        assert.equal(await field.inputValue(), "see @notes/");
+        await completions.getByRole("button", { name: "notes/plan.md" }).click();
+        assert.equal(await field.inputValue(), "see @notes/plan.md ");
+        await field.fill("");
+      },
+    },
+    {
       name: "a file the agent sends downloads to this device",
       async run({ stand, clients: { web } }) {
         const report = join(stand.project, "report.txt");

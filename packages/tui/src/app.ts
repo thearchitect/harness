@@ -42,6 +42,7 @@ import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
 import { ItemsColumn, Lines, TabsColumn } from "./columns.ts";
 import { Footer } from "./footer.ts";
 import type { Renderers } from "./presentation.ts";
+import { RemoteAutocompleteProvider } from "./remote-complete.ts";
 import { TranscriptView } from "./transcript.ts";
 import { getTheme } from "./theme.ts";
 
@@ -706,7 +707,16 @@ export class App {
   async loadCompletions(): Promise<void> {
     const tab = this.workbench.activeTab();
     if (tab?.agent !== undefined) {
-      this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(await this.workbench.commands(), tab.cwd));
+      const commands = await this.workbench.commands();
+      const agentId = tab.agent.id;
+      // a session on this machine: pi's provider reads its directory; another machine's: its node does
+      this.editor.setAutocompleteProvider(
+        tab.node === this.client.home
+          ? new CombinedAutocompleteProvider(commands, tab.cwd)
+          : new RemoteAutocompleteProvider(commands, async (prefix) =>
+              (await this.client.connection(tab.node).call<{ items: string[] }>(agentId, { type: "harness_complete", kind: "file", prefix }).catch(() => ({ items: [] }))).items,
+            ),
+      );
     } else {
       // no session to complete for
     }
