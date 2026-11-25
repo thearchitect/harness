@@ -2,7 +2,8 @@
 // workbench — the same model, zones and actions as the TUI — in the user's theme and fonts.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useWindowDimensions, View } from "react-native";
+import { KeyboardAvoidingView, Platform, useWindowDimensions, View } from "react-native";
+import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { NodeConnection } from "#client/connection.ts";
 import type { AgentModel } from "#client/model/agent-model.ts";
 import { ClientModel } from "#client/model/client-model.ts";
@@ -434,5 +435,16 @@ function WorkbenchApp() {
   ) : (
     <Shell screen={screen} workbench={connected.workbench} editorText={editorText} onEditorText={setEditorText} onSubmit={submit} completions={completions} onComplete={complete} onLoadOlder={loadOlder} device={device} panes={connected.client.settings["ui.web.panes"]} onPanes={(panes) => void connected.client.setting("ui.web.panes", panes)} />
   );
-  return <ThemeContext.Provider value={theme}>{body}</ThemeContext.Provider>;
+  // the system's bars and keyboard never cover the screen (native; on web the insets are zero)
+  return (
+    <SafeAreaProvider>
+      <ThemeContext.Provider value={theme}>
+        <SafeAreaView edges={["top", "bottom", "left", "right"]} style={{ flex: 1, backgroundColor: theme.colors.pageBg }}>
+          <KeyboardAvoidingView behavior={Platform.OS === "web" ? undefined : "padding"} style={{ flex: 1 }}>
+            {body}
+          </KeyboardAvoidingView>
+        </SafeAreaView>
+      </ThemeContext.Provider>
+    </SafeAreaProvider>
+  );
 }

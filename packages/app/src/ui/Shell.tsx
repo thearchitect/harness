@@ -5,7 +5,7 @@
 
 import * as Clipboard from "expo-clipboard";
 import { useMemo, useState } from "react";
-import { PanResponder, Pressable, View } from "react-native";
+import { PanResponder, Platform, Pressable, View } from "react-native";
 import type { AgentModel } from "#client/model/agent-model.ts";
 import type { Item, Screen, StatusLine, Tab, Workbench } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
@@ -362,7 +362,15 @@ export function Shell(props: {
             onAnswer={(id, value) => void workbench.answer(id, value)}
             onClosePicker={() => workbench.closePicker()}
             device={props.device}
-            placeholder={screen.tab === undefined ? "Ctrl+T starts a session" : "Message (Ctrl+Enter sends; a leading ! asks for BUILD)"}
+            placeholder={
+              Platform.OS === "web"
+                ? screen.tab === undefined
+                  ? "Ctrl+T starts a session"
+                  : "Message (Ctrl+Enter sends; a leading ! asks for BUILD)"
+                : screen.tab === undefined
+                  ? "Sessions → + new starts a session"
+                  : "Message (⏎ sends; a leading ! asks for BUILD)"
+            }
           />
           {screen.zones.status.map((line, index) => (
             <T key={index} color={STATUS_TONE[line.level]} lines={1}>

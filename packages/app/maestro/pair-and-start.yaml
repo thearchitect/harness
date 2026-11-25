@@ -26,3 +26,9 @@ appId: dev.harness.app
     visible: "Message"
     timeout: 60000
 - takeScreenshot: session
+# the hidden strips open over the screen (a narrow screen): the session is there
+- tapOn: "Sessions"
+- extendedWaitUntil:
+    visible: "New session"
+    timeout: 10000
+- takeScreenshot: sessions-strip
