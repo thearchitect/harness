@@ -9,6 +9,7 @@ import { join, relative } from "node:path";
 import type { Transport } from "#protocol/node.ts";
 import type { RawDriver } from "../drivers/raw.ts";
 import { TuiDriver } from "../drivers/tui.ts";
+import { WebDriver } from "../drivers/web.ts";
 import type { Stand } from "../stand/stand.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..", "..");
@@ -36,7 +37,7 @@ export class Report {
   private readonly stand: Stand;
   private readonly steps: { name: string; ok: boolean }[] = [];
   private lastPassed: Shots | undefined;
-  clients: Record<string, TuiDriver | RawDriver> = {};
+  clients: Record<string, TuiDriver | RawDriver | WebDriver> = {};
 
   constructor(scenario: string, stand: Stand) {
     this.scenario = scenario;
@@ -96,7 +97,7 @@ export class Report {
     } else {
       // it failed at the first step
     }
-    const models = this.models();
+    const models = await this.models();
     const copied = this.copyStand();
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     const link = (path: string): string => `[${relative(this.dir, path)}](${relative(this.dir, path)})`;
@@ -137,7 +138,7 @@ export class Report {
         await client.settle();
         screens[name] = { text: client.text(), ansi: client.terminal.ansi };
       } else {
-        // a raw client has no screen
+        // a raw client has no screen; a web client's is shot when it fails (its ARIA and PNG)
       }
     }
     return screens;
@@ -149,7 +150,7 @@ export class Report {
     mkdirSync(dir, { recursive: true });
     const files: string[] = [];
     for (const [name, client] of Object.entries(this.clients)) {
-      if (client instanceof TuiDriver) {
+      if (client instanceof TuiDriver || client instanceof WebDriver) {
         files.push(...(await client.capture(dir, `${slug(step)}-${slug(name)}`).catch(() => [])));
       } else {
         // a raw client has no screen
@@ -159,14 +160,16 @@ export class Report {
   }
 
   /** Each client's ClientModel and Workbench state as JSON. */
-  models(): string[] {
+  async models(): Promise<string[]> {
     const dir = join(this.dir, "model");
     mkdirSync(dir, { recursive: true });
-    return Object.entries(this.clients).map(([name, client]) => {
+    const files: string[] = [];
+    for (const [name, client] of Object.entries(this.clients)) {
       const file = join(dir, `${slug(name)}.json`);
-      writeFileSync(file, `${JSON.stringify(modelState(client), null, 2)}\n`);
-      return file;
-    });
+      writeFileSync(file, `${JSON.stringify(await modelState(client).catch((error: unknown) => ({ error: String(error) })), null, 2)}\n`);
+      files.push(file);
+    }
+    return files;
   }
 
   private copyStand(): string[] {
@@ -187,7 +190,15 @@ export class Report {
 }
 
 /** What a client knows, as plain data: its nodes, agents, settings, and the screen it would draw. */
-export function modelState(client: TuiDriver | RawDriver): unknown {
+export async function modelState(client: TuiDriver | RawDriver | WebDriver): Promise<unknown> {
+  if (client instanceof WebDriver) {
+    return { screen: await client.screen() };
+  } else {
+    return clientState(client);
+  }
+}
+
+function clientState(client: TuiDriver | RawDriver): unknown {
   const model = client.client;
   const base = {
     home: model.home,

@@ -28,7 +28,8 @@ pkgs.testers.runNixOSTest {
     # each node runs as its user
     machine.succeed("podman exec remote ps -eo user:16,args | grep 'node --name alice' | grep -v grep | grep -q '^alice '")
     machine.succeed("podman exec remote ps -eo user:16,args | grep 'hub --name hub' | grep -v grep | grep -q '^harness '")
-    # the hub's HTTP endpoint answers (WebSocket paths upgrade; others are 404)
-    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ | grep -qx 404")
+    # the hub serves the app's web build (WebSocket paths upgrade)
+    machine.succeed("curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8080/ | grep -qx 200")
+    machine.succeed("curl -s http://127.0.0.1:8080/fonts/jetbrains-mono-regular.woff2 -o /dev/null -w '%{content_type}' | grep -qx font/woff2")
   '';
 }

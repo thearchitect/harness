@@ -295,24 +295,38 @@ export class ClientModel {
     }
     this.recent = this.recent.slice(0, FULL_CACHE + 1);
     const existing = this.full.get(key);
-    if (existing !== undefined) {
+    const loading = this.loading.get(key);
+    if (loading !== undefined) {
+      return loading; // a follow of it is under way: its snapshot comes with it
+    } else if (existing !== undefined) {
       return existing;
     } else {
       const model = new AgentModel(agentId);
       this.full.set(key, model);
-      const { snapshot } = await this.connection(node).request("agent_attach", { agent: agentId, level: "full" });
-      if (snapshot !== undefined) {
-        model.loadSnapshot(snapshot);
-      } else {
-        throw new Error(`node ${node} attached ${agentId} without a snapshot`);
+      const load = (async (): Promise<AgentModel> => {
+        const { snapshot } = await this.connection(node).request("agent_attach", { agent: agentId, level: "full" });
+        if (snapshot !== undefined) {
+          model.loadSnapshot(snapshot);
+        } else {
+          throw new Error(`node ${node} attached ${agentId} without a snapshot`);
+        }
+        model.onChange(() => this.changed());
+        this.changed();
+        return model;
+      })();
+      this.loading.set(key, load);
+      try {
+        return await load;
+      } finally {
+        this.loading.delete(key);
       }
-      model.onChange(() => this.changed());
-      this.changed();
-      return model;
     }
   }
 
   /** Stops following an agent in full: it drops to its summary; following it again takes a fresh snapshot. */
+  /** Follows under way, by agent key. */
+  private readonly loading = new Map<string, Promise<AgentModel>>();
+
   async unfollow(node: string, agentId: string): Promise<void> {
     const key = agentKey(node, agentId);
     this.full.delete(key);

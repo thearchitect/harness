@@ -72,7 +72,12 @@ export type NodeOps = {
   files_put: { args: { path: string; base64: string }; result: { path: string } };
   settings_get: { args: Record<string, never>; result: { settings: Record<string, unknown> } };
   settings_set: { args: { key: string; value: unknown }; result: { settings: Record<string, unknown> } };
+  /** A theme's colors as hex (pi's tokens plus pageBg and cardBg), for clients that draw it themselves. */
+  theme_get: { args: { name?: string }; result: ThemeColors };
 };
+
+/** A resolved theme: `appearance`, pi's color tokens and the page colors, all hex. */
+export type ThemeColors = { name: string; appearance: "dark" | "light"; colors: Record<string, string>; names: string[] };
 
 export type NodeOp = keyof NodeOps;
 
@@ -89,6 +94,7 @@ export const NODE_OPS: readonly NodeOp[] = [
   "files_put",
   "settings_get",
   "settings_set",
+  "theme_get",
 ];
 
 export type NodeEvent =

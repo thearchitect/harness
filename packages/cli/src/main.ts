@@ -11,7 +11,13 @@
 // its own — agents as its children, the same socket for other clients — while it is open.
 
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { readFileSync } from "node:fs";
+import { spawn } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appWebDir, serveStatic } from "#node/endpoints/static.ts";
+import { startWebApp } from "#node/webapp.ts";
+import type { Transport } from "#protocol/node.ts";
 import { parseArgs } from "node:util";
 import { NodeConnection } from "#client/connection.ts";
 import { ClientModel } from "#client/model/client-model.ts";
@@ -47,6 +53,16 @@ function harnessVersion(): string {
   }
 }
 
+/** A tool of the bundle (its manifest's `bin`). */
+function manifestBin(name: string): string | undefined {
+  const path = process.env.HARNESS_MANIFEST;
+  if (path === undefined || path === "") {
+    return undefined;
+  } else {
+    return (JSON.parse(readFileSync(path, "utf8")) as { bin?: Record<string, string> }).bin?.[name];
+  }
+}
+
 function piExtensions(): string[] {
   const path = process.env.HARNESS_MANIFEST;
   if (path === undefined || path === "") {
@@ -69,7 +85,9 @@ async function runNode(args: string[], asHub: boolean): Promise<void> {
   process.stderr.write(`harness node ${name}: ${path}\n`);
 
   const listen = values.listen ?? config.hub?.listen;
-  const web = asHub || listen !== undefined ? await listenWs(node, new Hub(node), parseListen(listen ?? "8790")) : undefined;
+  // a hub also serves the app's web build (devices open it in a browser)
+  const appWeb = appWebDir();
+  const web = asHub || listen !== undefined ? await listenWs(node, new Hub(node), { ...parseListen(listen ?? "8790"), ...(appWeb !== undefined ? { http: serveStatic(appWeb) } : {}) }) : undefined;
   if (web !== undefined) {
     process.stderr.write(`harness hub ${name}: ws://${listen ?? "127.0.0.1:8790"}\n`);
   } else {
@@ -96,6 +114,68 @@ async function runNode(args: string[], asHub: boolean): Promise<void> {
   process.on("SIGINT", () => void stop());
 }
 
+/**
+ * This user's node on this machine: the one running under its socket (a service, another client),
+ * or one inside this process, which then also listens on the socket for the user's other clients.
+ */
+async function localNode(home: string): Promise<{ transport: () => Promise<Transport>; embedded: { node: HarnessNode; close(): Promise<void> } | undefined }> {
+  const path = socketPath(home, DEFAULT_NODE);
+  if (await socketAlive(path)) {
+    return { transport: () => unixTransport(path), embedded: undefined };
+  } else {
+    const node = new HarnessNode({ name: DEFAULT_NODE, dataDir: home, harnessVersion: harnessVersion() });
+    const server = await listenUnix(node, path).catch(() => undefined);
+    return {
+      transport: async () => inProcessTransport(node),
+      embedded: {
+        node,
+        close: async () => {
+          server?.close();
+          await node.close();
+        },
+      },
+    };
+  }
+}
+
+/**
+ * `harness web-app`: the app's web build in a window of the bundled browser (an app window: no tabs,
+ * no address bar), served on 127.0.0.1 with a token only this window has, connected to this user's
+ * node. Closing the window ends it; a node inside this process stops its agents with it.
+ */
+async function runWebApp(): Promise<void> {
+  const home = harnessHome();
+  ensureHome(home);
+  process.env.PI_CODING_AGENT_DIR = home;
+  const staticDir = appWebDir();
+  const browser = process.env.HARNESS_BROWSER ?? manifestBin("browser");
+  if (staticDir === undefined) {
+    process.stderr.write("harness web-app: this bundle has no web build of the app (share/harness/app-web)\n");
+    process.exit(1);
+  } else if (browser === undefined) {
+    process.stderr.write("harness web-app: no browser (the bundle's, or HARNESS_BROWSER)\n");
+    process.exit(1);
+  } else {
+    const local = await localNode(home);
+    const app = await startWebApp({ staticDir, open: local.transport });
+    const profile = mkdtempSync(join(tmpdir(), "harness-web-app-"));
+    const window = spawn(browser, [`--app=${app.url}`, `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--class=harness", "--window-size=1400,900"], { stdio: "ignore" });
+    const end = async (code: number): Promise<void> => {
+      app.close();
+      await local.embedded?.close();
+      rmSync(profile, { recursive: true, force: true });
+      process.exit(code);
+    };
+    window.on("exit", () => void end(0));
+    window.on("error", (error) => {
+      process.stderr.write(`harness web-app: ${error.message}\n`);
+      void end(1);
+    });
+    process.on("SIGTERM", () => window.kill());
+    process.on("SIGINT", () => window.kill());
+  }
+}
+
 async function runTui(args: string[]): Promise<void> {
   const { values } = parseArgs({ args, options: { continue: { type: "boolean", short: "c" }, session: { type: "string" } } });
   const home = harnessHome();
@@ -105,23 +185,9 @@ async function runTui(args: string[]): Promise<void> {
   process.env.PI_CODING_AGENT_DIR = home;
   initClientTheme(SettingsManager.create(cwd, home).getTheme());
 
-  const path = socketPath(home, DEFAULT_NODE);
-  let embedded: { node: HarnessNode; close(): Promise<void> } | undefined;
-  let open: () => Promise<NodeConnection>;
-  if (await socketAlive(path)) {
-    open = async () => NodeConnection.open(await unixTransport(path), "tui", undefined, TUI_CAPABILITIES);
-  } else {
-    const node = new HarnessNode({ name: DEFAULT_NODE, dataDir: home, harnessVersion: harnessVersion() });
-    const server = await listenUnix(node, path).catch(() => undefined);
-    embedded = {
-      node,
-      close: async () => {
-        server?.close();
-        await node.close();
-      },
-    };
-    open = () => NodeConnection.open(inProcessTransport(node), "tui", undefined, TUI_CAPABILITIES);
-  }
+  const local = await localNode(home);
+  const embedded = local.embedded;
+  const open = async (): Promise<NodeConnection> => NodeConnection.open(await local.transport(), "tui", undefined, TUI_CAPABILITIES);
 
   // the local node, then the remote hubs: each reconnects by itself after a loss
   const client = new ClientModel();
@@ -221,6 +287,9 @@ async function main(): Promise<void> {
       ensureHome(harnessHome());
       await remoteAdmin(harnessHome(), rest);
       break;
+    case "web-app":
+      await runWebApp();
+      break;
     case "claude-bridge":
       await claudeBridge(rest[0]);
       break;
@@ -247,6 +316,7 @@ async function main(): Promise<void> {
           "harness hub [--name <name>] [--listen h:p]  a node with the hub role",
           "harness hub user|device|node add|remove|revoke|list …",
           "harness remote add|remove|list              hubs this client connects to",
+          "harness web-app                             the app in a window, on this user's node",
           "harness auth|config|mcp|install|remove|list|update …   pi's commands on ~/.harness",
           "harness claude-bridge mcp|hook              run by Claude Code for harness (subagents)",
           "",

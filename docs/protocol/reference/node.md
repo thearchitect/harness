@@ -182,6 +182,14 @@ Writes a file (directories are created). → { path }
 | `path` | string | yes | A file under the node user's home |
 | `base64` | string | yes | The content |
 
+### `theme_get`
+
+A theme's colors as hex for clients that draw it themselves, with the names of the themes there are. → { name, appearance, colors, names }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string |  | A theme name; the user's ui.theme, else dark, when absent |
+
 ### `settings_get`
 
 The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }

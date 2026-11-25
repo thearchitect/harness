@@ -1,0 +1,28 @@
+{
+  "name": "harness-app",
+  "private": true,
+  "description": "The harness app: iOS, Android and web (the desktop window serves the web build). Its own node_modules: Metro needs them (plan A17).",
+  "main": "index.ts",
+  "scripts": {
+    "web": "expo start --web",
+    "export:web": "expo export --platform web"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~58.0.17",
+    "expo": "58.0.26",
+    "expo-clipboard": "~58.0.4",
+    "expo-font": "~58.0.12",
+    "expo-secure-store": "~58.0.3",
+    "expo-status-bar": "~58.0.5",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-native": "0.88.1",
+    "react-native-safe-area-context": "~5.11.1",
+    "react-native-web": "~0.21.4"
+  },
+  "devDependencies": {
+    "@testing-library/react-native": "14.1.0",
+    "@types/react": "~19.2.0",
+    "react-test-renderer": "19.3.0"
+  }
+}

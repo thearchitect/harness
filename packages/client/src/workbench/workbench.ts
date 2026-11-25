@@ -180,6 +180,20 @@ function subagentGlyph(subagent: SubagentInfo): Glyph {
   }
 }
 
+/** The commands every UI runs itself (Workbench.clientCommand). */
+export const CLIENT_COMMANDS: { name: string; description: string }[] = [
+  { name: "new", description: "New session (Ctrl+T)" },
+  { name: "open", description: "Open a session (Ctrl+O)" },
+  { name: "model", description: "Choose the model (Ctrl+L)" },
+  { name: "login", description: "Log in to a provider on this session's node" },
+  { name: "logout", description: "Remove a provider's login on this session's node" },
+  { name: "tree", description: "Move to another point of the session's tree" },
+  { name: "settings", description: "Theme, compaction, message queues" },
+  { name: "bash", description: "Run a command yourself; the model sees it and its output" },
+  { name: "bash-quiet", description: "Run a command yourself, kept out of the model's context" },
+  { name: "quit", description: "Quit (agents keep running)" },
+];
+
 /** A node of pi's session tree (get_tree), as far as the tree list reads it. */
 type TreeNode = {
   entry: { id: string; type: string; message?: { role?: string; content?: unknown }; summary?: string };
@@ -262,6 +276,12 @@ export class Workbench {
     const tabs = this.tabs();
     const tab = tabs[Math.min(this.active, tabs.length - 1)];
     const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    if (tab?.agent !== undefined && agent === undefined && tab.unavailable === undefined) {
+      // the active tab's agent became known (another client opened it, the node reported it): follow it
+      void this.client.follow(tab.node, tab.agent.id).catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
+    } else {
+      // followed already, or nothing to follow
+    }
     const items = tab !== undefined ? this.items(tab, agent?.state) : [];
     const selected = tab !== undefined ? this.selectedItem(tab) : "session";
     const main = this.mainZone(selected, agent, tab);
@@ -328,6 +348,71 @@ export class Workbench {
       // nothing new from the agent
     }
     return this.prefill;
+  }
+
+  /**
+   * A command of the client itself (`/new`, `/model`, `/bash …`): run here, in every UI the same;
+   * false when the text is not one (it goes to the agent, whose own commands it may be). `quit` is
+   * the UI's own.
+   */
+  async clientCommand(text: string, quit: () => void): Promise<boolean> {
+    const [command = ""] = text.trim().split(/\s+/);
+    const rest = text.trim().slice(command.length).trim();
+    switch (command) {
+      case "/new":
+        await this.act("tabs.new");
+        return true;
+      case "/open":
+      case "/resume":
+        await this.act("tabs.open");
+        return true;
+      case "/quit":
+      case "/exit":
+        quit();
+        return true;
+      case "/model":
+        await this.act("model.select");
+        return true;
+      case "/login":
+        await this.loginPicker();
+        return true;
+      case "/logout":
+        if (rest === "") {
+          this.notify("warning", "/logout <provider>");
+        } else {
+          await this.logout(rest);
+        }
+        return true;
+      case "/tree":
+        await this.treePicker();
+        return true;
+      case "/settings":
+        await this.settingsPicker();
+        return true;
+      case "/bash":
+      case "/bash-quiet":
+        // the operator's own command on the session's machine; "-quiet" keeps it out of the model's context
+        if (rest === "") {
+          this.notify("warning", `${command} <command>`);
+        } else {
+          await this.operatorBash(rest, command === "/bash-quiet");
+        }
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  /** Completions of `/commands`: the client's own and the active session's (its extensions', skills', prompts'). */
+  async commands(): Promise<{ name: string; description?: string }[]> {
+    const tab = this.activeTab();
+    const own = CLIENT_COMMANDS;
+    if (tab?.agent === undefined) {
+      return own;
+    } else {
+      const { commands } = await this.client.connection(tab.node).call<{ commands: { name: string; description?: string }[] }>(tab.agent.id, { type: "get_commands" });
+      return [...own, ...commands];
+    }
   }
 
   /** Puts text into the editor of every UI drawing this workbench. */
@@ -836,6 +921,20 @@ export class Workbench {
             .catch((error: unknown) => this.notify("error", `login to ${provider}: ${error instanceof Error ? error.message : String(error)}`));
         },
       });
+    }
+  }
+
+  /** Stops a background task of the active session (an own one, or a Claude Code session's). */
+  async stopTask(taskId: string): Promise<void> {
+    const tab = this.activeTab();
+    if (tab?.agent === undefined) {
+      this.notify("warning", "no session here");
+    } else {
+      try {
+        await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_task_stop", taskId });
+      } catch (error) {
+        this.notify("error", error instanceof Error ? error.message : String(error));
+      }
     }
   }
 

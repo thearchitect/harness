@@ -2,7 +2,7 @@
 // the single SIMPLE mode. A client names the mode of a prompt explicitly (harness_prompt); a plain
 // pi prompt names it the classic way: a leading "!" asks for BUILD.
 
-import type { RunMode, Variant } from "#protocol/state.ts";
+import type { RunMode, Variant } from "./state.ts";
 
 /** The mode a message asks for, and its text without the "!" marker. */
 export function modeOfText(text: string, variant: Variant): { mode: RunMode; text: string } {
@@ -44,6 +44,9 @@ export const MODE_TEXT: Record<RunMode, { chip: string; working: string; finishe
   build: { chip: "BUILD", working: "Building...", finished: "building finished", interrupted: "building interrupted" },
   simple: { chip: "SIMPLE", working: "Working...", finished: "finished", interrupted: "interrupted" },
 };
+
+/** Mode colors as hex (the TUI's are the same as ANSI), for clients that are not terminals. */
+export const MODE_COLOR_HEX: Record<RunMode, string> = { plan: "#ff8b3d", build: "#b072ff", simple: "#5ec978" };
 
 export function isRunMode(value: unknown): value is RunMode {
   return value === "plan" || value === "build" || value === "simple";

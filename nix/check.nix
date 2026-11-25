@@ -36,7 +36,9 @@ stdenvNoCC.mkDerivation {
     export HOME=$TMPDIR/home
     mkdir -p $HOME
     ln -s ${bundle.passthru.npmTools}/node_modules node_modules
-    HARNESS_MANIFEST=${bundle.passthru.manifest} HARNESS_BUNDLE=${bundle} bash nix/check.sh
+    # the app's own modules (its type check) and its web build (the web driver)
+    ln -s ${bundle.passthru.appModules}/node_modules packages/app/node_modules
+    HARNESS_MANIFEST=${bundle.passthru.manifest} HARNESS_BUNDLE=${bundle} HARNESS_APP_WEB=${bundle.passthru.appWeb} bash nix/check.sh
     runHook postBuild
   '';
   installPhase = ''

@@ -47,7 +47,7 @@ describe("the bundle", { skip }, () => {
   });
 
   test("share/harness: the documents, the sources and pi's documents the documents link to", () => {
-    for (const path of ["docs/index.md", "docs/protocol/reference/hap.md", "src/packages/extension/src/core/prompt.yaml", "pi/coding-agent/docs/extensions.md", "pi/tui/dist/index.d.ts"]) {
+    for (const path of ["app-web/index.html", "app-web/fonts/jetbrains-mono-regular.woff2", "docs/index.md", "docs/protocol/reference/hap.md", "src/packages/extension/src/core/prompt.yaml", "pi/coding-agent/docs/extensions.md", "pi/tui/dist/index.d.ts"]) {
       assert.ok(existsSync(join(root, "share/harness", path)), path);
     }
     // the prompt's paths, as an agent of the bundle computes them

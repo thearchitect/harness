@@ -8,21 +8,24 @@ import { NodeConnection } from "#client/connection.ts";
 import { inProcessTransport } from "#node/endpoints/transports.ts";
 import { TuiDriver } from "../drivers/tui.ts";
 import { RawDriver } from "../drivers/raw.ts";
+import { WebDriver } from "../drivers/web.ts";
 import { createStand, type Stand, type StandOptions } from "../stand/stand.ts";
 import { Report } from "../report/report.ts";
 
-export type ClientKind = "tui" | "raw";
+export type ClientKind = "tui" | "raw" | "web";
 
 /** A step that runs longer has hung (steps wait for events, never for time). */
 const STEP_TIMEOUT_MS = 45_000;
 
 export type ClientSpec = { kind: ClientKind; columns?: number; rows?: number };
 
-export type Clients = Record<string, TuiDriver | RawDriver>;
+export type Driver = TuiDriver | RawDriver | WebDriver;
+
+export type Clients = Record<string, Driver>;
 
 export type ScenarioContext<C extends Record<string, ClientSpec>> = {
   stand: Stand;
-  clients: { [K in keyof C]: C[K]["kind"] extends "tui" ? TuiDriver : RawDriver };
+  clients: { [K in keyof C]: C[K]["kind"] extends "tui" ? TuiDriver : C[K]["kind"] extends "web" ? WebDriver : RawDriver };
   /** The step's scratch space for values later steps need. */
   memo: Record<string, unknown>;
 };
@@ -66,6 +69,10 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
         case "raw":
           clients[name] = await RawDriver.open(open);
           break;
+        case "web":
+          // the page's connections go through the web app's relay, recorded like the others
+          clients[name] = await WebDriver.start(async () => report.record(name, inProcessTransport(stand.node)), { width: spec.columns, height: spec.rows });
+          break;
         default:
           throw new Error(`unknown client kind: ${String(spec.kind satisfies never)}`);
       }
@@ -108,7 +115,7 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
   }
 
   async down(): Promise<void> {
-    for (const client of Object.values(this.context.clients) as (TuiDriver | RawDriver)[]) {
+    for (const client of Object.values(this.context.clients) as Driver[]) {
       client.stop();
     }
     await this.context.stand.down();

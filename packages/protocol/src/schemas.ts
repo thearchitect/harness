@@ -88,6 +88,7 @@ export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
   files_list: Obj({ path: Str("A directory under the node user's home") }, "Lists a directory. → { path, items }"),
   files_get: Obj({ path: Str("A file under the node user's home") }, "Reads a file. → { path, base64 }"),
   files_put: Obj({ path: Str("A file under the node user's home"), base64: Str("The content") }, "Writes a file (directories are created). → { path }"),
+  theme_get: Obj({ name: Opt(Str("A theme name; the user's ui.theme, else dark, when absent")) }, "A theme's colors as hex for clients that draw it themselves, with the names of the themes there are. → { name, appearance, colors, names }"),
   settings_get: Obj({}, "The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }"),
   settings_set: Obj({ key: Str("A setting key"), value: Any("Its new value; null removes it") }, "Changes one setting; every client of the user receives a settings event. → { settings }"),
 };

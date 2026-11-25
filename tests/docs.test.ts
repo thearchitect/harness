@@ -18,7 +18,7 @@ const PI = join(ROOT, "node_modules", "@earendil-works", "pi-coding-agent");
 
 function files(dir: string, suffix: string): string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.endsWith(suffix))
+    .filter((entry) => entry.isFile() && entry.name.endsWith(suffix) && !entry.parentPath.includes("/node_modules"))
     .map((entry) => join(entry.parentPath, entry.name));
 }
 

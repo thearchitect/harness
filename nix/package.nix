@@ -12,6 +12,7 @@
 # "Harness" (macos/): `harness-open`, installed by `harness-setup`.
 {
   lib,
+  callPackage,
   stdenv,
   stdenvNoCC,
   fetchurl,
@@ -91,6 +92,9 @@ let
       runHook postInstall
     '';
   };
+
+  # The app (Expo + React Native): its web build is served by hubs and `harness web-app`.
+  appBuild = callPackage ./app.nix { inherit harnessVersion nodejs; };
 
   # pi, the bundled pi packages and the npm-distributed MCP servers, from one
   # generated lockfile (nix/npm). Install scripts are skipped: none of the
@@ -395,15 +399,10 @@ let
     exec ${nodeModules}/.bin/chrome-devtools-mcp "$@"
   '';
 
-  piCli = "${nodeModules}/@earendil-works/pi-coding-agent/dist/bundle/cli.js";
-
-  # pi's own account and package commands, on the harness data directory:
-  # `harness auth login` signs a provider in for every agent of the user.
-  piSubcommands = "auth|install|remove|uninstall|update|list|config|mcp";
-
   # launcher <sources shell expression> → body of the `harness` command.
   launcher = appDir: ''
     export HARNESS_MANIFEST=${manifest}
+    export HARNESS_APP_WEB="''${HARNESS_APP_WEB:-${appBuild.web}}"
     export PI_SKIP_VERSION_CHECK=1
     export PI_TELEMETRY="''${PI_TELEMETRY-0}"
     export PATH="${
@@ -412,11 +411,6 @@ let
         fd
       ]
     }:$PATH:${lib.makeBinPath (lib.concatMap toolPackages (lib.attrValues installedTools))}"
-    case "''${1-}" in
-      ${piSubcommands})
-        export PI_CODING_AGENT_DIR="''${HARNESS_HOME:-$HOME/.harness}"
-        exec ${lib.getExe nodejs} ${piCli} "$@" ;;
-    esac
     exec ${lib.getExe nodejs} ${appDir}/packages/cli/src/main.ts "$@"
   '';
 
@@ -438,6 +432,12 @@ let
         echo "harness-dev: $HARNESS_DEV_DIR/node_modules is not a symlink; remove it so harness-dev can point it at the bundle's node_modules" >&2
         exit 1
       fi
+      # the app's own modules (Metro and its type check), the same way
+      if [[ -L "$HARNESS_DEV_DIR/packages/app/node_modules" || ! -e "$HARNESS_DEV_DIR/packages/app/node_modules" ]]; then
+        ln -sfn ${appBuild.appModules}/node_modules "$HARNESS_DEV_DIR/packages/app/node_modules"
+      else
+        : # a node_modules of the developer's own
+      fi
     ''
     + launcher ''"$HARNESS_DEV_DIR"''
   );
@@ -455,7 +455,11 @@ let
     if [[ -L "$HARNESS_DEV_DIR/node_modules" || ! -e "$HARNESS_DEV_DIR/node_modules" ]]; then
       ln -sfn ${nodeModules} "$HARNESS_DEV_DIR/node_modules"
     fi
+    if [[ -L "$HARNESS_DEV_DIR/packages/app/node_modules" || ! -e "$HARNESS_DEV_DIR/packages/app/node_modules" ]]; then
+      ln -sfn ${appBuild.appModules}/node_modules "$HARNESS_DEV_DIR/packages/app/node_modules"
+    fi
     export HARNESS_MANIFEST=${manifest}
+    export HARNESS_APP_WEB=''${HARNESS_APP_WEB:-${appBuild.web}}
     export PATH="${lib.makeBinPath [ nodejs ]}:$PATH"
     exec ${lib.getExe nodejs} "$HARNESS_DEV_DIR/packages/testkit/src/control/cli.ts" "$@"
   '';
@@ -499,6 +503,8 @@ stdenvNoCC.mkDerivation {
     ln -s ${nodeModules}/.bin/playwright-mcp $out/bin/playwright-mcp
     ln -s ${chromeDevtoolsMcpCli}/bin/chrome-devtools-mcp $out/bin/chrome-devtools-mcp
     ln -s ${manifest} $out/share/harness/manifest.json
+    # the app's web build (hubs and `harness web-app` serve it)
+    ln -s ${appBuild.web} $out/share/harness/app-web
   ''
   + lib.concatMapStrings (
     tool:
@@ -527,6 +533,8 @@ stdenvNoCC.mkDerivation {
   # development output and put harness-dev instead of the bundle into the
   # buildInputs and shells that list the bundle.
   passthru = {
+    appWeb = appBuild.web;
+    appModules = appBuild.appModules;
     inherit
       app
       npmTools

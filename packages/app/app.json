@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "harness",
+    "slug": "harness",
+    "scheme": "harness",
+    "version": "0.1.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#1e1e24",
+    "platforms": ["ios", "android", "web"],
+    "ios": { "bundleIdentifier": "dev.harness.app", "supportsTablet": true },
+    "android": { "package": "dev.harness.app" },
+    "web": { "bundler": "metro", "output": "single", "name": "harness" }
+  }
+}

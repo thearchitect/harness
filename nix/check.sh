@@ -9,6 +9,13 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 node_modules/.bin/tsc -p .
+# the app, against its own modules (packages/app/node_modules: harness-dev and nix/check.nix link them)
+if [[ -e packages/app/node_modules ]]; then
+  node_modules/.bin/tsc -p packages/app/tsconfig.json
+else
+  echo "nix/check.sh: packages/app/node_modules is missing: the app is not type-checked" >&2
+  exit 1
+fi
 
 if [[ $# -gt 0 ]]; then
   tests=("$@")

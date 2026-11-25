@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
 import { NODE_OPS } from "#protocol/node.ts";
+import { themeColors } from "./themes.ts";
 import { MAX_SUBAGENT_DEPTH, type SubagentLaunch } from "#protocol/state.ts";
 import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
 import { AgentLink, type AgentRecord } from "./agent-link.ts";
@@ -209,7 +210,7 @@ export class HarnessNode {
       } else {
         this.refuse(connection, frame, { code: "not_found", message: `no node ${frame.node} here: ${this.config.name} is not a hub` });
       }
-    } else if (frame.k !== "hello" && !(frame.k === "req" && (frame.op === "nodes_list" || frame.op === "settings_get" || frame.op === "settings_set")) && !this.allowed(connection)) {
+    } else if (frame.k !== "hello" && !(frame.k === "req" && (frame.op === "nodes_list" || frame.op === "settings_get" || frame.op === "settings_set" || frame.op === "theme_get")) && !this.allowed(connection)) {
       this.refuse(connection, frame, { code: "forbidden", message: `${connection.user} may not use node ${this.config.name}` });
     } else {
       switch (frame.k) {
@@ -343,6 +344,11 @@ export class HarnessNode {
       case "settings_set": {
         const { key, value } = args as NodeOps["settings_set"]["args"];
         return { settings: this.settingsOf(connection).set(key, value) } as NodeOps[K]["result"];
+      }
+      case "theme_get": {
+        const { name } = args as NodeOps["theme_get"]["args"];
+        const chosen = name ?? this.settingsOf(connection).read()["ui.theme"];
+        return (await themeColors(this.config.dataDir, typeof chosen === "string" ? chosen : undefined)) as NodeOps[K]["result"];
       }
       default:
         throw new HarnessError("invalid_record", `unknown operation ${String(op satisfies never)}`);

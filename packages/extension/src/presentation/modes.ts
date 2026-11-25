@@ -5,7 +5,7 @@
 import type { CustomEntry, EntryRenderOptions, Theme } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import type { RunMode } from "#protocol/state.ts";
-import { isRunMode, MODE_TEXT } from "../core/modes.ts";
+import { isRunMode, MODE_TEXT } from "#protocol/modes.ts";
 
 type ColorMode = ReturnType<Theme["getColorMode"]>;
 
@@ -21,9 +21,6 @@ const MODE_COLOR_ANSI: Record<ColorMode, Record<RunMode, string>> = {
     simple: "\x1b[38;5;78m",
   },
 };
-
-/** Mode colors as hex, for clients that are not terminals. */
-export const MODE_COLOR_HEX: Record<RunMode, string> = { plan: "#ff8b3d", build: "#b072ff", simple: "#5ec978" };
 
 export function modeColor(mode: RunMode, colorMode: ColorMode, text: string): string {
   const palette = MODE_COLOR_ANSI[colorMode] ?? MODE_COLOR_ANSI.truecolor;

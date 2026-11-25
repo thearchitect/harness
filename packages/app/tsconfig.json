@@ -1,0 +1,16 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "skipLibCheck": true,
+    "lib": ["es2024", "dom"],
+    "paths": {
+      "#protocol/*": ["../protocol/src/*"],
+      "#client/*": ["../client/src/*"]
+    }
+  },
+  "include": ["index.ts", "src/**/*.ts", "src/**/*.tsx"]
+}

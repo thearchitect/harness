@@ -16,7 +16,7 @@ import { MAX_SUBAGENT_DEPTH, type HarnessState, type RunMode, type SubagentLaunc
 import type { ExtensionHost } from "./host.ts";
 import { createAuthorizer, isScratchPath, scratchWorkspaceRoot, type Authorize } from "./core/authorize.ts";
 import { Interrupts } from "./core/interrupts.ts";
-import { effectiveMode, isRunMode, modeOfText, modeSelector } from "./core/modes.ts";
+import { effectiveMode, isRunMode, modeOfText, modeSelector } from "#protocol/modes.ts";
 import { assembleSystemPrompt, systemPromptProblem } from "./core/prompt.ts";
 import { DEFAULTS_FILE, loadDefaults, saveDefault, type Defaults } from "./core/settings.ts";
 import { bundledMcpServers, depsReport, lspToolchain, readManifest } from "./deps.ts";

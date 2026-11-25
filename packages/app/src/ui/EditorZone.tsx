@@ -1,0 +1,147 @@
+// The editor's zone (plan A25): the editor, or in its place an interaction or a list to choose from.
+// Above it, on the editor's width: the queue and the completions of `/commands` and `@files`.
+
+import { useState } from "react";
+import { Pressable, TextInput, View, type TextInputKeyPressEvent } from "react-native";
+import type { EditorZone as Zone, Picker, Zones } from "#client/workbench/workbench.ts";
+import { MODE_COLOR_HEX } from "#protocol/modes.ts";
+import { fontOf, useTheme } from "../theme/theme.tsx";
+import { InteractionBlock } from "./Interactions.tsx";
+import { Button, Frame, ListRow, T } from "./primitives.tsx";
+
+export type Completion = { value: string; label: string; description?: string };
+
+/** A key press; on web it carries the modifiers. */
+type KeyEvent = TextInputKeyPressEvent & { nativeEvent: { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean } };
+
+function PickerBlock({ picker, onClose }: { picker: Picker; onClose: () => void }) {
+  const theme = useTheme();
+  const [filter, setFilter] = useState("");
+  const words = filter.toLowerCase().split(/\s+/).filter((word) => word !== "");
+  const items = picker.items.filter((item) => words.every((word) => `${item.label} ${item.description ?? ""}`.toLowerCase().includes(word)));
+  return (
+    <Frame title={picker.title} tone="accent">
+      <TextInput
+        accessibilityLabel={`Filter ${picker.title}`}
+        autoFocus
+        value={filter}
+        onChangeText={setFilter}
+        onSubmitEditing={() => (items[0] !== undefined ? void picker.choose(items[0].value) : undefined)}
+        onKeyPress={(event: KeyEvent) => (event.nativeEvent.key === "Escape" ? onClose() : undefined)}
+        placeholder="filter"
+        placeholderTextColor={theme.colors.dim}
+        style={[fontOf(theme.chrome), { color: theme.colors.text, borderBottomWidth: 1, borderColor: theme.colors.borderMuted, padding: 2 }]}
+      />
+      <View accessibilityRole="list" style={{ maxHeight: 320, overflow: "scroll" as never }}>
+        {items.slice(0, 200).map((item) => (
+          <ListRow key={item.value} label={item.label} onPress={() => void picker.choose(item.value)}>
+            <T lines={1} style={{ flexShrink: 1 }}>
+              {item.label}
+            </T>
+            {item.description !== undefined ? (
+              <T color="dim" lines={1} style={{ marginLeft: 12, flexShrink: 2 }}>
+                {item.description}
+              </T>
+            ) : null}
+          </ListRow>
+        ))}
+      </View>
+      <Button label="Close" kbd="Esc" onPress={onClose} />
+    </Frame>
+  );
+}
+
+function Editor(props: { text: string; onText: (text: string) => void; onSubmit: () => void; mode: keyof typeof MODE_COLOR_HEX; completions: Completion[]; onComplete: (completion: Completion) => void; placeholder: string }) {
+  const theme = useTheme();
+  const onKeyPress = (event: KeyEvent): void => {
+    const key = event.nativeEvent;
+    if (key.key === "Enter" && (key.ctrlKey === true || key.metaKey === true || key.altKey === true)) {
+      event.preventDefault();
+      props.onSubmit();
+    } else if (key.key === "Tab" && props.completions[0] !== undefined) {
+      event.preventDefault();
+      props.onComplete(props.completions[0]);
+    } else {
+      // typing
+    }
+  };
+  return (
+    <View style={{ gap: 2 }}>
+      {props.completions.length > 0 ? (
+        <View accessibilityRole="list" accessibilityLabel="completions" style={{ borderWidth: 1, borderColor: theme.colors.borderMuted, maxHeight: 200, overflow: "scroll" as never }}>
+          {props.completions.slice(0, 50).map((completion) => (
+            <ListRow key={completion.value} label={completion.label} onPress={() => props.onComplete(completion)}>
+              <T lines={1}>{completion.label}</T>
+              {completion.description !== undefined ? (
+                <T color="dim" lines={1} style={{ marginLeft: 12, flexShrink: 1 }}>
+                  {completion.description}
+                </T>
+              ) : null}
+            </ListRow>
+          ))}
+        </View>
+      ) : null}
+      <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6, borderWidth: 1, borderRadius: 2, borderColor: MODE_COLOR_HEX[props.mode], padding: 4 }}>
+        <TextInput
+          accessibilityLabel="Message"
+          autoFocus
+          multiline
+          value={props.text}
+          onChangeText={props.onText}
+          onKeyPress={onKeyPress}
+          placeholder={props.placeholder}
+          placeholderTextColor={theme.colors.dim}
+          style={[fontOf(theme.chat), { flex: 1, color: theme.colors.text, minHeight: 40, maxHeight: 240, outlineStyle: "none" as never }]}
+        />
+        <Pressable accessibilityRole="button" accessibilityLabel="Send" onPress={props.onSubmit} style={{ paddingHorizontal: 6 }}>
+          <T color="accent">⏎</T>
+        </Pressable>
+      </View>
+    </View>
+  );
+}
+
+export function EditorZoneView(props: {
+  zone: Zone;
+  aboveEditor: Zones["aboveEditor"];
+  text: string;
+  onText: (text: string) => void;
+  onSubmit: () => void;
+  completions: Completion[];
+  onComplete: (completion: Completion) => void;
+  onAnswer: (interactionId: string, value: unknown) => void;
+  onClosePicker: () => void;
+  placeholder: string;
+}) {
+  const zone = props.zone;
+  return (
+    <View style={{ gap: 4 }}>
+      {props.aboveEditor.queue.map((queued, index) => (
+        <T key={index} color="dim" lines={1}>{`${queued.kind === "steer" ? "steer" : "next"} › ${queued.text}`}</T>
+      ))}
+      {props.aboveEditor.widgets.map((line, index) => (
+        <T key={`w${index}`} color="muted" lines={1}>
+          {line}
+        </T>
+      ))}
+      {(() => {
+        switch (zone.kind) {
+          case "editor":
+            return <Editor text={props.text} onText={props.onText} onSubmit={props.onSubmit} mode={zone.mode} completions={props.completions} onComplete={props.onComplete} placeholder={props.placeholder} />;
+          case "interaction":
+            return <InteractionBlock request={zone.request} from={zone.from} answer={(value) => props.onAnswer(zone.request.id, value)} />;
+          case "picker":
+            return <PickerBlock key={zone.picker.id} picker={zone.picker} onClose={props.onClosePicker} />;
+          case "component":
+            return (
+              <Frame title="An extension's dialog" tone="warning">
+                <T color="muted">This dialog is drawn for terminals only: answer it in the TUI (harness), or press Esc there.</T>
+              </Frame>
+            );
+          default:
+            throw new Error(`unknown editor zone: ${JSON.stringify(zone satisfies never)}`);
+        }
+      })()}
+    </View>
+  );
+}

@@ -33,7 +33,7 @@ import type { ClientModel } from "#client/model/client-model.ts";
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
 import { LEFT_STRIP_MIN, RIGHT_STRIP_MIN, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Workbench } from "#client/workbench/workbench.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
-import { modeOfText } from "#extension/core/modes.ts";
+import { modeOfText } from "#protocol/modes.ts";
 import { modeColor } from "#extension/presentation/modes.ts";
 import { GateDialog, selectListTheme } from "#extension/presentation/tui/gate.ts";
 import { QuestionsDialog } from "#extension/presentation/tui/questions.ts";
@@ -610,7 +610,7 @@ export class App {
     const trimmed = text.trim();
     if (trimmed === "") {
       return;
-    } else if (await this.clientCommand(trimmed)) {
+    } else if (await this.workbench.clientCommand(trimmed, () => this.onQuit())) {
       this.editor.setText("");
     } else {
       this.editor.addToHistory(text);
@@ -638,59 +638,9 @@ export class App {
     return this.editor.getText();
   }
 
-  /** Commands of the client itself (the agent's own commands go to the agent as text). */
-  private async clientCommand(text: string): Promise<boolean> {
-    const [command] = text.split(/\s+/);
-    switch (command) {
-      case "/new":
-        await this.workbench.act("tabs.new");
-        return true;
-      case "/open":
-      case "/resume":
-        await this.workbench.act("tabs.open");
-        return true;
-      case "/quit":
-      case "/exit":
-        this.onQuit();
-        return true;
-      case "/model":
-        await this.workbench.act("model.select");
-        return true;
-      case "/login":
-        await this.workbench.loginPicker();
-        return true;
-      case "/tree":
-        await this.workbench.treePicker();
-        return true;
-      case "/settings":
-        await this.workbench.settingsPicker();
-        return true;
-      case "/bash":
-      case "/bash-quiet": {
-        // the operator's own command on the session's machine; "-quiet" keeps it out of the model's context
-        const commandLine = text.slice(command.length).trim();
-        if (commandLine === "") {
-          this.workbench.notify("warning", `${command} <command>`);
-        } else {
-          await this.workbench.operatorBash(commandLine, command === "/bash-quiet");
-        }
-        return true;
-      }
-      case "/logout": {
-        const provider = text.split(/\s+/)[1];
-        if (provider === undefined) {
-          this.workbench.notify("warning", "/logout <provider>");
-        } else {
-          await this.workbench.logout(provider);
-        }
-        return true;
-      }
-      default:
-        return false;
-    }
-  }
-
   private onKey(data: string): { consume: boolean } | undefined {
+    // keys and the wheel scroll the transcript: at its top, the older entries come next
+    setImmediate(() => (this.screen !== undefined && this.screen.zones.main.kind === "transcript" ? this.loadOlderAtTop(this.screen) : undefined));
     const action = actionOf(data);
     const input = this.screen?.input ?? "editor";
     if (matchesKey(data, "ctrl+c" as never)) {
@@ -746,20 +696,7 @@ export class App {
   async loadCompletions(): Promise<void> {
     const tab = this.workbench.activeTab();
     if (tab?.agent !== undefined) {
-      const { commands } = await this.client.connection(tab.node).call<{ commands: { name: string; description?: string }[] }>(tab.agent.id, { type: "get_commands" });
-      const local = [
-        { name: "new", description: "New session (Ctrl+T)" },
-        { name: "open", description: "Open a session (Ctrl+O)" },
-        { name: "model", description: "Choose the model (Ctrl+L)" },
-        { name: "login", description: "Log in to a provider on this session's node" },
-        { name: "tree", description: "Move to another point of the session's tree" },
-        { name: "settings", description: "Theme, compaction, message queues" },
-        { name: "bash", description: "Run a command yourself; the model sees it and its output" },
-        { name: "bash-quiet", description: "Run a command yourself, kept out of the model's context" },
-        { name: "logout", description: "Remove a provider's login on this session's node" },
-        { name: "quit", description: "Quit (agents keep running)" },
-      ];
-      this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...local, ...commands], tab.cwd));
+      this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider(await this.workbench.commands(), tab.cwd));
     } else {
       // no session to complete for
     }

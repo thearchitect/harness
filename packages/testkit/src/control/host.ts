@@ -68,7 +68,7 @@ async function answer(run: ScenarioRun, request: ControlRequest, stop: () => voi
       return { screen: target.text() };
     }
     case "state":
-      return modelState(client(run, request.client));
+      return await modelState(client(run, request.client));
     case "shot":
       return { files: await run.report.shoot(`shot-${Date.now()}`) };
     case "logs": {
