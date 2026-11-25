@@ -63,6 +63,7 @@
             # coreutils' timeout on macOS).
             packages = [
               bundle.passthru.harnessDev
+              bundle.passthru.harnessTest
               pkgs.nodejs
               pkgs.jq
               pkgs.curl

@@ -436,6 +436,22 @@ let
 
   harness = writeShellScriptBin "harness" (launcher app);
 
+  # harness-test: the test harness of a checkout (packages/testkit/src/control/cli.ts) with the
+  # bundle's node_modules and manifest (its browser draws the screenshots).
+  harnessTest = writeShellScriptBin "harness-test" ''
+    HARNESS_DEV_DIR="$(cd "''${HARNESS_DEV_DIR:-$PWD}" && pwd)"
+    if [[ ! -f "$HARNESS_DEV_DIR/packages/testkit/src/control/cli.ts" ]]; then
+      echo "harness-test: $HARNESS_DEV_DIR is not a harness checkout (run it from one or set HARNESS_DEV_DIR)" >&2
+      exit 1
+    fi
+    if [[ -L "$HARNESS_DEV_DIR/node_modules" || ! -e "$HARNESS_DEV_DIR/node_modules" ]]; then
+      ln -sfn ${nodeModules} "$HARNESS_DEV_DIR/node_modules"
+    fi
+    export HARNESS_MANIFEST=${manifest}
+    export PATH="${lib.makeBinPath [ nodejs ]}:$PATH"
+    exec ${lib.getExe nodejs} "$HARNESS_DEV_DIR/packages/testkit/src/control/cli.ts" "$@"
+  '';
+
   # macOS: Ghostty and the Finder Quick Action "Harness" (macos/). The
   # workflow is static and finds harness-open in the Nix profiles, so a
   # profile upgrade updates the behavior without reinstalling it.
@@ -508,6 +524,7 @@ stdenvNoCC.mkDerivation {
       cage
       ;
     harnessDev = dev;
+    inherit harnessTest;
     # The toolchains of the bundled language servers (the development shell's, for nix/test.sh).
     toolchain = toolPackages bundledTools.go ++ toolPackages bundledTools.rust;
   };

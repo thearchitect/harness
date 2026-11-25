@@ -1,7 +1,9 @@
-# a directory, or the symlink pi-dev and nix/test.sh point at the bundle's
+# a directory, or the symlink harness-dev and nix/check.sh point at the bundle's
 node_modules
 *.tsbuildinfo
 .DS_Store
 .agent-workspace-tmp
 result
 result-*
+# test reports (packages/testkit/src/report): .test-reports/<run>/, .test-reports/latest
+.test-reports
