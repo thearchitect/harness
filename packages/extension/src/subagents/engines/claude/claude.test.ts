@@ -35,6 +35,19 @@ test("the retry watchdog's long retry is a limit wait with its window and reset 
   assert.deepEqual(wait, { kind: "rate_limit_wait", window: "seven_day", resetsAt: 1795572000 * 1000 });
 });
 
+test("a recorded run with background tasks: each runs with its command, then exits with its output file", () => {
+  const { events: list } = events("background-tasks.jsonl");
+  const tasks = list.filter((event) => event.kind === "task");
+  const first = tasks.filter((event) => event.kind === "task" && event.id === "b1trb1kk5");
+  assert.ok(first.length >= 3);
+  // the live set comes before task_started: its description first, then the command from the Bash call
+  assert.ok(first[0]?.kind === "task" && first[0].command === "Sleep 20 seconds then print finished");
+  assert.ok(first.slice(1).every((event) => event.kind === "task" && event.command === "sleep 20; echo finished"), JSON.stringify(first));
+  const last = first.at(-1);
+  assert.ok(last?.kind === "task" && last.state === "exited" && last.outputFile?.endsWith("/tasks/b1trb1kk5.output"));
+  assert.equal(list.at(-1)?.kind, "result");
+});
+
 test("steps, changed files, background tasks with their commands, and the end of a wait", () => {
   const stream = new ClaudeStream();
   const push = (message: object) => stream.push(JSON.stringify(message));

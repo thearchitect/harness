@@ -1391,7 +1391,8 @@ harness — работа в checkout с обычным циклом сборки
 целиком. Пока ни один раздел не закрыт полностью — ниже, что сделано и что осталось по этапам.
 
 - **Этап 0.** G1 закрыт (отступление 4). G2, G4 сняты переходом на node и npm-lock
-  (отступления 1–2). Осталось: G3 (Linux), G7, G8/G9 для web (на этапе 9), G5 (лимит Claude).
+  (отступления 1–2). G3 снят отступлением 16, G7 закрыт на этапе 5, G8/G9 — сборки
+  web, Android и iOS проходят (этапы 9 и 11), G5 закрыт живой проверкой (этап 10).
 - **Этап 1.** Сделано: `protocol` — `framing`, `version`, `errors`, `state`, `interactions`,
   `hap`, `node`, `model-ref` с тестами; `client` — `connection`, `ClientModel`, `AgentModel`,
   `WorkbenchModel`, `keymap`, транспорт WebSocket; `testkit/stand` (стенд, сценарная модель);
@@ -1451,8 +1452,10 @@ harness — работа в checkout с обычным циклом сборки
   выбор оператора, фоновые задачи Claude в задачах сессии, проверки перед запуском, без
   переменных биллинга), правила S5 и implementer в промпте, вид субагентов и их interactions
   в TUI; поддельный `claude` в testkit; unit-тесты и сценарии `subagents`, `claude`; документ
-  `docs/extending/subagents.md`. Осталось: G5 — живая проверка на настоящем Claude Code
-  (лимит).
+  `docs/extending/subagents.md`. G5 закрыт живой проверкой `tests/live/claude.live.ts` на Claude Code
+  2.1.303 (мост MCP, хук и gate правки, прерывание); она нашла две ошибки: проверка входа
+  шла с переменными биллинга в окружении, `background_tasks_changed` не несёт `status` (запись
+  живого прогона — фикстура `testdata/background-tasks.jsonl`).
 - **Этап 9 (web и Linux-окно).** Сделано: пакет `app` (Expo 58, RN 0.88, react-native-web; свои
   `node_modules` из своего lock-файла, отступление 17), Metro берёт `#protocol`/`#client`;
   экран из `Workbench.screen()` — три колонки, зоны (транскрипт с инструментами, Markdown,
@@ -1479,8 +1482,7 @@ harness — работа в checkout с обычным циклом сборки
   документов, голос с микрофона, ссылки `harness://`, долгое нажатие — контекстное меню;
   открытый трафик — только к localhost и хосту эмулятора (отступления 20–22). Осталось:
   публикация в магазины (`release-app`) — нужны аккаунты Apple Developer и Google Play и
-  ключи подписи (секреты оператора); окно `harness web-app` на macOS не проверено вживую;
-  G5 (живой Claude Code).
+  ключи подписи (секреты оператора); окно `harness web-app` на macOS не проверено вживую.
 
 ### Порядок работы
 

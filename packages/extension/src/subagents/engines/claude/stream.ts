@@ -150,13 +150,8 @@ export class ClaudeStream {
       case "task_notification":
         return [{ kind: "task", id: message.task_id, state: taskState(message.status), command: this.taskCommands.get(message.task_id), ...(message.output_file !== undefined ? { outputFile: message.output_file } : {}) }];
       case "background_tasks_changed":
-        return message.tasks.map((task) => ({
-          kind: "task" as const,
-          id: task.task_id,
-          state: taskState(task.status),
-          command: this.taskCommands.get(task.task_id) ?? task.description,
-          ...(task.output_file !== undefined ? { outputFile: task.output_file } : {}),
-        }));
+        // the live set: each listed task runs; how one ended comes with its task_notification
+        return message.tasks.map((task) => ({ kind: "task" as const, id: task.task_id, state: "running" as const, command: this.taskCommands.get(task.task_id) ?? task.description }));
       default:
         return []; // a system message harness does not read
     }

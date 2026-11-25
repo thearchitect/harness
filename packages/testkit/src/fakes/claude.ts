@@ -44,8 +44,10 @@ if (argv[0] === "--version") {
   process.stdout.write(`${state.version ?? "2.1.303"} (Claude Code)\n`);
   process.exit(0);
 } else if (argv[0] === "auth" && argv[1] === "status") {
-  const loggedIn = state.auth !== "out";
-  process.stdout.write(JSON.stringify({ loggedIn, authMethod: loggedIn ? "claude.ai" : "none", apiProvider: "firstParty" }));
+  // as the real one: an API key in the environment wins over the subscription's login
+  const loggedIn = state.auth !== "out" || process.env.ANTHROPIC_API_KEY !== undefined;
+  const authMethod = process.env.ANTHROPIC_API_KEY !== undefined ? "api_key" : loggedIn ? "claude.ai" : "none";
+  process.stdout.write(JSON.stringify({ loggedIn, authMethod, apiProvider: "firstParty" }));
   process.exit(0);
 } else {
   // the headless run below

@@ -25,9 +25,10 @@ export type ClaudeOutput =
     }
   | { type: "system"; subtype: "api_retry"; attempt: number; max_retries: number; retry_delay_ms: number; error_status?: number; error?: string; session_id: string }
   | { type: "system"; subtype: "task_started"; task_id: string; tool_use_id?: string; description?: string; task_type?: string; session_id: string }
-  | { type: "system"; subtype: "task_updated"; task_id: string; patch: { status?: ClaudeTaskStatus; end_time?: string; error?: string }; session_id: string }
+  | { type: "system"; subtype: "task_updated"; task_id: string; patch: { status?: ClaudeTaskStatus; end_time?: number; error?: string }; session_id: string }
   | { type: "system"; subtype: "task_notification"; task_id: string; status: ClaudeTaskStatus; summary?: string; output_file?: string; session_id: string }
-  | { type: "system"; subtype: "background_tasks_changed"; tasks: { task_id: string; status: ClaudeTaskStatus; description?: string; output_file?: string }[]; session_id: string }
+  /** The tasks live now (each change sends the whole set; a task that ended is no longer in it). */
+  | { type: "system"; subtype: "background_tasks_changed"; tasks: { task_id: string; run_id?: string; task_type?: string; description?: string }[]; session_id: string }
   | { type: "rate_limit_event"; rate_limit_info: { status: "allowed" | "allowed_warning" | "rejected"; resetsAt?: number; rateLimitType?: string; isUsingOverage?: boolean } }
   | { type: "assistant"; message: { content: ClaudeContent[]; model?: string; usage?: ClaudeUsage }; parent_tool_use_id: string | null; session_id: string }
   | { type: "user"; message: { content: ClaudeContent[] | string }; parent_tool_use_id: string | null; session_id: string }

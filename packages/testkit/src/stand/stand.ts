@@ -53,6 +53,8 @@ export type StandOptions = {
   snapshotEntries?: number;
   /** A node declared a shared server (its agents get the `server` skill). */
   server?: boolean;
+  /** A real Claude Code instead of the fake (the live check, tests/live/): its path. */
+  claudeCommand?: string;
 };
 
 export async function createStand(options: StandOptions = {}): Promise<Stand> {
@@ -95,7 +97,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
       HARNESS_TEST_SCENARIO: scenarioPath,
       HARNESS_TEST_REQUESTS: requestsPath,
       HARNESS_TEST_MODELS: modelsPath,
-      HARNESS_CLAUDE: claudeCommand,
+      HARNESS_CLAUDE: options.claudeCommand ?? claudeCommand,
       HARNESS_FAKE_CLAUDE_SCRIPT: claudeScript,
       HARNESS_FAKE_CLAUDE_LOG: claudeLog,
       // must never reach Claude: harness runs it on the user's subscription only

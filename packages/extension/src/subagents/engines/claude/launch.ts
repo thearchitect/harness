@@ -97,6 +97,11 @@ export function claudeArgs(options: LaunchOptions): string[] {
 
 /** The process environment for Claude: without billing variables and harness's secrets, with the bridge's address. */
 export function claudeEnv(base: Record<string, string | undefined>, bridge: { socket: string; token: string }): Record<string, string | undefined> {
+  return { ...withoutBilling(base), CLAUDE_CODE_RETRY_WATCHDOG: "1", HARNESS_BRIDGE_SOCKET: bridge.socket, HARNESS_BRIDGE_TOKEN: bridge.token };
+}
+
+/** An environment without the variables that would bill Claude Code by API key instead of the subscription. */
+function withoutBilling(base: Record<string, string | undefined>): Record<string, string | undefined> {
   const env: Record<string, string | undefined> = {};
   for (const [name, value] of Object.entries(base)) {
     if (!BILLING_VARIABLES.includes(name)) {
@@ -105,16 +110,20 @@ export function claudeEnv(base: Record<string, string | undefined>, bridge: { so
       // never passed
     }
   }
-  return { ...env, CLAUDE_CODE_RETRY_WATCHDOG: "1", HARNESS_BRIDGE_SOCKET: bridge.socket, HARNESS_BRIDGE_TOKEN: bridge.token };
+  return env;
 }
 
 export type Preflight = { ok: true; version: string } | { ok: false; message: string };
 
-/** Claude Code installed, new enough, and logged in with a Claude subscription. */
-export async function preflight(command: string): Promise<Preflight> {
+/**
+ * Claude Code installed, new enough, and logged in with a Claude subscription — asked in the
+ * environment Claude will run in (an API key variable would make it report key authentication).
+ */
+export async function preflight(command: string, base: Record<string, string | undefined> = process.env): Promise<Preflight> {
+  const env = withoutBilling(base);
   let version: string;
   try {
-    version = (await run(command, ["--version"], { timeout: 20_000 })).stdout.trim();
+    version = (await run(command, ["--version"], { timeout: 20_000, env })).stdout.trim();
   } catch {
     return { ok: false, message: "Claude Code is not installed (no `claude` on PATH): install it as Anthropic documents (https://code.claude.com/docs/en/setup), then log in with `claude auth login`." };
   }
@@ -122,7 +131,7 @@ export async function preflight(command: string): Promise<Preflight> {
     return { ok: false, message: `Claude Code ${version} is older than ${MIN_CLAUDE_VERSION}: update Claude Code (\`claude update\`).` };
   } else {
     try {
-      const status = JSON.parse((await run(command, ["auth", "status"], { timeout: 20_000 })).stdout) as { loggedIn?: boolean; authMethod?: string; apiProvider?: string };
+      const status = JSON.parse((await run(command, ["auth", "status"], { timeout: 20_000, env })).stdout) as { loggedIn?: boolean; authMethod?: string; apiProvider?: string };
       if (status.loggedIn === true && status.authMethod === "claude.ai" && status.apiProvider === "firstParty") {
         return { ok: true, version };
       } else {
