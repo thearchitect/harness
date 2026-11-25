@@ -6,6 +6,17 @@ export function showAttention(_waiting: number): void {
   // the strips' glyphs carry it
 }
 
+/** System notifications are push notifications on iOS and Android: the README's TODO (plan A27). */
+export const NOTIFICATIONS_SUPPORTED = false;
+
+export async function requestNotifications(): Promise<boolean> {
+  return false;
+}
+
+export function notifyOperator(_title: string, _body: string): void {
+  // no notifications while the app is in the background yet
+}
+
 export function addressedSession(): { node: string; sessionId: string } | undefined {
   return undefined;
 }

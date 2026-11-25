@@ -62,6 +62,40 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "the app's settings: a zone's font, the strips' widths; kept in the user's settings",
+      async run({ clients: { web, tui } }) {
+        const field = web.page.getByRole("textbox", { name: "Message" });
+        await field.fill("/settings");
+        await web.submit();
+        await web.page.getByRole("button", { name: /^chat font: jetbrains-mono 13/ }).click();
+        await web.page.getByRole("button", { name: "terminus", exact: true }).click();
+        await web.page.getByRole("button", { name: "16px", exact: true }).click();
+        await web.waitForScreen((screen) => screen.editor === "editor");
+        await tui.client.homeRequest("settings_get", {}).then(({ settings }) => assert.deepEqual(settings["ui.font.chat"], { family: "terminus", size: 16 }));
+        // the transcript's text takes the new font at once
+        const family = await web.page.getByText("the web answer is seven").evaluate((element) => getComputedStyle(element).fontFamily);
+        assert.match(family, /Terminus/);
+
+        const edge = web.page.getByRole("slider", { name: "Resize the sessions strip" });
+        const box = await edge.boundingBox();
+        assert.ok(box !== null);
+        await web.page.mouse.move(box.x + 2, box.y + 200);
+        await web.page.mouse.down();
+        await web.page.mouse.move(box.x + 82, box.y + 200, { steps: 4 });
+        await web.page.mouse.up();
+        for (let tries = 0; ; tries += 1) {
+          const panes = (await tui.client.homeRequest("settings_get", {})).settings["ui.web.panes"] as { left?: number } | undefined;
+          if (panes?.left !== undefined) {
+            assert.ok(panes.left >= 280 && panes.left <= 320, String(panes.left));
+            break;
+          } else {
+            assert.ok(tries < 100, "the strip's width was not kept");
+            await web.page.waitForTimeout(50);
+          }
+        }
+      },
+    },
+    {
       name: "the TUI and the web show the same tabs, glyphs and items",
       async run({ clients: { web, tui } }) {
         await tui.settle();

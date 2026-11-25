@@ -19,6 +19,22 @@ export function showAttention(waiting: number): void {
   link.href = `data:image/svg+xml,${encodeURIComponent(svg)}`;
 }
 
+export const NOTIFICATIONS_SUPPORTED = typeof Notification !== "undefined";
+
+export async function requestNotifications(): Promise<boolean> {
+  return NOTIFICATIONS_SUPPORTED && (Notification.permission === "granted" || (await Notification.requestPermission()) === "granted");
+}
+
+/** A system notification while this window is not in front; clicking it brings the window back. */
+export function notifyOperator(title: string, body: string): void {
+  if (NOTIFICATIONS_SUPPORTED && Notification.permission === "granted" && document.visibilityState !== "visible") {
+    const shown = new Notification(title, { body, tag: "harness-waiting" });
+    shown.onclick = () => window.focus();
+  } else {
+    // in front, or not allowed
+  }
+}
+
 /** The session the address names, if any. */
 export function addressedSession(): { node: string; sessionId: string } | undefined {
   const match = /^#\/([^/]+)\/([^/]+)$/.exec(window.location.hash);

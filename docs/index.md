@@ -21,6 +21,7 @@ the translations in [pi-mapping.md](pi-mapping.md).
 | Talk to an agent (records, snapshot and stream) | [protocol/hap.md](protocol/hap.md), [reference](protocol/reference/hap.md) |
 | Talk to a node or a hub | [protocol/node.md](protocol/node.md), [protocol/hub.md](protocol/hub.md), [reference](protocol/reference/node.md) |
 | Run nodes and a hub, pair devices | [operations/nodes.md](operations/nodes.md) |
+| Open the app (`harness web-app`, a hub's address), its settings | [operations/app.md](operations/app.md) |
 | NixOS | [operations/nixos.md](operations/nixos.md) |
 | Fly.io | [operations/fly.md](operations/fly.md) |
 | Settings and files in `~/.harness` | [operations/settings.md](operations/settings.md) |

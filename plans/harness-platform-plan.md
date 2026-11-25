@@ -1440,7 +1440,7 @@ harness — работа в checkout с обычным циклом сборки
 - **Этап 8.** Сделано: `docs/` (index, architecture, pi-mapping, extending, protocol со
   справочником из схем, operations), раскладка `share/harness/{src,docs,pi}`, секция
   `harness_docs`, проверки 13.6 (`tests/docs.test.ts`), README по-английски с TODO.
-  Осталось: документы `app` и субагентов — на этапах 9 и 10.
+  Документы `app` (`operations/app.md`) и субагентов (`extending/subagents.md`) дописаны.
 - **Этап 10.** Сделано: реестр профилей (проект/`~/.harness`/бандл, проверки, циклы), бандловые
   `builder` и `explorer` с брифинг-скиллами, инструмент `subagent` (блок передачи, фон с
   `notify`, `continue`/`session`, steering оператора, строки в HarnessState и записи, доотчёт
@@ -1465,9 +1465,9 @@ harness — работа в checkout с обычным циклом сборки
   --url` печатает ссылку `#pair=` и QR, hub раздаёт сборку; `harness web-app` (отступление 16);
   общие с TUI команды клиента (`Workbench.clientCommand`, `commands()`); драйвер web и
   сценарии `web` (паритет с TUI по смыслу) и привязки через hub; галерея пар TUI | web.
-  Осталось: окна выбора thinking и сессий как в TUI уже общие (через `Workbench`), изменение
-  ширины панелей перетаскиванием (`ui.web.panes`), уведомления браузера
-  (`ui.web.notifications`), окно настроек шрифтов в app.
+  После: `/settings` в app — шрифты двух зон и уведомления браузера (`Workbench` `uiSettings`),
+  ширина полос перетаскиванием (`ui.web.panes`), `docs/operations/app.md`. Этап 9 для web и Linux
+  сделан; цели iOS/Android — этап 11.
 - **Этап 11** не начат.
 
 ### Порядок работы

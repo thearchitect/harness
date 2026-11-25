@@ -13,7 +13,8 @@ import { modeOfText } from "#protocol/modes.ts";
 // platform modules (`*.web.ts` next to the native one) are imported without an extension: Metro picks the file
 import { forgetDevice, readEndpoint, saveDevice, type Endpoint } from "./connect/endpoint";
 import { listenKeys } from "./keyboard";
-import { addressedSession, addressSession, onAddressChange, onFilesDropped, showAttention } from "./browser";
+import { addressedSession, addressSession, notifyOperator, NOTIFICATIONS_SUPPORTED, onAddressChange, onFilesDropped, requestNotifications, showAttention } from "./browser";
+import { appSettings } from "./settings.ts";
 import { loadFonts } from "./theme/fonts";
 import { charWidth, DEFAULT_THEME, ThemeContext, zoneOf, type Colors, type Theme } from "./theme/theme.tsx";
 import type { Completion } from "./ui/EditorZone.tsx";
@@ -22,13 +23,19 @@ import { Pairing } from "./ui/Pairing.tsx";
 import { T } from "./ui/primitives.tsx";
 import { Shell } from "./ui/Shell.tsx";
 
-type Connected = { client: ClientModel; workbench: Workbench; endpoint: Endpoint };
+/** `themeNames`: the themes the home node has (theme_get), for /settings. */
+type Connected = { client: ClientModel; workbench: Workbench; endpoint: Endpoint; themeNames: string[] };
 
 async function connect(endpoint: Endpoint): Promise<Connected> {
   const client = new ClientModel();
   await client.addEndpoint(async () => NodeConnection.open(await wsTransport(endpoint.url), "app", endpoint.token), { home: true });
-  const workbench = new Workbench(client, { cwd: "~", themes: () => [] });
-  return { client, workbench, endpoint };
+  const themeNames: string[] = [];
+  const workbench: Workbench = new Workbench(client, {
+    cwd: "~",
+    themes: () => themeNames,
+    uiSettings: () => appSettings(client, workbench, { supported: NOTIFICATIONS_SUPPORTED, request: requestNotifications }),
+  });
+  return { client, workbench, endpoint, themeNames };
 }
 
 /** The user's theme and fonts from the home node: theme_get for the colors, ui.font.* for the zones. */
@@ -44,6 +51,7 @@ function useUserTheme(connected: Connected | undefined, version: number): Theme 
         .then((theme) => {
           setColors({ ...DEFAULT_THEME.colors, ...theme.colors } as Colors);
           setName(theme.name);
+          connected.themeNames.splice(0, connected.themeNames.length, ...theme.names);
         })
         .catch(() => undefined);
     } else {
@@ -167,6 +175,17 @@ function WorkbenchApp() {
   // attention: the sessions that wait for the operator
   const waiting = screen?.tabs.filter((tab) => tab.glyph === "◆").length ?? 0;
   useEffect(() => showAttention(waiting), [waiting]);
+  // a system notification when one more session starts waiting (if the user turned them on)
+  const waited = useRef(0);
+  useEffect(() => {
+    if (waiting > waited.current && connected?.client.settings["ui.web.notifications"] === true) {
+      const titles = screen?.tabs.filter((tab) => tab.glyph === "◆").map((tab) => tab.title) ?? [];
+      notifyOperator("harness: waiting for you", titles.join(", "));
+    } else {
+      // no new waiting session, or notifications are off
+    }
+    waited.current = waiting;
+  }, [waiting]);
 
   // the address names the active session; an address (a bookmark, back/forward) opens its session
   const activeTab = screen?.tab;
@@ -318,7 +337,7 @@ function WorkbenchApp() {
       <T color={error !== undefined ? "error" : "muted"}>{error ?? "connecting…"}</T>
     </View>
   ) : (
-    <Shell screen={screen} workbench={connected.workbench} editorText={editorText} onEditorText={setEditorText} onSubmit={submit} completions={completions} onComplete={complete} onLoadOlder={loadOlder} />
+    <Shell screen={screen} workbench={connected.workbench} editorText={editorText} onEditorText={setEditorText} onSubmit={submit} completions={completions} onComplete={complete} onLoadOlder={loadOlder} panes={connected.client.settings["ui.web.panes"]} onPanes={(panes) => void connected.client.setting("ui.web.panes", panes)} />
   );
   return <ThemeContext.Provider value={theme}>{body}</ThemeContext.Provider>;
 }

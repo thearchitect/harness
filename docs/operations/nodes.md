@@ -30,9 +30,11 @@
 ## Pairing a device
 
 1. On the hub's machine: `harness hub user add alice`, then `harness hub device add alice --name
-   laptop`; copy the token.
-2. On the device: `harness remote add work wss://hub.example`, paste the token.
-3. `harness` on the device lists alice's nodes next to its own.
+   laptop [--url https://hub.example]`; copy the token.
+2. On a terminal device: `harness remote add work wss://hub.example`, paste the token;
+   `harness` there lists alice's nodes next to its own.
+3. In a browser or the app: open the link `device add --url` printed (or scan its QR code); see
+   [app.md](app.md).
 
 ## Logs
 

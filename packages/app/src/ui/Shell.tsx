@@ -3,7 +3,8 @@
 // the editor, the editor, status, footer), overlays over the right strip. Narrow screens hide the
 // strips behind buttons that show them as overlays.
 
-import { View } from "react-native";
+import { useMemo, useState } from "react";
+import { PanResponder, View } from "react-native";
 import type { AgentModel } from "#client/model/agent-model.ts";
 import type { Item, Screen, StatusLine, Tab, Workbench } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
@@ -168,6 +169,49 @@ function Main({ screen, workbench, onLoadOlder }: { screen: Screen; workbench: W
   }
 }
 
+export type Panes = { left: number; right: number };
+
+const DEFAULT_PANES: Panes = { left: 220, right: 260 };
+
+function clampPane(width: number): number {
+  return Math.max(140, Math.min(520, Math.round(width)));
+}
+
+function panesOf(setting: unknown): Panes {
+  const value = (typeof setting === "object" && setting !== null ? setting : {}) as Partial<Panes>;
+  return {
+    left: typeof value.left === "number" ? clampPane(value.left) : DEFAULT_PANES.left,
+    right: typeof value.right === "number" ? clampPane(value.right) : DEFAULT_PANES.right,
+  };
+}
+
+/** A strip's edge: dragging it changes the strip's width; the width is kept when the drag ends. */
+function Resizer({ label, onResize }: { label: string; onResize: (delta: number) => void }) {
+  const theme = useTheme();
+  const [hover, setHover] = useState(false);
+  const responder = useMemo(
+    () =>
+      PanResponder.create({
+        onStartShouldSetPanResponder: () => true,
+        onMoveShouldSetPanResponder: () => true,
+        onPanResponderTerminationRequest: () => false,
+        onPanResponderRelease: (_event, gesture) => onResize(gesture.dx),
+        onPanResponderTerminate: (_event, gesture) => onResize(gesture.dx),
+      }),
+    [onResize],
+  );
+  return (
+    <View
+      accessibilityRole="adjustable"
+      accessibilityLabel={label}
+      onPointerEnter={() => setHover(true)}
+      onPointerLeave={() => setHover(false)}
+      style={{ width: 4, marginHorizontal: -2, zIndex: 1, cursor: "col-resize" as never, backgroundColor: hover ? theme.colors.accent : "transparent" }}
+      {...responder.panHandlers}
+    />
+  );
+}
+
 export function Shell(props: {
   screen: Screen;
   workbench: Workbench;
@@ -177,18 +221,23 @@ export function Shell(props: {
   completions: Completion[];
   onComplete: (completion: Completion) => void;
   onLoadOlder: (agent: AgentModel) => void;
+  /** `ui.web.panes` of the user's settings: the strips' widths. */
+  panes: unknown;
+  onPanes: (panes: Panes) => void;
 }) {
   const theme = useTheme();
   const { screen, workbench } = props;
   const overlays = screen.zones.overlays;
   const column = { borderColor: theme.colors.borderMuted, backgroundColor: theme.colors.pageBg };
+  const panes = panesOf(props.panes);
   return (
     <View style={{ flex: 1, flexDirection: "row", backgroundColor: theme.colors.pageBg }}>
       {screen.strips.left || overlays.includes("tabs") ? (
-        <View style={[column, { width: 220, borderRightWidth: 1 }, overlays.includes("tabs") ? { position: "absolute", zIndex: 2, top: 0, bottom: 0, left: 0 } : null]}>
+        <View style={[column, { width: panes.left, borderRightWidth: 1 }, overlays.includes("tabs") ? { position: "absolute", zIndex: 2, top: 0, bottom: 0, left: 0 } : null]}>
           <Tabs screen={screen} workbench={workbench} />
         </View>
       ) : null}
+      {screen.strips.left && !overlays.includes("tabs") ? <Resizer label="Resize the sessions strip" onResize={(delta) => props.onPanes({ ...panes, left: clampPane(panes.left + delta) })} /> : null}
       <View style={{ flex: 1, minWidth: 0 }}>
         {!screen.strips.left || !screen.strips.right ? (
           <View style={{ flexDirection: "row", justifyContent: "space-between", paddingHorizontal: 6, paddingVertical: 2 }}>
@@ -218,8 +267,9 @@ export function Shell(props: {
           <Footer screen={screen} />
         </View>
       </View>
+      {screen.strips.right && !overlays.includes("items") ? <Resizer label="Resize the items strip" onResize={(delta) => props.onPanes({ ...panes, right: clampPane(panes.right - delta) })} /> : null}
       {screen.strips.right || overlays.includes("items") ? (
-        <View style={[column, { width: 260, borderLeftWidth: 1 }, overlays.includes("items") ? { position: "absolute", zIndex: 2, top: 0, bottom: 0, right: 0 } : null]}>
+        <View style={[column, { width: panes.right, borderLeftWidth: 1 }, overlays.includes("items") ? { position: "absolute", zIndex: 2, top: 0, bottom: 0, right: 0 } : null]}>
           <Items screen={screen} workbench={workbench} />
         </View>
       ) : null}

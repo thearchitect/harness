@@ -236,7 +236,12 @@ export type WorkbenchOptions = {
   update?: UpdateHook;
   /** The themes this UI can draw (`ui.theme` names). */
   themes?: () => string[];
+  /** Settings only this kind of UI has (the app's fonts and notifications): rows of /settings. */
+  uiSettings?: () => UiSetting[];
 };
+
+/** A row of /settings a UI adds: choosing it runs `choose` (which may open its own list). */
+export type UiSetting = { value: string; label: string; description?: string; choose(): void | Promise<void> };
 
 export class Workbench {
   readonly client: ClientModel;
@@ -249,6 +254,7 @@ export class Workbench {
   private readonly clock: Clock;
   private readonly update: UpdateHook | undefined;
   private readonly themes: () => string[];
+  private readonly uiSettings: () => UiSetting[];
   private prefill: Screen["prefill"];
   private prefillCounter = 0;
   private readonly agentPrefillSeen = new WeakMap<AgentModel, number>();
@@ -267,6 +273,7 @@ export class Workbench {
     this.clock = options.clock ?? systemClock;
     this.update = options.update;
     this.themes = options.themes ?? (() => []);
+    this.uiSettings = options.uiSettings ?? (() => []);
   }
 
   /* ----- the screen ----- */
@@ -436,8 +443,10 @@ export class Workbench {
         : undefined;
     const theme = typeof this.client.settings["ui.theme"] === "string" ? String(this.client.settings["ui.theme"]) : "(pi's)";
     const toggle = (mode: string): string => (mode === "all" ? "one-at-a-time" : "all");
+    const own = this.uiSettings();
     const items: PickerItem[] = [
       { value: "theme", label: `theme: ${theme}`, description: "every client of yours" },
+      ...own.map((setting) => ({ value: `ui:${setting.value}`, label: setting.label, ...(setting.description !== undefined ? { description: setting.description } : {}) })),
       ...(state !== undefined
         ? [
             { value: "compaction", label: `auto-compaction: ${state.autoCompactionEnabled ? "on" : "off"}`, description: "this session" },
@@ -458,6 +467,8 @@ export class Workbench {
             items: this.themes().map((name) => ({ value: name, label: name })),
             choose: (name) => this.client.setting("ui.theme", name),
           });
+        } else if (value.startsWith("ui:")) {
+          await own.find((setting) => `ui:${setting.value}` === value)?.choose();
         } else if (api === undefined || agentId === undefined || state === undefined) {
           this.notify("warning", "no session");
         } else if (value === "compaction") {
