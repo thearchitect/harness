@@ -237,7 +237,8 @@ export class HarnessNode {
         return { agents: this.agentList() } as NodeOps[K]["result"];
       case "agent_start": {
         const { cwd, sessionFile, parent } = args as NodeOps["agent_start"]["args"];
-        return { agent: await this.startAgent(cwd, sessionFile, parent) } as NodeOps[K]["result"];
+        // a client on another machine may not know this node's paths: "~" is the node user's home
+        return { agent: await this.startAgent(this.expandHome(cwd), sessionFile, parent) } as NodeOps[K]["result"];
       }
       case "agent_attach": {
         const { agent, level } = args as NodeOps["agent_attach"]["args"];
@@ -290,9 +291,15 @@ export class HarnessNode {
   }
 
   /** Paths of the files operations: inside the home directory of the node's user. */
+  /** "~" and "~/…" are the node user's home; a relative path is relative to it. */
+  private expandHome(path: string): string {
+    const home = homedir();
+    return path === "~" ? home : path.startsWith("~/") ? join(home, path.slice(2)) : resolve(home, path);
+  }
+
   private userPath(path: string): string {
     const home = homedir();
-    const full = resolve(home, path);
+    const full = this.expandHome(path);
     if (full !== home && !full.startsWith(`${home}/`)) {
       throw new HarnessError("forbidden", `${path} is outside ${home}`);
     } else {

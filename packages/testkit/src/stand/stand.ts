@@ -21,7 +21,7 @@ export type Stand = {
   dataDir: string;
   project: string;
   node: HarnessNode;
-  /** Scripts the model's turns for agents started from now on. */
+  /** Queues the model's next turns (each request plays the next queued turn, across agents). */
   script(turns: ScriptedTurn[]): void;
   /** The requests the model received, in order. */
   requests(): unknown[];
@@ -81,7 +81,9 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     project,
     node,
     script(turns) {
-      writeFileSync(scenarioPath, JSON.stringify(turns));
+      // the model plays turns in order across scripts: each script adds the next ones
+      const queued = JSON.parse(readFileSync(scenarioPath, "utf8")) as unknown[];
+      writeFileSync(scenarioPath, JSON.stringify([...queued, ...turns]));
     },
     requests() {
       return existsSync(requestsPath)

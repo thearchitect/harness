@@ -122,7 +122,7 @@ async function runTui(args: string[]): Promise<void> {
       .addEndpoint(async () => NodeConnection.open(await wsTransport(remote.url), "tui", remote.token), { home: false })
       .catch((error: unknown) => client.offline.set(remote.name, error instanceof Error ? error.message : String(error)));
   }
-  const workbench = new Workbench(client);
+  const workbench = new Workbench(client, { cwd });
   const renderers = await loadRenderers(cwd, piExtensions());
 
   // What this start opens: the session asked for, the latest of this directory, or a new one.

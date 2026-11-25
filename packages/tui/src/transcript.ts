@@ -48,6 +48,7 @@ export class TranscriptView extends Container {
   private streamingTools = new Map<string, ToolExecutionComponent>();
   expanded = false;
   hideThinking = false;
+  private readonly firstComponent = new Map<string, Component>();
 
   constructor(tui: TUI, theme: () => Theme, renderers: Renderers, cwd: string) {
     super();
@@ -70,6 +71,7 @@ export class TranscriptView extends Container {
   rebuild(): void {
     this.clear();
     this.rendered = [];
+    this.firstComponent.clear();
     this.toolComponents.clear();
     this.streamingComponent = undefined;
     this.streamingTools.clear();
@@ -163,7 +165,32 @@ export class TranscriptView extends Container {
     return component;
   }
 
+  /** The first line of an item at `width` (for the search to scroll to it); undefined when not drawn. */
+  lineOf(key: string, width: number): number | undefined {
+    const first = this.firstComponent.get(key);
+    let line = 0;
+    for (const child of this.children) {
+      if (child === first) {
+        return line;
+      } else {
+        line += child.render(width).length;
+      }
+    }
+    return undefined;
+  }
+
   private addItem(item: TranscriptItem): void {
+    const before = this.children.length;
+    this.addItemComponents(item);
+    const first = this.children[before];
+    if (first !== undefined) {
+      this.firstComponent.set(item.key, first);
+    } else {
+      // the item draws nothing
+    }
+  }
+
+  private addItemComponents(item: TranscriptItem): void {
     switch (item.kind) {
       case "message":
         this.addMessage(item.message);

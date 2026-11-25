@@ -18,6 +18,9 @@ export const ACTIONS = {
   "model.cycle": { keys: ["ctrl+p"], description: "Next model" },
   "thinking.cycle": { keys: ["shift+tab"], description: "Next thinking level" },
   "tools.expand": { keys: ["ctrl+e"], description: "Expand or collapse tool output" },
+  "strip.tabs": { keys: ["alt+left"], description: "Show the session tabs over the screen (when the screen is too narrow for them)" },
+  "strip.items": { keys: ["alt+right"], description: "Show the session's items over the screen (when the screen is too narrow for them)" },
+  "transcript.search": { keys: ["ctrl+f"], description: "Search the transcript" },
   "app.quit": { keys: ["ctrl+q"], description: "Quit (agents keep running on their node)" },
 } as const;
 

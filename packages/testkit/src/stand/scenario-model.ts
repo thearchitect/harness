@@ -22,7 +22,8 @@ export const SCENARIO_MODEL = "scripted";
 export default function scenarioModel(pi: ExtensionAPI): void {
   const scenarioPath = process.env.HARNESS_TEST_SCENARIO;
   const requestsPath = process.env.HARNESS_TEST_REQUESTS;
-  const turns: ScriptedTurn[] = scenarioPath !== undefined && scenarioPath !== "" ? (JSON.parse(readFileSync(scenarioPath, "utf8")) as ScriptedTurn[]) : [];
+  // read at every request: a test adds turns while the agent runs
+  const turns = (): ScriptedTurn[] => (scenarioPath !== undefined && scenarioPath !== "" ? (JSON.parse(readFileSync(scenarioPath, "utf8")) as ScriptedTurn[]) : []);
   let next = 0;
 
   const faux = fauxProvider({ provider: SCENARIO_PROVIDER, models: [{ id: SCENARIO_MODEL }] });
@@ -33,7 +34,7 @@ export default function scenarioModel(pi: ExtensionAPI): void {
       } else {
         // requests are not recorded
       }
-      const turn = turns[next];
+      const turn = turns()[next];
       next += 1;
       if (turn === undefined) {
         return fauxAssistantMessage("(no scripted turn)");

@@ -1,8 +1,8 @@
 // The harness TUI: the full-screen workbench over a ClientModel. Three columns — the tabs of open
-// sessions, the active session (transcript, the editor or the interaction in its place, status,
-// footer), the session's items (itself, tasks, subagents) — drawn from the Workbench; keys map to
-// the shared keymap's actions. Everything the TUI shows comes from its nodes; it keeps no session
-// state of its own.
+// sessions, the active session's main area (its zones: main, above the editor, the editor or what
+// takes its place, status, footer), the session's items — all drawn from `Workbench.screen()`;
+// keys map to the shared keymap's actions, which the Workbench performs. The TUI keeps no screen
+// state of its own beyond its widgets (the editor's text, scroll positions).
 
 import { getMarkdownTheme, initTheme, type Theme } from "@earendil-works/pi-coding-agent";
 import {
@@ -10,6 +10,7 @@ import {
   Container,
   Editor,
   HStack,
+  Input,
   KeybindingsManager,
   matchesKey,
   ProcessTerminal,
@@ -21,14 +22,14 @@ import {
   TuiAltScreen,
   VStack,
   type Component,
+  type OverlayHandle,
+  type Terminal,
   type TUI,
 } from "@earendil-works/pi-tui";
-import type { AgentModel } from "#client/model/agent-model.ts";
 import type { ClientModel } from "#client/model/client-model.ts";
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
-import { Workbench, type Tab } from "#client/workbench/workbench.ts";
+import { LEFT_STRIP_MIN, RIGHT_STRIP_MIN, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Workbench } from "#client/workbench/workbench.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
-import type { RunMode } from "#protocol/state.ts";
 import { modeOfText } from "#extension/core/modes.ts";
 import { modeColor } from "#extension/presentation/modes.ts";
 import { GateDialog, selectListTheme } from "#extension/presentation/tui/gate.ts";
@@ -43,9 +44,6 @@ import { getTheme } from "./theme.ts";
 
 const LEFT_WIDTH = 26;
 const RIGHT_WIDTH = 30;
-/** Below these widths a side column hides. */
-const LEFT_MIN_SCREEN = 80;
-const RIGHT_MIN_SCREEN = 110;
 
 export type AppOptions = {
   client: ClientModel;
@@ -54,6 +52,8 @@ export type AppOptions = {
   /** Where new sessions start. */
   cwd: string;
   onQuit(): void;
+  /** The terminal (a virtual one in tests); the process's by default. */
+  terminal?: Terminal;
 };
 
 /** pi-tui's editor keys with harness submit keys: Ctrl+Enter sends, Enter starts a new line. */
@@ -66,7 +66,7 @@ function installKeybindings(): void {
   );
 }
 
-function actionOf(data: string): ActionId | undefined {
+export function actionOf(data: string): ActionId | undefined {
   for (const goto of TAB_GOTO_KEYS) {
     if (matchesKey(data, goto.key as never)) {
       return goto.action;
@@ -84,6 +84,42 @@ function actionOf(data: string): ActionId | undefined {
   return undefined;
 }
 
+function statusColor(theme: Theme, line: StatusLine, mode: Screen["zones"]["editor"]): string {
+  switch (line.level) {
+    case "error":
+      return theme.fg("error", ` ${line.text}`);
+    case "warning":
+      return theme.fg("warning", ` ${line.text}`);
+    case "info":
+      return theme.fg("dim", ` ${line.text}`);
+    case "working":
+      return modeColor(mode.kind === "editor" ? mode.mode : "plan", theme.getColorMode(), ` ⠿ ${line.text}`);
+    default:
+      throw new Error(`unknown status level: ${String(line.level satisfies never)}`);
+  }
+}
+
+/** The search box above the editor: every change searches again; Enter steps to older matches. */
+class SearchBox extends Input {
+  private readonly changed: (query: string) => void;
+
+  constructor(changed: (query: string) => void, step: () => void) {
+    super();
+    this.changed = changed;
+    this.onSubmit = () => step();
+  }
+
+  override handleInput(data: string): void {
+    const before = this.getValue();
+    super.handleInput(data);
+    if (this.getValue() !== before) {
+      this.changed(this.getValue());
+    } else {
+      // a cursor move
+    }
+  }
+}
+
 export class App {
   private readonly client: ClientModel;
   private readonly workbench: Workbench;
@@ -94,20 +130,24 @@ export class App {
   private readonly tabsColumn: TabsColumn;
   private readonly itemsColumn: ItemsColumn;
   private readonly transcript: TranscriptView;
+  private readonly transcriptScroll: ScrollView;
   private readonly taskOutput = new Lines();
   private readonly mainArea = new Container();
-  private readonly aboveEditor = new Lines();
+  private readonly aboveEditor = new Container();
+  private readonly aboveLines = new Lines();
+  private readonly searchBox: SearchBox;
   private readonly editorZone = new Container();
   private readonly status = new Lines();
   private readonly footer: Footer;
   private readonly editor: Editor;
-  private interactionShown: string | undefined;
-  private interactionComponent: Component | undefined;
-  private current: AgentModel | undefined;
-  private currentTab: Tab | undefined;
-  private overlay: { hide(): void } | undefined;
-  private taskPoll: ReturnType<typeof setInterval> | undefined;
+  /** What the editor zone shows now: the editor, an interaction or a picker (by id). */
+  private editorShown = "editor";
+  private editorComponent: Component | undefined;
+  private readonly overlayHandles = new Map<OverlayKind, OverlayHandle>();
+  private searchShownAt: string | undefined;
+  private screen: Screen | undefined;
   private quitArmed = false;
+  private programStatus = "";
 
   constructor(options: AppOptions) {
     installKeybindings();
@@ -116,19 +156,24 @@ export class App {
     this.renderers = options.renderers;
     this.cwd = options.cwd;
     this.onQuit = options.onQuit;
-    this.tui = new TuiAltScreen(new ProcessTerminal(), true, undefined, { mouse: true });
+    this.tui = new TuiAltScreen(options.terminal ?? new ProcessTerminal(), true, undefined, { mouse: true });
     const theme = (): Theme => getTheme();
     this.tabsColumn = new TabsColumn(theme);
     this.itemsColumn = new ItemsColumn(theme);
     this.transcript = new TranscriptView(this.tui, theme, this.renderers, this.cwd);
     this.footer = new Footer(theme);
     this.editor = new Editor(this.tui, { borderColor: (text) => modeColor(this.editorMode(), getTheme().getColorMode(), text), selectList: selectListTheme(getTheme()) }, { paddingX: 1 });
-    this.editor.onSubmit = (text) => void this.submit(text);
+    this.searchBox = new SearchBox(
+      (query) => this.workbench.setSearch(query),
+      () => this.workbench.stepSearch(-1),
+    );
     this.mainArea.addChild(this.transcript);
+    this.aboveEditor.addChild(this.aboveLines);
     this.editorZone.addChild(this.editor);
 
+    this.transcriptScroll = new ScrollView(this.mainArea, { follow: "end", primary: true });
     const main = new VStack([
-      { component: new ScrollView(this.mainArea, { follow: "end", primary: true }), basis: 0, grow: 1, minSize: 3 },
+      { component: this.transcriptScroll, basis: 0, grow: 1, minSize: 3 },
       { component: this.aboveEditor, basis: "auto" },
       { component: this.editorZone, basis: "auto", shrink: 1, minSize: 3 },
       { component: this.status, basis: "auto" },
@@ -137,9 +182,9 @@ export class App {
     this.tui.setLayoutRoot(
       new HStack(
         [
-          { component: new ScrollView(this.tabsColumn), basis: LEFT_WIDTH, visible: (viewport) => viewport.width >= LEFT_MIN_SCREEN },
+          { component: new ScrollView(this.tabsColumn), basis: LEFT_WIDTH, visible: (viewport) => viewport.width >= LEFT_STRIP_MIN },
           { component: main, basis: 0, grow: 1 },
-          { component: new ScrollView(this.itemsColumn), basis: RIGHT_WIDTH, visible: (viewport) => viewport.width >= RIGHT_MIN_SCREEN },
+          { component: new ScrollView(this.itemsColumn), basis: RIGHT_WIDTH, visible: (viewport) => viewport.width >= RIGHT_STRIP_MIN },
         ],
         { gap: 1 },
       ),
@@ -157,160 +202,190 @@ export class App {
   }
 
   stop(): void {
-    if (this.taskPoll !== undefined) {
-      clearInterval(this.taskPoll);
-    } else {
-      // no task view open
-    }
+    this.setProgramStatus({ state: "clear" });
     this.tui.stop();
   }
 
   /** The mode the editor's border shows: the run's while it runs, else what the text asks for. */
-  private editorMode(): RunMode {
-    const model = this.current;
-    if (model === undefined) {
-      return "plan";
-    } else if (model.running) {
-      return model.state.mode;
-    } else {
-      return modeOfText(this.editor.getText(), model.state.variant).mode;
-    }
+  private editorMode(): ReturnType<typeof modeOfText>["mode"] {
+    const zone = this.screen?.zones.editor;
+    return zone?.kind === "editor" ? zone.mode : "plan";
   }
 
-  private notify(level: "info" | "warning" | "error", message: string): void {
-    this.current?.notice(level, message);
-    const theme = getTheme();
-    this.status.lines = [theme.fg(level === "error" ? "error" : level === "warning" ? "warning" : "dim", ` ${message}`)];
-    this.tui.requestRender();
-  }
-
-  /** Redraws from the models: tabs, items, the active session, its interaction. */
+  /** Redraws from the workbench's screen. */
   private refresh(): void {
     const theme = getTheme();
-    const tabs = this.workbench.tabs();
-    const tab = this.workbench.activeTab();
-    this.currentTab = tab;
+    const variant = this.screen?.agent?.state.variant ?? "advanced";
+    const previous = this.screen?.agent;
+    const screen = this.workbench.screen(this.tui.terminal.columns, { mode: modeOfText(this.editor.getText(), variant).mode });
+    this.screen = screen;
+    const tab = screen.tab;
     if (tab !== undefined && (tab.glyph === "✓" || tab.glyph === "✗")) {
       // the user is looking at it: what it finished is seen
       void this.workbench.markSeen(tab).catch(() => undefined);
     } else {
       // nothing unseen in the active tab
     }
-    this.tabsColumn.tabs = tabs;
-    this.tabsColumn.active = this.workbench.active;
-    const model = tab?.agent !== undefined ? this.client.full.get(`${tab.node}/${tab.agent.id}`) : undefined;
-    if (model !== this.current) {
-      this.current = model;
+    if (screen.agent !== previous) {
       this.editor.setText("");
     } else {
       // the same session
     }
-    this.footer.model = model;
-    this.footer.node = tab?.node ?? "";
-    this.itemsColumn.mode = model?.state.mode ?? tab?.mode ?? "plan";
-    this.itemsColumn.items = tab !== undefined ? this.workbench.items(tab, model?.state) : [];
-    const selected = tab !== undefined ? this.workbench.selectedItem(tab) : "session";
-    this.itemsColumn.selected = selected;
 
-    this.showMain(selected);
-    this.showInteraction(model?.interactions[0]);
+    this.tabsColumn.tabs = screen.tabs;
+    this.tabsColumn.active = screen.active;
+    this.itemsColumn.mode = screen.agent?.state.mode ?? tab?.mode ?? "plan";
+    this.itemsColumn.items = screen.items;
+    this.itemsColumn.selected = screen.selected;
+    this.footer.model = screen.zones.footer.agent;
+    this.footer.node = screen.zones.footer.node;
 
-    const queue = model?.session?.queue;
-    const notices = model?.notices.slice(-1) ?? [];
-    this.aboveEditor.lines = [
-      ...(queue !== undefined ? [...queue.steering.map((text) => theme.fg("dim", ` ⤷ steer: ${text}`)), ...queue.followUp.map((text) => theme.fg("dim", ` ⤷ next: ${text}`))] : []),
-      ...Object.values(model?.widgets ?? {}).flat(),
-    ];
-    const notice = notices[0];
-    const statusParts = Object.values(model?.status ?? {});
-    this.status.lines = [
-      ...(notice !== undefined && Date.now() - notice.at < 15_000 ? [theme.fg(notice.level === "error" ? "error" : notice.level === "warning" ? "warning" : "dim", ` ${notice.message.split("\n")[0]}`)] : []),
-      ...(statusParts.length > 0 ? [theme.fg("dim", ` ${statusParts.join(" · ")}`)] : []),
-      ...(model?.running === true ? [modeColor(model.state.mode, theme.getColorMode(), " ⠿ working… (Esc to stop)")] : []),
-      ...(tab?.unavailable !== undefined ? [theme.fg("warning", ` ⊘ ${tab.unavailable}`)] : []),
-    ];
-    const waiting = tabs.filter((candidate, index) => index !== this.workbench.active && candidate.glyph === "◆").length;
-    if (waiting > 0) {
-      this.status.lines.push(theme.fg("warning", ` ◆ ${waiting} other session${waiting > 1 ? "s" : ""} waiting for you`));
-    } else {
-      // nobody else waits
-    }
+    this.drawMain(screen);
+    this.drawAboveEditor(screen);
+    this.drawEditorZone(screen.zones.editor);
+    this.status.lines = screen.zones.status.map((line) => statusColor(theme, line, screen.zones.editor));
+    this.drawOverlays(screen);
+    this.updateProgramStatus(screen);
     this.tui.requestRender();
   }
 
-  /** The main area shows the session's transcript or a task's output. */
-  private showMain(selected: string): void {
-    const model = this.current;
-    if (selected === "session" || model === undefined) {
-      if (this.taskPoll !== undefined) {
-        clearInterval(this.taskPoll);
-        this.taskPoll = undefined;
-      } else {
-        // the transcript was shown already
+  private drawMain(screen: Screen): void {
+    const main = screen.zones.main;
+    switch (main.kind) {
+      case "transcript": {
+        this.swapMain(this.transcript);
+        if (this.transcript.expanded !== screen.toolsExpanded) {
+          this.transcript.expanded = screen.toolsExpanded;
+          this.transcript.rebuild();
+        } else {
+          // the same expansion
+        }
+        this.transcript.show(screen.agent);
+        this.scrollToMatch(screen);
+        break;
       }
-      if (this.mainArea.children[0] !== this.transcript) {
-        this.mainArea.clear();
-        this.mainArea.addChild(this.transcript);
-      } else {
-        // shown
-      }
-      this.transcript.show(model);
-    } else {
-      if (this.mainArea.children[0] !== this.taskOutput) {
-        this.mainArea.clear();
-        this.mainArea.addChild(this.taskOutput);
-      } else {
-        // shown
-      }
-      if (this.taskPoll === undefined) {
-        void this.pollTask(selected);
-        this.taskPoll = setInterval(() => void this.pollTask(selected), 700);
-      } else {
-        // polling
-      }
-    }
-  }
-
-  private async pollTask(taskId: string): Promise<void> {
-    const tab = this.currentTab;
-    if (tab?.agent === undefined) {
-      return;
-    } else {
-      try {
-        const output = await this.client.connection(tab.node).call<{ text: string }>(tab.agent.id, { type: "harness_task_output", taskId, offset: 0 });
-        const task = this.current?.state.tasks.find((candidate) => candidate.id === taskId);
+      case "task": {
+        this.swapMain(this.taskOutput);
         const theme = getTheme();
-        this.taskOutput.lines = [theme.bold(` ${task?.command ?? taskId}`), theme.fg("dim", ` ${task?.state ?? ""}${task?.exitCode !== undefined ? ` · exit ${task.exitCode}` : ""} · Alt+↑ back`), "", ...output.text.split("\n")];
-        this.tui.requestRender();
-      } catch (error) {
-        this.taskOutput.lines = [` ${error instanceof Error ? error.message : String(error)}`];
+        const task = main.task;
+        this.taskOutput.lines = [
+          theme.bold(` ${task?.command ?? main.taskId}`),
+          theme.fg("dim", ` ${task?.state ?? ""}${task?.exitCode !== undefined ? ` · exit ${task.exitCode}` : ""} · Alt+↑ back`),
+          "",
+          ...main.output.split("\n"),
+        ];
+        break;
       }
+      case "subagent": {
+        this.swapMain(this.taskOutput);
+        const theme = getTheme();
+        const subagent = main.subagent;
+        this.taskOutput.lines = [
+          theme.bold(` ${subagent?.profile ?? "subagent"} ${main.id}`),
+          theme.fg("dim", ` ${subagent?.state ?? ""} · ${subagent?.engine ?? ""} · Alt+↑ back`),
+        ];
+        break;
+      }
+      default:
+        throw new Error(`unknown main zone: ${JSON.stringify(main satisfies never)}`);
     }
   }
 
-  /** The first open interaction takes the editor's place until it closes. */
-  private showInteraction(request: InteractionRequest | undefined): void {
-    if (request?.id === this.interactionShown) {
+  private swapMain(component: Component): void {
+    if (this.mainArea.children[0] !== component) {
+      this.mainArea.clear();
+      this.mainArea.addChild(component);
+    } else {
+      // shown already
+    }
+  }
+
+  /** The current search match scrolled into view, once per match. */
+  private scrollToMatch(screen: Screen): void {
+    const search = screen.zones.aboveEditor.search;
+    const key = search?.matches[search.index];
+    if (key !== undefined && key !== this.searchShownAt) {
+      this.searchShownAt = key;
+      const line = this.transcript.lineOf(key, this.transcriptScroll.getContentWidth(this.tui.terminal.columns));
+      if (line !== undefined) {
+        this.transcriptScroll.scrollTo(line, { disableFollow: true });
+      } else {
+        // not drawn (older than the snapshot)
+      }
+    } else if (search === undefined) {
+      this.searchShownAt = undefined;
+    } else {
+      // the same match
+    }
+  }
+
+  private drawAboveEditor(screen: Screen): void {
+    const theme = getTheme();
+    const above = screen.zones.aboveEditor;
+    this.aboveLines.lines = [
+      ...above.queue.map((entry) => theme.fg("dim", ` ⤷ ${entry.kind === "steer" ? "steer" : "next"}: ${entry.text}`)),
+      ...above.widgets,
+      ...(above.search !== undefined
+        ? [theme.fg("dim", ` search: ${above.search.matches.length === 0 ? "no match" : `${above.search.index + 1}/${above.search.matches.length}`} · Enter older · Esc close`)]
+        : []),
+    ];
+    const searching = above.search !== undefined;
+    const shown = this.aboveEditor.children.includes(this.searchBox);
+    if (searching && !shown) {
+      this.searchBox.setValue(above.search?.query ?? "");
+      this.aboveEditor.addChild(this.searchBox);
+      this.tui.setFocus(this.searchBox);
+    } else if (!searching && shown) {
+      this.aboveEditor.removeChild(this.searchBox);
+      this.tui.setFocus(this.editorComponent ?? this.editor);
+    } else {
+      // no change
+    }
+  }
+
+  /** The editor, or the interaction or picker in its place. */
+  private drawEditorZone(zone: EditorZone): void {
+    const id = zone.kind === "editor" ? "editor" : zone.kind === "interaction" ? `interaction:${zone.request.id}` : `picker:${zone.picker.id}`;
+    if (id === this.editorShown) {
       return;
     } else {
-      this.interactionShown = request?.id;
+      this.editorShown = id;
       this.editorZone.clear();
-      if (request === undefined) {
-        this.interactionComponent = undefined;
-        this.editorZone.addChild(this.editor);
-        this.tui.setFocus(this.editor);
-      } else {
-        const component = this.interactionView(request);
-        this.interactionComponent = component;
-        this.editorZone.addChild(component);
-        this.tui.setFocus(component);
+      switch (zone.kind) {
+        case "editor":
+          this.editorComponent = undefined;
+          this.editorZone.addChild(this.editor);
+          this.tui.setFocus(this.editor);
+          break;
+        case "interaction":
+          this.editorComponent = this.interactionView(zone.request);
+          this.editorZone.addChild(this.editorComponent);
+          this.tui.setFocus(this.editorComponent);
+          break;
+        case "picker": {
+          const theme = getTheme();
+          const picker = zone.picker;
+          const list = new SelectList(picker.items, Math.min(15, Math.max(1, picker.items.length)), selectListTheme(theme));
+          list.onSelect = (item) => void picker.choose(item.value);
+          list.onCancel = () => this.workbench.closePicker();
+          const frame = new Container();
+          frame.addChild(new Text(theme.fg("accent", theme.bold(` ${picker.title}`)), 0, 0));
+          frame.addChild(list);
+          frame.addChild(new Text(theme.fg("dim", " ↑/↓ · type to filter · Enter · Esc"), 0, 0));
+          this.editorComponent = list;
+          this.editorZone.addChild(frame);
+          this.tui.setFocus(list);
+          break;
+        }
+        default:
+          throw new Error(`unknown editor zone: ${JSON.stringify(zone satisfies never)}`);
       }
     }
   }
 
   private interactionView(request: InteractionRequest): Component {
     const theme = getTheme();
-    const answer = (value: unknown): void => void this.answer(request.id, value);
+    const answer = (value: unknown): void => void this.workbench.answer(request.id, value);
     switch (request.kind) {
       case "gate":
         return new GateDialog(this.tui, theme, request.payload, answer);
@@ -329,37 +404,87 @@ export class App {
     }
   }
 
-  private async answer(interactionId: string, value: unknown): Promise<void> {
-    const tab = this.currentTab;
-    if (tab?.agent !== undefined) {
-      try {
-        await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_interaction_response", interactionId, answer: value });
-      } catch (error) {
-        this.notify("error", `answer not delivered: ${error instanceof Error ? error.message : String(error)}`);
+  /** Overlays: the harness panel and the hidden strips, over the right or left edge. */
+  private drawOverlays(screen: Screen): void {
+    const wanted = new Set(screen.zones.overlays);
+    for (const [kind, handle] of this.overlayHandles) {
+      if (!wanted.has(kind)) {
+        handle.hide();
+        this.overlayHandles.delete(kind);
+        this.tui.setFocus(this.editorComponent ?? this.editor);
+      } else {
+        // still open
       }
+    }
+    for (const kind of wanted) {
+      if (!this.overlayHandles.has(kind)) {
+        this.overlayHandles.set(kind, this.showOverlay(kind, screen));
+      } else {
+        // open already
+      }
+    }
+  }
+
+  private showOverlay(kind: OverlayKind, screen: Screen): OverlayHandle {
+    const theme = getTheme();
+    switch (kind) {
+      case "panel": {
+        const state = screen.agent?.state;
+        const rows = state !== undefined ? this.workbench.panelRows(state) : [];
+        const list = new SelectList(rows, Math.max(1, rows.length), selectListTheme(theme));
+        list.onSelect = (row) => {
+          this.workbench.toggleOverlay("panel");
+          void this.workbench.choosePanel(row.value as never).catch((error: unknown) => this.workbench.notify("error", error instanceof Error ? error.message : String(error)));
+        };
+        list.onCancel = () => this.workbench.toggleOverlay("panel");
+        const frame = new Container();
+        frame.addChild(new Text(theme.fg("accent", theme.bold(" harness")), 0, 0));
+        frame.addChild(rows.length > 0 ? list : new Text(theme.fg("dim", " no session"), 0, 0));
+        const handle = this.tui.showOverlay(frame, { width: RIGHT_WIDTH + 10, anchor: "top-right" });
+        this.tui.setFocus(list);
+        return handle;
+      }
+      case "tabs":
+        return this.tui.showOverlay(this.tabsColumn, { width: LEFT_WIDTH, anchor: "top-left", nonCapturing: true });
+      case "items":
+        return this.tui.showOverlay(this.itemsColumn, { width: RIGHT_WIDTH, anchor: "top-right", nonCapturing: true });
+      default:
+        throw new Error(`unknown overlay: ${String(kind satisfies never)}`);
+    }
+  }
+
+  /** The terminal's program status (OSC 7501): blocked while any session waits for the operator. */
+  private updateProgramStatus(screen: Screen): void {
+    const waiting = screen.tabs.some((tab) => tab.glyph === "◆");
+    const running = screen.tabs.some((tab) => tab.glyph === "●");
+    const status = waiting ? "blocked" : running ? "working" : "idle";
+    if (status !== this.programStatus) {
+      this.programStatus = status;
+      this.setProgramStatus(waiting ? { state: "blocked", app: "harness", kind: "permission", message: "waiting for the operator" } : { state: status, app: "harness" });
     } else {
-      this.notify("error", "the session's agent is gone");
+      // unchanged
+    }
+  }
+
+  private setProgramStatus(status: Parameters<Terminal["setProgramStatus"]>[0]): void {
+    try {
+      this.tui.terminal.setProgramStatus(status);
+    } catch {
+      // a terminal without program status
     }
   }
 
   private async submit(text: string): Promise<void> {
     const trimmed = text.trim();
-    const tab = this.currentTab;
     if (trimmed === "") {
       return;
     } else if (await this.clientCommand(trimmed)) {
       this.editor.setText("");
-    } else if (tab?.agent === undefined || this.current === undefined) {
-      this.notify("warning", "no session here: Ctrl+T starts one, Ctrl+O opens one");
     } else {
       this.editor.addToHistory(text);
       this.editor.setText("");
-      const { mode, text: message } = modeOfText(text, this.current.state.variant);
-      try {
-        await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_prompt", text: message, mode });
-      } catch (error) {
-        this.notify("error", error instanceof Error ? error.message : String(error));
-      }
+      const { mode, text: message } = modeOfText(text, this.screen?.agent?.state.variant ?? "advanced");
+      await this.workbench.prompt(message, mode);
     }
   }
 
@@ -368,18 +493,18 @@ export class App {
     const [command] = text.split(/\s+/);
     switch (command) {
       case "/new":
-        await this.act("tabs.new");
+        await this.workbench.act("tabs.new");
         return true;
       case "/open":
       case "/resume":
-        await this.act("tabs.open");
+        await this.workbench.act("tabs.open");
         return true;
       case "/quit":
       case "/exit":
         this.onQuit();
         return true;
       case "/model":
-        await this.act("model.select");
+        await this.workbench.act("model.select");
         return true;
       default:
         return false;
@@ -388,19 +513,19 @@ export class App {
 
   private onKey(data: string): { consume: boolean } | undefined {
     const action = actionOf(data);
+    const input = this.screen?.input ?? "editor";
     if (matchesKey(data, "ctrl+c" as never)) {
-      if (this.editor.getText() !== "" && this.interactionComponent === undefined) {
+      if (this.editor.getText() !== "" && input === "editor") {
         this.editor.setText("");
         this.quitArmed = false;
       } else if (this.quitArmed) {
         this.onQuit();
       } else {
         this.quitArmed = true;
-        this.notify("info", "Ctrl+C again to quit (agents keep running on their node)");
+        this.workbench.notify("info", "Ctrl+C again to quit (agents keep running on their node)");
       }
-      this.tui.requestRender();
       return { consume: true };
-    } else if (action === "editor.submit" && this.interactionComponent === undefined && this.overlay === undefined) {
+    } else if (action === "editor.submit" && input === "editor") {
       // the app submits: pi-tui's editor takes Alt+Enter for a new line
       const text = this.editor.getExpandedText();
       this.editor.setText("");
@@ -409,17 +534,13 @@ export class App {
     } else if (action === undefined || action === "editor.submit" || action === "editor.newline") {
       return undefined;
     } else if (action === "run.abort") {
-      if (this.overlay !== undefined) {
-        this.overlay.hide();
-        this.overlay = undefined;
-        return { consume: true };
-      } else if (this.interactionComponent === undefined && this.current?.running === true) {
+      if (input === "dialog" || input === "picker") {
+        return undefined; // Esc belongs to the dialog or the list
+      } else {
         void this.act(action);
         return { consume: true };
-      } else {
-        return undefined; // Esc belongs to the dialog or the editor
       }
-    } else if (action === "thinking.cycle" && this.interactionComponent !== undefined) {
+    } else if (action === "thinking.cycle" && input === "dialog") {
       return undefined; // Shift+Tab moves inside a dialog
     } else {
       void this.act(action);
@@ -428,204 +549,21 @@ export class App {
   }
 
   async act(action: ActionId): Promise<void> {
-    const tab = this.currentTab;
-    const connection = tab !== undefined ? this.client.connections.get(tab.node) : undefined;
-    try {
-      if (action.startsWith("tabs.goto.")) {
-        await this.workbench.ensureAgent(this.workbench.tabs()[Number(action.slice("tabs.goto.".length)) - 1]);
-        await this.workbench.activate(Number(action.slice("tabs.goto.".length)) - 1);
+    if (action === "app.quit") {
+      this.onQuit();
+    } else {
+      await this.workbench.act(action);
+      if (action === "tabs.new" || action === "tabs.open" || action.startsWith("tabs.")) {
+        await this.loadCompletions().catch(() => undefined);
       } else {
-        switch (action as keyof typeof ACTIONS) {
-          case "tabs.next":
-          case "tabs.prev": {
-            const count = this.workbench.tabs().length;
-            const next = count === 0 ? 0 : (this.workbench.active + (action === "tabs.next" ? 1 : count - 1)) % count;
-            await this.workbench.ensureAgent(this.workbench.tabs()[next]);
-            await this.workbench.activate(next);
-            break;
-          }
-          case "tabs.new":
-            await this.workbench.newTab(this.client.home ?? "", this.cwd);
-            break;
-          case "tabs.close":
-            await this.workbench.closeTab(this.workbench.active);
-            break;
-          case "tabs.open":
-            await this.openSessionPicker();
-            break;
-          case "items.next":
-          case "items.prev": {
-            if (tab !== undefined) {
-              const items = this.workbench.items(tab, this.current?.state);
-              const index = items.findIndex((item) => item.id === this.workbench.selectedItem(tab));
-              const next = items[Math.max(0, Math.min(items.length - 1, index + (action === "items.next" ? 1 : -1)))];
-              this.workbench.select(tab, next?.id ?? "session");
-            } else {
-              // no session
-            }
-            break;
-          }
-          case "panel.toggle":
-            this.togglePanel();
-            break;
-          case "model.select":
-            await this.openModelPicker();
-            break;
-          case "model.cycle":
-            if (connection !== undefined && tab?.agent !== undefined) {
-              await connection.call(tab.agent.id, { type: "cycle_model" });
-            } else {
-              // no session
-            }
-            break;
-          case "thinking.cycle":
-            if (connection !== undefined && tab?.agent !== undefined) {
-              await connection.call(tab.agent.id, { type: "cycle_thinking_level" });
-            } else {
-              // no session
-            }
-            break;
-          case "tools.expand":
-            this.transcript.expanded = !this.transcript.expanded;
-            this.transcript.rebuild();
-            break;
-          case "run.abort":
-            if (connection !== undefined && tab?.agent !== undefined) {
-              await connection.call(tab.agent.id, { type: "abort" });
-            } else {
-              // no session
-            }
-            break;
-          case "app.quit":
-            this.onQuit();
-            break;
-          case "editor.submit":
-          case "editor.newline":
-            break; // the editor handles these
-          default:
-            throw new Error(`unknown action: ${String(action)}`);
-        }
+        // the same session
       }
-    } catch (error) {
-      this.notify("error", error instanceof Error ? error.message : String(error));
-    }
-    this.refresh();
-  }
-
-  /** A list overlay: the selected value goes to `chosen`. */
-  private pick(title: string, items: { value: string; label: string; description?: string }[], chosen: (value: string) => void): void {
-    const theme = getTheme();
-    const list = new SelectList(items, Math.min(15, Math.max(1, items.length)), selectListTheme(theme));
-    const frame = new Container();
-    frame.addChild(new Text(theme.fg("accent", theme.bold(` ${title}`)), 0, 0));
-    frame.addChild(list);
-    frame.addChild(new Text(theme.fg("dim", " ↑/↓ · Enter · Esc"), 0, 0));
-    const close = (): void => {
-      handle.hide();
-      this.overlay = undefined;
-      this.tui.setFocus(this.interactionComponent ?? this.editor);
-    };
-    list.onSelect = (item) => {
-      close();
-      chosen(item.value);
-    };
-    list.onCancel = close;
-    const handle = this.tui.showOverlay(frame, { width: "70%", anchor: "center" } as never);
-    this.overlay = handle;
-    this.tui.setFocus(list);
-  }
-
-  private async openSessionPicker(): Promise<void> {
-    const node = this.client.home;
-    if (node === undefined) {
-      this.notify("error", "no node connected");
-    } else {
-      const sessions = await this.client.sessions(node);
-      this.pick(
-        `Open a session on ${node}`,
-        sessions.slice(0, 200).map((session) => ({
-          value: session.id,
-          label: `${session.agent !== undefined ? "● " : "  "}${session.name ?? session.firstMessage?.split("\n")[0]?.slice(0, 60) ?? session.id.slice(0, 8)}`,
-          description: `${session.cwd} · ${new Date(session.modified).toLocaleString()}`,
-        })),
-        (id) => {
-          const session = sessions.find((candidate) => candidate.id === id);
-          if (session !== undefined) {
-            void this.workbench.openSession(node, session).catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
-          } else {
-            // the list changed meanwhile
-          }
-        },
-      );
-    }
-  }
-
-  private async openModelPicker(): Promise<void> {
-    const tab = this.currentTab;
-    if (tab?.agent === undefined) {
-      this.notify("warning", "no session");
-    } else {
-      const connection = this.client.connection(tab.node);
-      const agentId = tab.agent.id;
-      const { models } = await connection.call<{ models: { provider: string; id: string; name?: string }[] }>(agentId, { type: "get_available_models" });
-      this.pick(
-        "Model",
-        models.map((model) => ({ value: `${model.provider}/${model.id}`, label: `${model.provider}/${model.id}`, description: model.name })),
-        (value) => {
-          const slash = value.indexOf("/");
-          void connection
-            .call(agentId, { type: "set_model", provider: value.slice(0, slash), modelId: value.slice(slash + 1) })
-            .catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
-        },
-      );
-    }
-  }
-
-  private togglePanel(): void {
-    const model = this.current;
-    const tab = this.currentTab;
-    if (this.overlay !== undefined) {
-      this.overlay.hide();
-      this.overlay = undefined;
-      this.tui.setFocus(this.interactionComponent ?? this.editor);
-    } else if (model === undefined || tab?.agent === undefined) {
-      this.notify("warning", "no session");
-    } else {
-      const connection = this.client.connection(tab.node);
-      const agentId = tab.agent.id;
-      const state = model.state;
-      const set = (change: Record<string, unknown>): void => {
-        void connection.call(agentId, { type: "harness_set", ...change }).catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
-      };
-      this.pick(
-        "harness",
-        [
-          { value: "madness", label: `${state.madness ? "[x]" : "[ ]"} madness`, description: "write/edit without gates" },
-          { value: "simple", label: `${state.variant === "simple" ? "[x]" : "[ ]"} simple`, description: "one mode instead of PLAN/BUILD" },
-          { value: "implementer", label: `implementer: ${state.implementer}`, description: "self or a subagent profile (builder)" },
-        ],
-        (value) => {
-          switch (value) {
-            case "madness":
-              set({ madness: !state.madness });
-              break;
-            case "simple":
-              set({ variant: state.variant === "simple" ? "advanced" : "simple" });
-              break;
-            case "implementer":
-              set({ implementer: state.implementer === "self" ? "builder" : "self" });
-              break;
-            default:
-              break; // no such row
-          }
-        },
-      );
     }
   }
 
   /** Autocomplete of commands and files for the active session. */
   async loadCompletions(): Promise<void> {
-    const tab = this.currentTab;
+    const tab = this.workbench.activeTab();
     if (tab?.agent !== undefined) {
       const { commands } = await this.client.connection(tab.node).call<{ commands: { name: string; description?: string }[] }>(tab.agent.id, { type: "get_commands" });
       const local = [
