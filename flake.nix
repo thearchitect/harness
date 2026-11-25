@@ -12,7 +12,7 @@
       cage,
     }:
     let
-      # The systems CI builds and tests (nix/ci.py); Intel macOS is not one of them.
+      # The systems CI builds (check.yml on x86_64-linux, compatibility.yml on all); Intel macOS is not one of them.
       systems = [
         "x86_64-linux"
         "aarch64-linux"

@@ -1,31 +1,47 @@
-# Full platform coverage is off the ordinary publication path. Each platform
-# skips revisions already checked and cached by either workflow.
+# The bundle on every system harness supports: it builds, and its `harness` starts and answers.
+# x86_64-linux's full check is check.yml; this one adds aarch64-linux and macOS (Apple silicon).
+# Started on a schedule and by hand (`gh workflow run compatibility.yml`).
 name: compatibility
 
 on:
   schedule:
     - cron: "47 5 * * *"
   workflow_dispatch:
-    inputs:
-      force:
-        description: Rebuild all platforms even when already cached
-        type: boolean
-        default: false
 
 concurrency:
   group: compatibility-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build:
+  bundle:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: aarch64-linux
+            runner: ubuntu-24.04-arm
+          - system: aarch64-darwin
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 180
     permissions:
       contents: read
-      actions: read
-      statuses: write
-    uses: ./.github/workflows/build.yml
-    with:
-      ref: ${{ github.sha }}
-      full-matrix: true
-      # Cache publication is off (check.yml).
-      force: ${{ github.event_name == 'workflow_dispatch' && inputs.force }}
-    secrets: inherit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+      - name: Build the bundle
+        run: nix build -L .#packages.${{ matrix.system }}.default 2>&1 | tee build.log
+      - name: harness starts
+        run: |
+          set -euo pipefail
+          ./result/bin/harness --version
+          ./result/bin/harness --help
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-${{ matrix.system }}
+          path: build.log

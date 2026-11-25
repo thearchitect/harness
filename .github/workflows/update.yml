@@ -1,9 +1,7 @@
-# Scheduled dependency update: bumps every pin (nix/update.sh), checks the
-# primary Linux platform, and fast-forwards master on success. The full matrix
-# runs separately in compatibility.yml. The update commit is pushed to
-# the `auto/update` branch first; pushes made with GITHUB_TOKEN do not trigger
-# other workflows, so this workflow runs the checks itself (cache publication
-# is off: check.yml).
+# Scheduled dependency update: bumps every pin (nix/update.sh), runs the full check on the bumped
+# commit, and fast-forwards master on success. The bump is pushed to `auto/update` first; pushes
+# made with GITHUB_TOKEN do not trigger other workflows, so this one runs the check itself.
+# The app's packages (packages/app) follow its Expo SDK and are moved by hand.
 name: update
 
 on:
@@ -48,21 +46,32 @@ jobs:
           echo "changed=true" >>"$GITHUB_OUTPUT"
           echo "sha=$(git rev-parse HEAD)" >>"$GITHUB_OUTPUT"
 
-  build:
+  check:
     needs: bump
     if: needs.bump.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
     permissions:
       contents: read
-      actions: read
-      statuses: write
-    uses: ./.github/workflows/build.yml
-    with:
-      ref: ${{ needs.bump.outputs.sha }}
-      # Cache publication is off (check.yml).
-    secrets: inherit
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.bump.outputs.sha }}
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+      - name: nix flake check
+        run: nix flake check -L --keep-going 2>&1 | tee flake-check.log
+      - name: Keep the log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: flake-check-log
+          path: flake-check.log
 
   merge:
-    needs: [bump, build]
+    needs: [bump, check]
     runs-on: ubuntu-latest
     permissions:
       contents: write
