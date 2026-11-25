@@ -25,6 +25,7 @@ import { ENTRY, StateStore } from "./state/store.ts";
 import { Supervisor } from "./supervisor/supervisor.ts";
 import { registerTaskTools } from "./supervisor/tools.ts";
 import { registerAskSecret } from "./tools/ask_secret.ts";
+import { registerAskUser } from "./tools/ask_user.ts";
 import { registerBuiltins } from "./tools/builtins.ts";
 import { registerDisplayFile } from "./tools/display_file.ts";
 import { registerLsp } from "./tools/lsp/index.ts";
@@ -338,6 +339,7 @@ function registerExtensionParts(pi: ExtensionAPI, host: ExtensionHost, interrupt
   registerProjectTree(pi);
   registerSendFile(pi);
   registerAskSecret(pi, host.interactions);
+  registerAskUser(pi, host.interactions);
   registerDisplayFile(pi);
   registerTaskTools(pi, supervisor, interrupts, host.dataDir);
 

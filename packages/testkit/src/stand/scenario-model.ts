@@ -46,7 +46,7 @@ export default function scenarioModel(pi: ExtensionAPI): void {
         const blocks: FauxContentBlock[] = [
           ...(turn.thinking !== undefined ? [fauxThinking(turn.thinking)] : []),
           ...(turn.text !== undefined ? [fauxText(turn.text)] : []),
-          ...(turn.toolCalls ?? []).map((call) => fauxToolCall(call.name, call.args)),
+          ...(turn.toolCalls ?? []).map((call) => fauxToolCall(call.name, call.args as Parameters<typeof fauxToolCall>[1])),
         ];
         return fauxAssistantMessage(blocks, { stopReason: (turn.toolCalls ?? []).length > 0 ? "toolUse" : "stop" });
       }

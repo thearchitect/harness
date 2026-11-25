@@ -4,7 +4,7 @@
 // in `hap` frames addressed by agent id (and node, through a hub).
 
 import type { ProtocolError } from "./errors.ts";
-import type { HapRecord } from "./hap.ts";
+import type { HapRecord, SnapshotData } from "./hap.ts";
 import type { RunMode } from "./state.ts";
 
 /** How much of an agent a client follows: the whole stream, or its summary only. */
@@ -60,7 +60,8 @@ export type NodeOps = {
   sessions_list: { args: { cwd?: string }; result: { sessions: SessionListItem[] } };
   agents_list: { args: Record<string, never>; result: { agents: AgentInfo[] } };
   agent_start: { args: { cwd: string; sessionFile?: string; parent?: string }; result: { agent: AgentInfo } };
-  agent_attach: { args: { agent: string; level: AttachLevel }; result: { agent: AgentInfo } };
+  /** At the full level the answer carries the snapshot; the stream continues after it. */
+  agent_attach: { args: { agent: string; level: AttachLevel }; result: { agent: AgentInfo; snapshot?: SnapshotData } };
   agent_detach: { args: { agent: string }; result: Record<string, never> };
   agent_close: { args: { agent: string }; result: Record<string, never> };
   files_list: { args: { path: string }; result: { path: string; items: FileItem[] } };
@@ -97,6 +98,14 @@ export type ClientFrame =
   | { k: "hello"; protocol: number; client: string; token?: string }
   | { k: "req"; id: string; node?: string; op: NodeOp; args: unknown }
   | { k: "hap"; node?: string; agent: string; rec: HapRecord };
+
+/** What carries a client's frames to a node: a unix socket, a WebSocket, an in-process node. */
+export interface Transport {
+  send(frame: ClientFrame): void;
+  onFrame(listener: (frame: NodeFrame) => void): void;
+  onClose(listener: (reason: string) => void): void;
+  close(): void;
+}
 
 export type NodeFrame =
   | { k: "welcome"; protocol: number; harness: string; node: string; user: string }
