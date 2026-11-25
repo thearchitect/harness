@@ -1,0 +1,77 @@
+# The app on iOS: a Release build for the simulator (the JS bundled in), driven by Maestro against
+# a hub running on the runner (the simulator reaches it at localhost). Started by hand:
+# `gh workflow run native-apple.yml`; screenshots and logs are artifacts.
+name: native-apple
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: native-apple-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ios:
+    runs-on: macos-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+      - name: The bundle (the hub)
+        run: nix build -L .#default
+      - name: Prepare the native project
+        run: nix shell nixpkgs#nodejs --command nix/app-native.sh ios
+      - name: Pods
+        working-directory: packages/app/ios
+        run: nix shell nixpkgs#nodejs --command pod install
+      - name: Build for the simulator
+        working-directory: packages/app/ios
+        run: |
+          set -euo pipefail
+          workspace="$(ls -d *.xcworkspace | head -1)"
+          scheme="${workspace%.xcworkspace}"
+          nix shell nixpkgs#nodejs --command xcodebuild -workspace "$workspace" -scheme "$scheme" -configuration Release \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO | tail -50
+          echo "APP=$(ls -d "$PWD"/build/Build/Products/Release-iphonesimulator/*.app | head -1)" >> "$GITHUB_ENV"
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+      - name: Start a hub with a user and a pairing code
+        id: hub
+        run: |
+          set -euo pipefail
+          export HARNESS_HOME="$RUNNER_TEMP/hub-home"
+          ./result/bin/harness hub user add alice --admin
+          code="$(./result/bin/harness hub device add alice --name phone | sed -n 's/^  \([0-9A-Z-]\{17\}\)$/\1/p')"
+          test -n "$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          nohup ./result/bin/harness hub --listen 127.0.0.1:8790 > "$RUNNER_TEMP/hub.log" 2>&1 &
+          for _ in $(seq 60); do curl -fs http://127.0.0.1:8790/ >/dev/null && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/hub.log"; exit 1
+      - name: Run the flows on a simulator
+        run: |
+          set -euo pipefail
+          device="$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name | test("^iPhone"))][0].udid')"
+          xcrun simctl boot "$device"
+          xcrun simctl bootstatus "$device" -b
+          xcrun simctl install "$device" "$APP"
+          mkdir -p maestro-out
+          status=0
+          maestro --device "$device" test packages/app/maestro/pair-and-start.yaml -e HUB=http://localhost:8790 -e CODE=${{ steps.hub.outputs.code }} --test-output-dir maestro-out || status=$?
+          xcrun simctl spawn "$device" log show --last 10m --predicate 'process == "harness"' > maestro-out/device.log || true
+          exit $status
+      - name: Keep the screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-apple
+          path: |
+            maestro-out
+            ${{ runner.temp }}/hub.log

@@ -121,7 +121,9 @@ export function TabsStrip({
         );
       })}
       <ListRow label="New session" onPress={onNew}>
-        <T color="muted">+ new</T>
+        <T color="muted" lines={1}>
+          + new
+        </T>
       </ListRow>
     </View>
   );
