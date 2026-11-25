@@ -36,6 +36,12 @@ appId: dev.harness.app
 - takeScreenshot: sessions-strip
 # a harness:// link names a session: one that does not exist is reported
 - openLink: "harness://hub/no-such-session"
+# iOS asks whether the link may open the app
+- runFlow:
+    when:
+      visible: "Open in .harness.\\?"
+    commands:
+      - tapOn: "Open"
 - extendedWaitUntil:
     visible: "no session no-such-session on hub"
     timeout: 20000
