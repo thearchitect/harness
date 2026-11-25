@@ -41,6 +41,8 @@ export const scenario = defineScenario({
         await web.page.getByRole("button", { name: "Allow", exact: true }).click();
         await web.page.getByText("written").waitFor({ timeout: 15_000 });
         assert.equal(existsSync(target), true);
+        // the write's row shows what it added
+        assert.match(await web.page.getByLabel("diff").first().innerText(), /\+ web/);
       },
     },
     {
@@ -60,6 +62,14 @@ export const scenario = defineScenario({
         const path = /@(\S+)/.exec(await field.inputValue())?.[1] ?? "";
         assert.ok(path.startsWith(join(stand.dataDir, "uploads")), path);
         assert.equal(readFileSync(path, "utf8"), "dropped text");
+        await field.fill("");
+        // a pasted image goes the same way
+        await web.page.evaluate(() => {
+          const transfer = new DataTransfer();
+          transfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], "image.png", { type: "image/png" }));
+          document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer }));
+        });
+        await web.page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement | null)?.value.includes("pasted-1.png") === true);
         await field.fill("");
       },
     },
@@ -134,6 +144,28 @@ export const scenario = defineScenario({
           server.close();
           delete process.env.HARNESS_TRANSCRIBE_URL;
         }
+      },
+    },
+    {
+      name: "tabs: a second one, reordered by dragging (every client sees it), closed from the context menu",
+      async run({ clients: { web, tui } }) {
+        const before = (await web.screen()).tabs.length;
+        await web.page.getByRole("button", { name: "New session" }).first().click();
+        await web.waitForScreen((screen) => screen.tabs.length === before + 1);
+        const titles = (await web.screen()).tabs.map((tab) => tab.title);
+        const strip = web.page.getByRole("tablist", { name: "sessions" });
+        const rows = strip.getByRole("button").filter({ hasNotText: "+ new" });
+        await rows.nth(titles.length - 1).dragTo(rows.nth(0));
+        const moved = await web.waitForScreen((screen) => screen.tabs[0]?.title === titles.at(-1));
+        assert.equal(moved.tabs.length, titles.length);
+        await tui.settle();
+        assert.equal(tui.screen().tabs[0]?.title, titles.at(-1), "the order is the user's: the TUI has it too");
+
+        await rows.nth(0).click({ button: "right" });
+        const menu = web.page.getByRole("menu");
+        await menu.getByRole("button", { name: "Copy the session id" }).waitFor();
+        await menu.getByRole("button", { name: "Close" }).click();
+        await web.waitForScreen((screen) => screen.tabs.length === titles.length - 1);
       },
     },
     {

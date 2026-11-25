@@ -2,7 +2,8 @@
 // a row, real buttons with their key, frames of 1px token borders, the braille spinner. Dense, no
 // shadows, no gradients, radius at most 2.
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from "react";
+import { useRowEvents, type RowEvents } from "./web-events";
 import { Pressable, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import type { Glyph } from "#client/workbench/workbench.ts";
 import { fontOf, useTheme, type Token } from "../theme/theme.tsx";
@@ -118,15 +119,20 @@ export function Rule() {
 }
 
 /** A row of a list: a hover background, the selected one in selectedBg. */
-export function ListRow(props: { selected?: boolean; onPress?: () => void; children: ReactNode; label: string; indent?: number }) {
+export function ListRow(props: { selected?: boolean; onPress?: () => void; children: ReactNode; label: string; indent?: number; events?: RowEvents }) {
   const theme = useTheme();
   const [hover, setHover] = useState(false);
+  const ref = useRef<ComponentRef<typeof Pressable>>(null);
+  useRowEvents(ref, props.events ?? {});
+  const menu = props.events?.onContextMenu;
   return (
     <Pressable
+      ref={ref}
       accessibilityRole="button"
       accessibilityLabel={props.label}
       accessibilityState={{ selected: props.selected === true }}
       onPress={props.onPress}
+      onLongPress={menu !== undefined ? (event) => menu(event.nativeEvent.pageX, event.nativeEvent.pageY) : undefined}
       onHoverIn={() => setHover(true)}
       onHoverOut={() => setHover(false)}
       style={{

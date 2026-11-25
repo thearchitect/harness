@@ -34,13 +34,18 @@ builds are not published yet.
 ## What the browser adds
 
 - The page title and icon show `◆ N` while N sessions wait for you.
-- The address names the active session (`#/<node>/<session>`): bookmarks and back/forward move
-  between sessions.
-- Files dropped on the window go to the session's node (`~/.harness/uploads/`) and into the
-  message as `@path`.
-- Notifications (off by default, `/settings`) when a session starts waiting and the window is not
-  in front.
-- The strips' widths change by dragging their edges (`ui.web.panes`).
+- The address names the active session and its item (`#/<node>/<session>[/<item>]`):
+  bookmarks and back/forward move between them.
+- Files dropped on the window or pasted (images) go to the session's node
+  (`~/.harness/uploads/`) and into the message as `@path`.
+- Notifications (off by default, `/settings`) when a session starts waiting or finishes and the
+  window is not in front.
+- The strips' widths change by dragging their edges (`ui.web.panes`); tabs reorder by dragging
+  (for every client of yours), close with the middle button, and have a context menu (right
+  click; a long press on touch): close, stop the run, copy the id. Items have one too (stop a
+  task, copy the id); hovering a row shows its node, directory and state.
+- Changes show as removed and added lines, side by side on a wide window; images enlarge on a
+  press.
 
 ## Settings
 

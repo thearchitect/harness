@@ -20,6 +20,7 @@ import {
   NOTIFICATIONS_SUPPORTED,
   onAddressChange,
   onFilesDropped,
+  onFilesPasted,
   pickFiles,
   recordVoice,
   requestNotifications,
@@ -212,16 +213,28 @@ function WorkbenchApp() {
     }
     waited.current = waiting;
   }, [waiting]);
+  // and when a session finishes (✓ or ✗, not looked at yet)
+  const finishedTitles = screen?.tabs.filter((tab) => tab.glyph === "✓" || tab.glyph === "✗").map((tab) => `${tab.glyph} ${tab.title}`) ?? [];
+  const finished = useRef(0);
+  useEffect(() => {
+    if (finishedTitles.length > finished.current && connected?.client.settings["ui.web.notifications"] === true) {
+      notifyOperator("harness: finished", finishedTitles.join(", "));
+    } else {
+      // nothing new finished, or notifications are off
+    }
+    finished.current = finishedTitles.length;
+  }, [finishedTitles.length]);
 
   // the address names the active session; an address (a bookmark, back/forward) opens its session
   const activeTab = screen?.tab;
+  const selectedItem = screen?.selected;
   useEffect(() => {
     if (activeTab !== undefined) {
-      addressSession(activeTab.node, activeTab.sessionId);
+      addressSession(activeTab.node, activeTab.sessionId, selectedItem);
     } else {
       // no session to name
     }
-  }, [activeTab?.node, activeTab?.sessionId]);
+  }, [activeTab?.node, activeTab?.sessionId, selectedItem]);
   useEffect(() => {
     if (connected === undefined) {
       return;
@@ -232,7 +245,14 @@ function WorkbenchApp() {
         if (wanted === undefined) {
           // the address names no session
         } else if (index >= 0) {
-          void connected.workbench.act(`tabs.goto.${index + 1}`);
+          void connected.workbench.act(`tabs.goto.${index + 1}`).then(() => {
+            const tab = connected.workbench.activeTab();
+            if (tab !== undefined) {
+              connected.workbench.select(tab, wanted.item ?? "session");
+            } else {
+              // the tab went away meanwhile
+            }
+          });
         } else {
           void connected.client
             .sessions(wanted.node)
@@ -261,6 +281,7 @@ function WorkbenchApp() {
     [connected],
   );
   useEffect(() => (connected !== undefined ? onFilesDropped(globalThis.document?.body, upload) : undefined), [connected, upload]);
+  useEffect(() => (connected !== undefined ? onFilesPasted(upload) : undefined), [connected, upload]);
 
   // a voice message: recorded here, transcribed on the session's node, inserted into the message
   const [stopRecording, setStopRecording] = useState<(() => Promise<{ base64: string; mime: string }>) | undefined>(undefined);

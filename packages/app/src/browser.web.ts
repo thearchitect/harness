@@ -28,7 +28,8 @@ export async function requestNotifications(): Promise<boolean> {
 /** A system notification while this window is not in front; clicking it brings the window back. */
 export function notifyOperator(title: string, body: string): void {
   if (NOTIFICATIONS_SUPPORTED && Notification.permission === "granted" && document.visibilityState !== "visible") {
-    const shown = new Notification(title, { body, tag: "harness-waiting" });
+    // one notification per kind: a newer one replaces the older
+    const shown = new Notification(title, { body, tag: title });
     shown.onclick = () => window.focus();
   } else {
     // in front, or not allowed
@@ -36,14 +37,16 @@ export function notifyOperator(title: string, body: string): void {
 }
 
 /** The session the address names, if any. */
-export function addressedSession(): { node: string; sessionId: string } | undefined {
-  const match = /^#\/([^/]+)\/([^/]+)$/.exec(window.location.hash);
-  return match !== null ? { node: decodeURIComponent(match[1] ?? ""), sessionId: decodeURIComponent(match[2] ?? "") } : undefined;
+export function addressedSession(): { node: string; sessionId: string; item?: string } | undefined {
+  const match = /^#\/([^/]+)\/([^/]+)(?:\/([^/]+))?$/.exec(window.location.hash);
+  return match !== null
+    ? { node: decodeURIComponent(match[1] ?? ""), sessionId: decodeURIComponent(match[2] ?? ""), ...(match[3] !== undefined ? { item: decodeURIComponent(match[3]) } : {}) }
+    : undefined;
 }
 
-/** The address follows the active session; a new one is a history step (back returns to the previous session). */
-export function addressSession(node: string, sessionId: string): void {
-  const hash = `#/${encodeURIComponent(node)}/${encodeURIComponent(sessionId)}`;
+/** The address follows the active session and its item; a change is a history step (back returns to the previous one). */
+export function addressSession(node: string, sessionId: string, item?: string): void {
+  const hash = `#/${encodeURIComponent(node)}/${encodeURIComponent(sessionId)}${item !== undefined && item !== "session" ? `/${encodeURIComponent(item)}` : ""}`;
   if (window.location.hash !== hash) {
     window.history.pushState(null, "", hash);
   } else {
@@ -107,6 +110,21 @@ export async function recordVoice(): Promise<() => Promise<{ base64: string; mim
       };
       recorder.stop();
     });
+}
+
+/** Images and files pasted anywhere in the page (text pastes stay the field's). */
+export function onFilesPasted(listener: (files: { name: string; base64: string }[]) => void): () => void {
+  const paste = (event: ClipboardEvent): void => {
+    const files = [...(event.clipboardData?.files ?? [])];
+    if (files.length > 0) {
+      event.preventDefault();
+      void Promise.all(files.map(async (file, index) => ({ name: file.name !== "" && file.name !== "image.png" ? file.name : `pasted-${index + 1}.${file.type.split("/")[1] ?? "bin"}`, base64: await base64Of(file) }))).then(listener);
+    } else {
+      // text: the field takes it
+    }
+  };
+  document.addEventListener("paste", paste);
+  return () => document.removeEventListener("paste", paste);
 }
 
 /** Files dropped on `element`, as base64 with their names. */

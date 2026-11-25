@@ -33,16 +33,20 @@ export function recordVoice(): Promise<() => Promise<{ base64: string; mime: str
   return Promise.reject(new Error("voice input on this device comes with the native builds"));
 }
 
-export function addressedSession(): { node: string; sessionId: string } | undefined {
+export function addressedSession(): { node: string; sessionId: string; item?: string } | undefined {
   return undefined;
 }
 
-export function addressSession(_node: string, _sessionId: string): void {
+export function addressSession(_node: string, _sessionId: string, _item?: string): void {
   // no address bar
 }
 
 export function onAddressChange(_listener: () => void): () => void {
   return () => undefined;
+}
+
+export function onFilesPasted(_listener: (files: { name: string; base64: string }[]) => void): () => void {
+  return () => undefined; // the system's paste gives text only
 }
 
 export function onFilesDropped(_element: unknown, _listener: (files: { name: string; base64: string }[]) => void): () => void {

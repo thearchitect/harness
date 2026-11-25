@@ -3,8 +3,9 @@
 // the editor, the editor, status, footer), overlays over the right strip. Narrow screens hide the
 // strips behind buttons that show them as overlays.
 
+import * as Clipboard from "expo-clipboard";
 import { useMemo, useState } from "react";
-import { PanResponder, View } from "react-native";
+import { PanResponder, Pressable, View } from "react-native";
 import type { AgentModel } from "#client/model/agent-model.ts";
 import type { Item, Screen, StatusLine, Tab, Workbench } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
@@ -13,12 +14,76 @@ import { EditorZoneView, type Completion } from "./EditorZone.tsx";
 import { Button, GlyphMark, ListRow, T } from "./primitives.tsx";
 import { Transcript } from "./Transcript.tsx";
 
-function Tabs({ screen, workbench }: { screen: Screen; workbench: Workbench }) {
-  return <TabsStrip tabs={screen.tabs} active={screen.active} onGoto={(index) => void workbench.act(`tabs.goto.${index + 1}`)} onNew={() => void workbench.act("tabs.new")} />;
+function Tabs({ screen, workbench, onMenu }: { screen: Screen; workbench: Workbench; onMenu: (menu: Menu) => void }) {
+  const menuOf = (index: number, x: number, y: number): void => {
+    const tab = screen.tabs[index];
+    onMenu({
+      x,
+      y,
+      items: [
+        { label: "Close", run: () => void workbench.closeTab(index) },
+        ...(tab?.agent !== undefined && tab.glyph === "●" ? [{ label: "Stop the run", run: () => void workbench.act(`tabs.goto.${index + 1}`).then(() => workbench.act("run.abort")) }] : []),
+        ...(tab !== undefined ? [{ label: "Copy the session id", run: () => void Clipboard.setStringAsync(tab.sessionId) }] : []),
+      ],
+    });
+  };
+  return (
+    <TabsStrip
+      tabs={screen.tabs}
+      active={screen.active}
+      onGoto={(index) => void workbench.act(`tabs.goto.${index + 1}`)}
+      onNew={() => void workbench.act("tabs.new")}
+      onMenu={menuOf}
+      onMove={(from, to) => void workbench.moveTab(from, to)}
+      onClose={(index) => void workbench.closeTab(index)}
+    />
+  );
+}
+
+/** A context menu: where the pointer (or the long press) was, the row's actions. */
+export type Menu = { x: number; y: number; items: { label: string; run: () => void }[] };
+
+function MenuView({ menu, onClose }: { menu: Menu; onClose: () => void }) {
+  const theme = useTheme();
+  return (
+    <View style={{ position: "absolute", inset: 0, zIndex: 10 } as never}>
+      <Pressable accessibilityLabel="Close the menu" onPress={onClose} style={{ position: "absolute", inset: 0 } as never} />
+      <View accessibilityRole="menu" style={{ position: "absolute", left: menu.x, top: menu.y, minWidth: 180, backgroundColor: theme.colors.cardBg, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 2, paddingVertical: 2 }}>
+        {menu.items.map((item) => (
+          <ListRow
+            key={item.label}
+            label={item.label}
+            onPress={() => {
+              onClose();
+              item.run();
+            }}
+          >
+            <T>{item.label}</T>
+          </ListRow>
+        ))}
+      </View>
+    </View>
+  );
 }
 
 /** The left strip: one row per open session, the glyph first; node headers when sessions come from several nodes. */
-export function TabsStrip({ tabs, active, onGoto, onNew }: { tabs: Tab[]; active: number; onGoto: (index: number) => void; onNew: () => void }) {
+export function TabsStrip({
+  tabs,
+  active,
+  onGoto,
+  onNew,
+  onMenu,
+  onMove,
+  onClose,
+}: {
+  tabs: Tab[];
+  active: number;
+  onGoto: (index: number) => void;
+  onNew: () => void;
+  onMenu?: (index: number, x: number, y: number) => void;
+  onMove?: (from: number, to: number) => void;
+  onClose?: (index: number) => void;
+}) {
   const nodes = new Set(tabs.map((tab) => tab.node));
   let lastNode: string | undefined;
   return (
@@ -36,7 +101,17 @@ export function TabsStrip({ tabs, active, onGoto, onNew }: { tabs: Tab[]; active
                 {header}
               </T>
             ) : null}
-            <ListRow label={`${tab.title}${tab.unavailable !== undefined ? ` (${tab.unavailable})` : ""}`} selected={index === active} onPress={() => onGoto(index)}>
+            <ListRow
+              label={`${tab.title}${tab.unavailable !== undefined ? ` (${tab.unavailable})` : ""}`}
+              selected={index === active}
+              onPress={() => onGoto(index)}
+              events={{
+                title: `${tab.node}:${tab.cwd}${tab.unavailable !== undefined ? ` — ${tab.unavailable}` : ""}`,
+                ...(onMenu !== undefined ? { onContextMenu: (x: number, y: number) => onMenu(index, x, y) } : {}),
+                ...(onClose !== undefined ? { onMiddleClick: () => onClose(index) } : {}),
+                ...(onMove !== undefined ? { drag: { index, onDrop: (from: number) => onMove(from, index) } } : {}),
+              }}
+            >
               <GlyphMark glyph={tab.glyph} />
               <T lines={1} style={{ color: MODE_COLOR_HEX[tab.mode], flexShrink: 1 }}>
                 {tab.title}
@@ -52,17 +127,35 @@ export function TabsStrip({ tabs, active, onGoto, onNew }: { tabs: Tab[]; active
   );
 }
 
-function Items({ screen, workbench }: { screen: Screen; workbench: Workbench }) {
+function Items({ screen, workbench, onMenu }: { screen: Screen; workbench: Workbench; onMenu: (menu: Menu) => void }) {
   const tab = screen.tab;
-  return <ItemsStrip items={screen.items} selected={screen.selected} onSelect={(id) => (tab !== undefined ? workbench.select(tab, id) : undefined)} />;
+  const menuOf = (item: Item, x: number, y: number): void => {
+    const task = item.kind === "task" ? screen.agent?.state.tasks.find((candidate) => candidate.id === item.id) : undefined;
+    onMenu({
+      x,
+      y,
+      items: [
+        ...(task !== undefined && task.endedAt === undefined ? [{ label: "Stop", run: () => void workbench.stopTask(task.id) }] : []),
+        { label: "Copy the id", run: () => void Clipboard.setStringAsync(item.id) },
+      ],
+    });
+  };
+  return <ItemsStrip items={screen.items} selected={screen.selected} onSelect={(id) => (tab !== undefined ? workbench.select(tab, id) : undefined)} onMenu={menuOf} />;
 }
 
 /** The right strip: the session first, then its tasks and subagents on the same level; nested ones indented. */
-export function ItemsStrip({ items, selected, onSelect }: { items: Item[]; selected: string | undefined; onSelect: (id: string) => void }) {
+export function ItemsStrip({ items, selected, onSelect, onMenu }: { items: Item[]; selected: string | undefined; onSelect: (id: string) => void; onMenu?: (item: Item, x: number, y: number) => void }) {
   return (
     <View accessibilityRole="list" accessibilityLabel="session items" style={{ paddingVertical: 4 }}>
       {items.map((item: Item) => (
-        <ListRow key={item.id} label={item.label} indent={item.depth} selected={item.id === selected} onPress={() => onSelect(item.id)}>
+        <ListRow
+          key={item.id}
+          label={item.label}
+          indent={item.depth}
+          selected={item.id === selected}
+          onPress={() => onSelect(item.id)}
+          events={{ title: `${item.label} — ${item.detail}`, ...(onMenu !== undefined ? { onContextMenu: (x: number, y: number) => onMenu(item, x, y) } : {}) }}
+        >
           <GlyphMark glyph={item.glyph} />
           <T lines={1} style={{ flexShrink: 1 }}>
             {item.label}
@@ -240,11 +333,12 @@ export function Shell(props: {
   const overlays = screen.zones.overlays;
   const column = { borderColor: theme.colors.borderMuted, backgroundColor: theme.colors.pageBg };
   const panes = panesOf(props.panes);
+  const [menu, setMenu] = useState<Menu | undefined>(undefined);
   return (
     <View style={{ flex: 1, flexDirection: "row", backgroundColor: theme.colors.pageBg }}>
       {screen.strips.left || overlays.includes("tabs") ? (
         <View style={[column, { width: panes.left, borderRightWidth: 1 }, overlays.includes("tabs") ? { position: "absolute", zIndex: 2, top: 0, bottom: 0, left: 0 } : null]}>
-          <Tabs screen={screen} workbench={workbench} />
+          <Tabs screen={screen} workbench={workbench} onMenu={setMenu} />
         </View>
       ) : null}
       {screen.strips.left && !overlays.includes("tabs") ? <Resizer label="Resize the sessions strip" onResize={(delta) => props.onPanes({ ...panes, left: clampPane(panes.left + delta) })} /> : null}
@@ -281,10 +375,11 @@ export function Shell(props: {
       {screen.strips.right && !overlays.includes("items") ? <Resizer label="Resize the items strip" onResize={(delta) => props.onPanes({ ...panes, right: clampPane(panes.right - delta) })} /> : null}
       {screen.strips.right || overlays.includes("items") ? (
         <View style={[column, { width: panes.right, borderLeftWidth: 1 }, overlays.includes("items") ? { position: "absolute", zIndex: 2, top: 0, bottom: 0, right: 0 } : null]}>
-          <Items screen={screen} workbench={workbench} />
+          <Items screen={screen} workbench={workbench} onMenu={setMenu} />
         </View>
       ) : null}
       {overlays.includes("panel") ? <Panel screen={screen} workbench={workbench} /> : null}
+      {menu !== undefined ? <MenuView menu={menu} onClose={() => setMenu(undefined)} /> : null}
     </View>
   );
 }

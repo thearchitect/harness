@@ -4,7 +4,7 @@
 // view follows new ones until the user scrolls up, then "Jump to latest" brings it back.
 
 import { useMemo, useRef, useState } from "react";
-import { FlatList, Image, Pressable, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
+import { FlatList, Image, Modal, Pressable, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { AgentModel, Message, ToolRun, TranscriptItem } from "#client/model/agent-model.ts";
 import { MODE_TEXT, isRunMode } from "#protocol/modes.ts";
 import { useTheme, type Token } from "../theme/theme.tsx";
@@ -135,7 +135,9 @@ function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; re
           {argumentSummary(call.arguments)}
         </T>
       </Pressable>
-      {shown ? (
+      {editsOf(call) !== undefined ? (
+        <DiffView edits={editsOf(call) ?? []} />
+      ) : shown ? (
         <T zone="chat" color="dim" selectable>
           {JSON.stringify(call.arguments, null, 2)}
         </T>
@@ -149,8 +151,82 @@ function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; re
       {output
         .filter((block) => block.type === "image" && block.data !== undefined)
         .map((block, index) => (
-          <Image key={index} accessibilityLabel="tool image" source={{ uri: `data:${block.mimeType};base64,${block.data}` }} style={{ width: 320, height: 200 }} resizeMode="contain" />
+          <ZoomableImage key={index} uri={`data:${block.mimeType};base64,${block.data}`} />
         ))}
+    </View>
+  );
+}
+
+/** An image of a result: small in the row; a press shows it as large as the window. */
+function ZoomableImage({ uri }: { uri: string }) {
+  const theme = useTheme();
+  const [zoomed, setZoomed] = useState(false);
+  return (
+    <>
+      <Pressable accessibilityRole="imagebutton" accessibilityLabel="tool image (press to enlarge)" onPress={() => setZoomed(true)}>
+        <Image source={{ uri }} style={{ width: 320, height: 200 }} resizeMode="contain" />
+      </Pressable>
+      <Modal visible={zoomed} transparent onRequestClose={() => setZoomed(false)}>
+        <Pressable accessibilityLabel="Close the image" onPress={() => setZoomed(false)} style={{ flex: 1, backgroundColor: theme.colors.pageBg, padding: 16 }}>
+          <Image accessibilityLabel="enlarged image" source={{ uri }} style={{ flex: 1 }} resizeMode="contain" />
+        </Pressable>
+      </Modal>
+    </>
+  );
+}
+
+type Edit = { path: string; oldText: string; newText: string };
+
+/** The replacements of an `edit` call (one or several), or a `write`'s whole content as added lines. */
+function editsOf(call: Block): Edit[] | undefined {
+  const args = (typeof call.arguments === "object" && call.arguments !== null ? call.arguments : {}) as { path?: unknown; edits?: unknown; oldText?: unknown; newText?: unknown; content?: unknown };
+  const path = typeof args.path === "string" ? args.path : "";
+  if (call.name === "edit" && Array.isArray(args.edits)) {
+    return (args.edits as { oldText?: unknown; newText?: unknown }[]).map((edit) => ({ path, oldText: String(edit.oldText ?? ""), newText: String(edit.newText ?? "") }));
+  } else if (call.name === "edit" && typeof args.oldText === "string") {
+    return [{ path, oldText: args.oldText, newText: String(args.newText ?? "") }];
+  } else if (call.name === "write" && typeof args.content === "string") {
+    return [{ path, oldText: "", newText: args.content }];
+  } else {
+    return undefined;
+  }
+}
+
+const DIFF_LINES = 60;
+
+/** Removed and added lines: one column, or side by side when the window is wide. */
+function DiffView({ edits }: { edits: Edit[] }) {
+  const theme = useTheme();
+  const { width } = useWindowDimensions();
+  const sideBySide = width >= 1200;
+  const lines = (text: string, prefix: string): string[] => (text === "" ? [] : text.split("\n").map((line) => `${prefix} ${line}`));
+  return (
+    <View accessibilityLabel="diff" style={{ gap: 4, paddingVertical: 2 }}>
+      {edits.map((edit, index) => {
+        const removed = lines(edit.oldText, "-").slice(0, DIFF_LINES);
+        const added = lines(edit.newText, "+").slice(0, DIFF_LINES);
+        return sideBySide && removed.length > 0 ? (
+          <View key={index} style={{ flexDirection: "row", gap: 8 }}>
+            <T zone="chat" color="toolDiffRemoved" selectable style={{ flex: 1 }}>
+              {removed.join("\n")}
+            </T>
+            <T zone="chat" color="toolDiffAdded" selectable style={{ flex: 1, borderLeftWidth: 1, borderColor: theme.colors.borderMuted, paddingLeft: 8 }}>
+              {added.join("\n")}
+            </T>
+          </View>
+        ) : (
+          <View key={index}>
+            {removed.length > 0 ? (
+              <T zone="chat" color="toolDiffRemoved" selectable>
+                {removed.join("\n")}
+              </T>
+            ) : null}
+            <T zone="chat" color="toolDiffAdded" selectable>
+              {added.join("\n")}
+            </T>
+          </View>
+        );
+      })}
     </View>
   );
 }
