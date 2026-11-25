@@ -97,6 +97,7 @@ function Editor(props: {
       <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6, borderWidth: 1, borderRadius: 2, borderColor: MODE_COLOR_HEX[props.mode], padding: 4 }}>
         <TextInput
           accessibilityLabel="Message"
+          testID="message"
           autoFocus
           multiline
           value={props.text}

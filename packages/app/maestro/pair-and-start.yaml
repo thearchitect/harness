@@ -23,7 +23,9 @@ appId: dev.harness.app
     timeout: 30000
 - tapOn: "~"
 - extendedWaitUntil:
-    visible: "Message"
+    # iOS names a multiline field by its text: the editor is found by its test id
+    visible:
+      id: "message"
     timeout: 60000
 - takeScreenshot: session
 # the hidden strips open over the screen (a narrow screen): the session is there
