@@ -34,3 +34,8 @@ appId: dev.harness.app
     visible: "New session"
     timeout: 10000
 - takeScreenshot: sessions-strip
+# a harness:// link names a session: one that does not exist is reported
+- openLink: "harness://hub/no-such-session"
+- extendedWaitUntil:
+    visible: "no session no-such-session on hub"
+    timeout: 20000

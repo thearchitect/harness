@@ -11,6 +11,10 @@
     "ios": { "bundleIdentifier": "dev.harness.app", "supportsTablet": true },
     "android": { "package": "dev.harness.app" },
     "web": { "bundler": "metro", "output": "single", "name": "harness" },
-    "plugins": ["./plugins/local-cleartext.js"]
+    "plugins": [
+      "./plugins/local-cleartext.js",
+      ["expo-audio", { "microphonePermission": "Voice messages to your sessions: harness records what you say and your node turns it into text." }],
+      ["expo-image-picker", { "photosPermission": "Photos you attach to a message go to the session's machine.", "cameraPermission": false }]
+    ]
   }
 }
