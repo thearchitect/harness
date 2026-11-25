@@ -95,6 +95,8 @@ export type Screen = {
   zones: Zones;
   input: InputTarget;
   toolsExpanded: boolean;
+  /** Text for the editor: a UI puts it in once per `key` (the agent's setEditorText, a branch's message). */
+  prefill: { key: string; text: string } | undefined;
 };
 
 export type PanelRow = { value: "madness" | "simple" | "implementer" | "subagents" | "dependencies" | "update"; label: string; description: string };
@@ -178,6 +180,31 @@ function subagentGlyph(subagent: SubagentInfo): Glyph {
   }
 }
 
+/** A node of pi's session tree (get_tree), as far as the tree list reads it. */
+type TreeNode = {
+  entry: { id: string; type: string; message?: { role?: string; content?: unknown }; summary?: string };
+  children: TreeNode[];
+  label?: string;
+};
+
+/** A tree entry's line: user messages, answers, summaries; other entries are not listed. */
+function treeLine(node: TreeNode): string | undefined {
+  const entry = node.entry;
+  const firstLine = (text: string): string => text.split("\n").find((line) => line.trim() !== "")?.slice(0, 100) ?? "";
+  const textOf = (content: unknown): string =>
+    typeof content === "string" ? content : Array.isArray(content) ? (content as { type?: string; text?: string }[]).filter((block) => block.type === "text").map((block) => block.text ?? "").join(" ") : "";
+  if (entry.type === "message" && entry.message?.role === "user") {
+    return `› ${firstLine(textOf(entry.message.content))}`;
+  } else if (entry.type === "message" && entry.message?.role === "assistant") {
+    const text = firstLine(textOf(entry.message.content));
+    return text !== "" ? `  ${text}` : undefined;
+  } else if (entry.type === "branch_summary" || entry.type === "compaction") {
+    return `≡ ${firstLine(entry.summary ?? entry.type)}`;
+  } else {
+    return undefined;
+  }
+}
+
 function duration(ms: number): string {
   const seconds = Math.max(0, Math.round(ms / 1000));
   return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h`;
@@ -193,6 +220,8 @@ export type WorkbenchOptions = {
   cwd?: string;
   clock?: Clock;
   update?: UpdateHook;
+  /** The themes this UI can draw (`ui.theme` names). */
+  themes?: () => string[];
 };
 
 export class Workbench {
@@ -205,6 +234,10 @@ export class Workbench {
   private readonly cwd: string;
   private readonly clock: Clock;
   private readonly update: UpdateHook | undefined;
+  private readonly themes: () => string[];
+  private prefill: Screen["prefill"];
+  private prefillCounter = 0;
+  private readonly agentPrefillSeen = new WeakMap<AgentModel, number>();
   /** Selected item per tab (by session id); the session itself when absent. */
   private readonly selected = new Map<string, string>();
   /** Tasks seen per session: the last task end the user has looked at. */
@@ -219,6 +252,7 @@ export class Workbench {
     this.cwd = options.cwd ?? "/";
     this.clock = options.clock ?? systemClock;
     this.update = options.update;
+    this.themes = options.themes ?? (() => []);
   }
 
   /* ----- the screen ----- */
@@ -281,7 +315,116 @@ export class Workbench {
                   ? "subagent"
                   : "editor",
       toolsExpanded: this.toolsExpanded,
+      prefill: this.prefillOf(agent),
     };
+  }
+
+  /** The latest text for the editor: the workbench's own, or a newer one of the agent. */
+  private prefillOf(agent: AgentModel | undefined): Screen["prefill"] {
+    if (agent !== undefined && agent.editorText !== undefined && agent.editorTextSeq !== this.agentPrefillSeen.get(agent)) {
+      this.agentPrefillSeen.set(agent, agent.editorTextSeq);
+      this.setEditorText(agent.editorText);
+    } else {
+      // nothing new from the agent
+    }
+    return this.prefill;
+  }
+
+  /** Puts text into the editor of every UI drawing this workbench. */
+  setEditorText(text: string): void {
+    this.prefillCounter += 1;
+    this.prefill = { key: String(this.prefillCounter), text };
+    this.client.changed();
+  }
+
+  /**
+   * Settings as a list in the editor's place: the theme (the user's UI settings, shared by their
+   * clients) and the session's queue and compaction behavior (pi's, on the session's node).
+   */
+  async settingsPicker(): Promise<void> {
+    const tab = this.activeTab();
+    const api = tab !== undefined ? this.client.connections.get(tab.node) : undefined;
+    const agentId = tab?.agent?.id;
+    const state =
+      api !== undefined && agentId !== undefined
+        ? await api.call<{ steeringMode: string; followUpMode: string; autoCompactionEnabled: boolean }>(agentId, { type: "get_state" })
+        : undefined;
+    const theme = typeof this.client.settings["ui.theme"] === "string" ? String(this.client.settings["ui.theme"]) : "(pi's)";
+    const toggle = (mode: string): string => (mode === "all" ? "one-at-a-time" : "all");
+    const items: PickerItem[] = [
+      { value: "theme", label: `theme: ${theme}`, description: "every client of yours" },
+      ...(state !== undefined
+        ? [
+            { value: "compaction", label: `auto-compaction: ${state.autoCompactionEnabled ? "on" : "off"}`, description: "this session" },
+            { value: "steering", label: `steering messages: ${state.steeringMode}`, description: "delivered while the model works" },
+            { value: "followUp", label: `follow-up messages: ${state.followUpMode}`, description: "delivered when the run ends" },
+          ]
+        : []),
+    ];
+    this.openPicker({
+      id: "settings",
+      title: "Settings",
+      items,
+      choose: async (value) => {
+        if (value === "theme") {
+          this.openPicker({
+            id: "theme",
+            title: "Theme",
+            items: this.themes().map((name) => ({ value: name, label: name })),
+            choose: (name) => this.client.setting("ui.theme", name),
+          });
+        } else if (api === undefined || agentId === undefined || state === undefined) {
+          this.notify("warning", "no session");
+        } else if (value === "compaction") {
+          await api.call(agentId, { type: "set_auto_compaction", enabled: !state.autoCompactionEnabled });
+        } else if (value === "steering") {
+          await api.call(agentId, { type: "set_steering_mode", mode: toggle(state.steeringMode) });
+        } else {
+          await api.call(agentId, { type: "set_follow_up_mode", mode: toggle(state.followUpMode) });
+        }
+      },
+    });
+  }
+
+  /**
+   * The session's tree (pi's /tree) as a list in the editor's place: choosing an entry moves the
+   * session there; a user message comes back to the editor to edit and send again.
+   */
+  async treePicker(): Promise<void> {
+    const tab = this.activeTab();
+    if (tab?.agent === undefined) {
+      this.notify("warning", "no session here");
+    } else {
+      const api = this.client.connection(tab.node);
+      const agentId = tab.agent.id;
+      const { tree, leafId } = await api.call<{ tree: TreeNode[]; leafId: string | null }>(agentId, { type: "get_tree" });
+      const rows: PickerItem[] = [];
+      const walk = (nodes: TreeNode[], depth: number): void => {
+        for (const node of nodes) {
+          const line = treeLine(node);
+          if (line !== undefined) {
+            rows.push({ value: node.entry.id, label: `${"  ".repeat(Math.min(depth, 12))}${node.entry.id === leafId ? "● " : ""}${line}`, description: node.label });
+          } else {
+            // not a point one moves to
+          }
+          walk(node.children, node.children.length > 1 ? depth + 1 : depth);
+        }
+      };
+      walk(tree, 0);
+      this.openPicker({
+        id: "tree",
+        title: "Session tree",
+        items: rows,
+        choose: async (entryId) => {
+          const result = await api.call<{ editorText?: string; cancelled: boolean }>(agentId, { type: "harness_navigate", entryId });
+          if (result.editorText !== undefined) {
+            this.setEditorText(result.editorText);
+          } else {
+            // moved to an answer: nothing to edit
+          }
+        },
+      });
+    }
   }
 
   private mainZone(selected: string, agent: AgentModel | undefined, tab: Tab | undefined): MainZone {
@@ -693,6 +836,20 @@ export class Workbench {
             .catch((error: unknown) => this.notify("error", `login to ${provider}: ${error instanceof Error ? error.message : String(error)}`));
         },
       });
+    }
+  }
+
+  /** The operator's own command in the session (pi's user bash): its run shows in the transcript. */
+  async operatorBash(command: string, excludeFromContext: boolean): Promise<void> {
+    const tab = this.activeTab();
+    if (tab?.agent === undefined) {
+      this.notify("warning", "no session here: Ctrl+T starts one, Ctrl+O opens one");
+    } else {
+      try {
+        await this.client.connection(tab.node).call(tab.agent.id, { type: "bash", command, excludeFromContext });
+      } catch (error) {
+        this.notify("error", error instanceof Error ? error.message : String(error));
+      }
     }
   }
 

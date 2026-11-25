@@ -35,7 +35,7 @@ export class TuiDriver {
     const terminal = new VirtualTerminal(options.columns ?? 140, options.rows ?? 40);
     const client = new ClientModel();
     const node = await client.addEndpoint(open, { home: true });
-    const workbench = new Workbench(client, { cwd: options.cwd });
+    const workbench = new Workbench(client, { cwd: options.cwd, themes: () => ["dark", "light"] });
     const app = new App({ client, workbench, renderers: await loadRenderers(options.cwd, []), cwd: options.cwd, onQuit: () => undefined, terminal });
     if (workbench.tabs().length === 0) {
       await workbench.newTab(node, options.cwd);

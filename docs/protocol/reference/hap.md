@@ -181,6 +181,17 @@ Logs in to a provider on the agent's machine; its steps reach the operator as in
 | `provider` | string | yes |  |
 | `authType` | `"oauth"` \| `"api_key"` | yes |  |
 
+### `harness_navigate`
+
+Moves the session to another point of its tree (pi's /tree); clients reload the transcript. → { editorText?, cancelled }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_navigate"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+| `entryId` | string | yes |  |
+| `summarize` | boolean |  | Summarize the branch left behind |
+
 ### `harness_logout`
 
 Removes a provider's stored login on the agent's machine. → {}

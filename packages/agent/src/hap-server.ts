@@ -38,6 +38,8 @@ export class HapServer {
   private readonly hub: InteractionHub;
   private readonly harnessVersion: string;
   private readonly onNodeFrame: (frame: unknown) => void;
+  /** The last entry emitBashEntries saw. */
+  private lastBashEntry: string | undefined;
   private readonly output: Output;
   private unsubscribe: (() => void) | undefined;
   private partialMessage: unknown;
@@ -83,6 +85,7 @@ export class HapServer {
     ensureTheme();
     this.runtime.setRebindSession(async () => {
       await this.bind();
+      this.emit({ type: "harness_reload" });
       this.emit({ type: "harness_session", session: this.view() });
     });
     await this.bind();
@@ -167,9 +170,35 @@ export class HapServer {
       case "turn_end":
         this.emit({ type: "harness_session", session: this.view() });
         break;
+      case "agent_end":
+        this.emitBashEntries(); // pi appends the operator's commands of a run at its end
+        break;
       default:
         break; // the session view did not change
     }
+  }
+
+  /**
+   * pi records the operator's commands (bashExecution messages) without an event: the latest
+   * entries are scanned back to the last one sent, and the new ones go out as entry_appended.
+   */
+  private emitBashEntries(): void {
+    const entries = this.session.sessionManager.getEntries();
+    const fresh: typeof entries = [];
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      if (entry === undefined || entry.id === this.lastBashEntry) {
+        break;
+      } else if (entry.type === "message" && entry.message.role === "bashExecution") {
+        fresh.unshift(entry);
+      } else {
+        // another kind of entry: pi reports those itself
+      }
+    }
+    for (const entry of fresh) {
+      this.output({ type: "entry_appended", entry });
+    }
+    this.lastBashEntry = entries.at(-1)?.id ?? this.lastBashEntry;
   }
 
   view(): SessionView {
@@ -283,6 +312,12 @@ export class HapServer {
         } catch (error) {
           throw new HarnessError("not_found", error instanceof Error ? error.message : String(error));
         }
+      case "harness_navigate": {
+        const result = await this.session.navigateTree(request.entryId, { summarize: request.summarize === true });
+        this.emit({ type: "harness_reload" });
+        this.emit({ type: "harness_session", session: this.view() });
+        return { editorText: result.editorText, cancelled: result.cancelled };
+      }
       case "harness_login_providers":
         return { providers: loginProviders(this.session) };
       case "harness_login":
@@ -438,12 +473,13 @@ export class HapServer {
           excludeFromContext: command.excludeFromContext ?? false,
           cwd: session.sessionManager.getCwd(),
         });
-        if (eventResult?.result !== undefined) {
-          session.recordBashResult(command.command, eventResult.result, { excludeFromContext: command.excludeFromContext });
-          return ok(eventResult.result);
-        } else {
-          return ok(await session.executeBash(command.command, undefined, { excludeFromContext: command.excludeFromContext, id, operations: eventResult?.operations }));
-        }
+        const result =
+          eventResult?.result !== undefined
+            ? (session.recordBashResult(command.command, eventResult.result, { excludeFromContext: command.excludeFromContext }), eventResult.result)
+            : await session.executeBash(command.command, undefined, { excludeFromContext: command.excludeFromContext, id, operations: eventResult?.operations });
+        // recorded now, or at the end of the run in flight
+        this.emitBashEntries();
+        return ok(result);
       }
       case "abort_bash":
         session.abortBash();

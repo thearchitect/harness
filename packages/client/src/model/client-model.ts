@@ -269,7 +269,8 @@ export class ClientModel {
     const model = this.full.get(agentKey(node, agent));
     if (model !== undefined) {
       model.apply(record);
-      if ((record as { type?: string }).type === "compaction_end") {
+      const type = (record as { type?: string }).type;
+      if (type === "compaction_end" || type === "harness_reload") {
         void this.resync(node, agent);
       } else {
         // the stream keeps the model current
@@ -309,6 +310,15 @@ export class ClientModel {
       this.changed();
       return model;
     }
+  }
+
+  /** Stops following an agent in full: it drops to its summary; following it again takes a fresh snapshot. */
+  async unfollow(node: string, agentId: string): Promise<void> {
+    const key = agentKey(node, agentId);
+    this.full.delete(key);
+    this.recent = this.recent.filter((candidate) => candidate !== key);
+    await this.connection(node).request("agent_attach", { agent: agentId, level: "summary" });
+    this.changed();
   }
 
   private async resync(node: string, agentId: string): Promise<void> {

@@ -64,6 +64,71 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "the operator's own command shows in the transcript",
+      async run({ clients: { tui } }) {
+        await tui.type("/bash echo operator-ran-this");
+        await tui.submit();
+        await tui.waitForText((screen) => screen.includes("operator-ran-this") && screen.includes("$ echo"));
+      },
+    },
+    {
+      name: "scrolling to the top of a long session loads its older entries",
+      async run({ clients: { tui } }) {
+        for (let index = 0; index < 220; index += 1) {
+          await tui.workbench.operatorBash(`echo line-${index}`, true);
+        }
+        // open it again: the snapshot holds the latest 200 entries
+        const tab = tui.workbench.activeTab();
+        assert.ok(tab?.agent !== undefined);
+        await tui.client.unfollow(tab.node, tab.agent.id);
+        await tui.workbench.activate(0);
+        const agent = tui.screen().agent;
+        assert.ok(agent?.cursor !== undefined, "older entries exist");
+        const loaded = agent.items.length;
+        for (let page = 0; page < 400 && tui.screen().agent?.cursor !== undefined; page += 1) {
+          await tui.press("\x1b[5~");
+        }
+        assert.equal(tui.screen().agent?.cursor, undefined);
+        assert.ok((tui.screen().agent?.items.length ?? 0) > loaded);
+        await tui.waitForText((screen) => screen.includes("what is the answer?"));
+      },
+    },
+    {
+      name: "the tree moves the session back to a message, which returns to the editor",
+      async run({ clients: { tui } }) {
+        await tui.workbench.treePicker();
+        const zone = tui.screen().zones.editor;
+        const first = zone.kind === "picker" ? zone.picker.items.find((item) => item.label.includes("› what is the answer?")) : undefined;
+        assert.ok(first !== undefined);
+        await (zone.kind === "picker" ? zone.picker.choose(first.value) : Promise.resolve());
+        await tui.waitForText((screen) => !screen.includes("the answer is forty-two"));
+        assert.equal(tui.app.editorText(), "what is the answer?");
+        await tui.press("\x03"); // Ctrl+C clears the editor
+      },
+    },
+    {
+      name: "settings: the theme is the user's setting; compaction is the session's",
+      async run({ clients: { tui } }) {
+        const pick = async (label: string): Promise<void> => {
+          const zone = tui.screen().zones.editor;
+          const item = zone.kind === "picker" ? zone.picker.items.find((candidate) => candidate.label.startsWith(label)) : undefined;
+          assert.ok(zone.kind === "picker" && item !== undefined, label);
+          await zone.picker.choose(item.value);
+        };
+        await tui.workbench.settingsPicker();
+        await pick("theme");
+        await pick("light");
+        assert.equal(tui.client.settings["ui.theme"], "light");
+        await tui.workbench.settingsPicker();
+        await pick("auto-compaction: on");
+        await tui.workbench.settingsPicker();
+        await pick("auto-compaction: off");
+        await tui.workbench.settingsPicker();
+        await pick("theme");
+        await pick("dark");
+      },
+    },
+    {
       name: "the panel lists the subagent profiles and the dependencies in the editor's place",
       async run({ clients: { tui } }) {
         await tui.workbench.choosePanel("subagents");

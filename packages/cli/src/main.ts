@@ -30,7 +30,7 @@ import { claudeBridge } from "./claude-bridge.ts";
 import { piCommand } from "./pi-command.ts";
 import { canExecUpdate, checkUpdates, detectInstall, execUpdate, updateHint, updateLines, type Install, type UpdateState } from "./update.ts";
 import { readRemotes } from "./remotes.ts";
-import { App, initClientTheme } from "#tui/app.ts";
+import { App, clientThemes, initClientTheme } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
 
 const DEFAULT_NODE = "default";
@@ -154,6 +154,7 @@ async function runTui(args: string[]): Promise<void> {
   }
   const workbench = new Workbench(client, {
     cwd,
+    themes: () => clientThemes(home),
     update: {
       hint: () => updateHint(updateState, Date.now()),
       lines: () => updateLines(updateState, install, Date.now()),

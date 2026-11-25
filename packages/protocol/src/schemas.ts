@@ -130,6 +130,11 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
     { provider: Str(), authType: Type.Union([Type.Literal("oauth"), Type.Literal("api_key")]) },
     "Logs in to a provider on the agent's machine; its steps reach the operator as interactions; answers when the login is done. → {}",
   ),
+  harness_navigate: Request(
+    "harness_navigate",
+    { entryId: Str(), summarize: Opt(Type.Boolean({ description: "Summarize the branch left behind" })) },
+    "Moves the session to another point of its tree (pi's /tree); clients reload the transcript. → { editorText?, cancelled }",
+  ),
   harness_logout: Request("harness_logout", { provider: Str() }, "Removes a provider's stored login on the agent's machine. → {}"),
   harness_subagents: Request("harness_subagents", {}, "The subagent profiles this session may call, with their resolved models, and the profiles left out. → { profiles, problems }"),
 };

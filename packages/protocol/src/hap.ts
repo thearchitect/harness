@@ -38,7 +38,9 @@ export type HapRequest =
   | { type: "harness_login_providers"; id: string }
   /** Logs in on the agent's machine; its steps are interactions; answers when done → {}. */
   | { type: "harness_login"; id: string; provider: string; authType: "oauth" | "api_key" }
-  | { type: "harness_logout"; id: string; provider: string };
+  | { type: "harness_logout"; id: string; provider: string }
+  /** Moves the session to another point of its tree (pi's /tree) → { editorText?, cancelled }. */
+  | { type: "harness_navigate"; id: string; entryId: string; summarize?: boolean };
 
 export type LoginProvider = { id: string; name: string; authType: "oauth" | "api_key"; configured: boolean; subscription: boolean };
 
@@ -66,6 +68,7 @@ export const HAP_REQUEST_TYPES: readonly HapRequestType[] = [
   "harness_login_providers",
   "harness_login",
   "harness_logout",
+  "harness_navigate",
 ];
 
 /** A component of an extension (ctx.ui.custom) drawn in the agent and shown by terminal clients. */
@@ -127,7 +130,9 @@ export type HapEvent =
   | { type: "harness_ui"; method: "title"; title: string }
   | { type: "harness_component_open"; componentId: string; overlay: boolean }
   | { type: "harness_component_render"; componentId: string; lines: string[] }
-  | { type: "harness_component_close"; componentId: string };
+  | { type: "harness_component_close"; componentId: string }
+  /** The transcript changed other than by appending (another branch, another session): take a new snapshot. */
+  | { type: "harness_reload" };
 
 /**
  * Node → agent: the clients attached in full; and the node's frames for the agent's own connection

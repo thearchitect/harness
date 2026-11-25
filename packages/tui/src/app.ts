@@ -5,6 +5,8 @@
 // state of its own beyond its widgets (the editor's text, scroll positions).
 
 import { getMarkdownTheme, initTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { existsSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import {
   CombinedAutocompleteProvider,
   Container,
@@ -163,6 +165,9 @@ export class App {
   private readonly itemsColumn: ItemsColumn;
   private readonly transcript: TranscriptView;
   private readonly transcriptScroll: ScrollView;
+  private loadingOlder = false;
+  private prefillApplied: string | undefined;
+  private themeApplied: string | undefined;
   private readonly taskOutput = new Lines();
   private readonly mainArea = new Container();
   private readonly aboveEditor = new Container();
@@ -252,6 +257,13 @@ export class App {
     const previous = this.screen?.agent;
     const screen = this.workbench.screen(this.tui.terminal.columns, { mode: modeOfText(this.editor.getText(), variant).mode });
     this.screen = screen;
+    this.followTheme();
+    if (screen.prefill !== undefined && screen.prefill.key !== this.prefillApplied) {
+      this.prefillApplied = screen.prefill.key;
+      this.editor.setText(screen.prefill.text);
+    } else {
+      // the editor has it already
+    }
     const tab = screen.tab;
     if (tab !== undefined && (tab.glyph === "✓" || tab.glyph === "✗")) {
       // the user is looking at it: what it finished is seen
@@ -295,6 +307,7 @@ export class App {
         }
         this.transcript.show(screen.agent);
         this.scrollToMatch(screen);
+        this.loadOlderAtTop(screen);
         break;
       }
       case "task": {
@@ -341,6 +354,39 @@ export class App {
       this.mainArea.addChild(component);
     } else {
       // shown already
+    }
+  }
+
+  /**
+   * Scrolled to the top of what is loaded: the older entries come next, and the view stays on the
+   * line it showed (the first item it had, now further down).
+   */
+  private loadOlderAtTop(screen: Screen): void {
+    const agent = screen.agent;
+    const tab = screen.tab;
+    const first = agent?.items[0]?.key;
+    if (this.loadingOlder || agent === undefined || tab?.agent === undefined || agent.cursor === undefined || first === undefined) {
+      return; // loading, nothing older, or nothing shown
+    } else if (this.transcriptScroll.isFollowingEnd || this.transcriptScroll.scrollTop > 0) {
+      return; // not at the top
+    } else {
+      this.loadingOlder = true;
+      void this.client
+        .loadOlder(tab.node, tab.agent.id)
+        .then(() => {
+          this.transcript.show(agent);
+          const line = this.transcript.lineOf(first, this.transcriptScroll.getContentWidth(this.tui.terminal.columns));
+          if (line !== undefined) {
+            this.transcriptScroll.scrollTo(line, { disableFollow: true });
+          } else {
+            // the item is gone (the session changed meanwhile)
+          }
+          this.tui.requestRender();
+        })
+        .catch((error: unknown) => this.workbench.notify("error", `older entries: ${error instanceof Error ? error.message : String(error)}`))
+        .finally(() => {
+          this.loadingOlder = false;
+        });
     }
   }
 
@@ -574,6 +620,24 @@ export class App {
     }
   }
 
+  /** `ui.theme` of the user's settings changed (here or in another client): redraw in it. */
+  private followTheme(): void {
+    const name = this.client.settings["ui.theme"];
+    if (typeof name === "string" && name !== "" && name !== this.themeApplied) {
+      this.themeApplied = name;
+      initClientTheme(name);
+      this.transcript.rebuild();
+      this.tui.invalidate();
+    } else {
+      // the same theme
+    }
+  }
+
+  /** The editor's text (for tests and drivers). */
+  editorText(): string {
+    return this.editor.getText();
+  }
+
   /** Commands of the client itself (the agent's own commands go to the agent as text). */
   private async clientCommand(text: string): Promise<boolean> {
     const [command] = text.split(/\s+/);
@@ -595,6 +659,23 @@ export class App {
       case "/login":
         await this.workbench.loginPicker();
         return true;
+      case "/tree":
+        await this.workbench.treePicker();
+        return true;
+      case "/settings":
+        await this.workbench.settingsPicker();
+        return true;
+      case "/bash":
+      case "/bash-quiet": {
+        // the operator's own command on the session's machine; "-quiet" keeps it out of the model's context
+        const commandLine = text.slice(command.length).trim();
+        if (commandLine === "") {
+          this.workbench.notify("warning", `${command} <command>`);
+        } else {
+          await this.workbench.operatorBash(commandLine, command === "/bash-quiet");
+        }
+        return true;
+      }
       case "/logout": {
         const provider = text.split(/\s+/)[1];
         if (provider === undefined) {
@@ -671,6 +752,10 @@ export class App {
         { name: "open", description: "Open a session (Ctrl+O)" },
         { name: "model", description: "Choose the model (Ctrl+L)" },
         { name: "login", description: "Log in to a provider on this session's node" },
+        { name: "tree", description: "Move to another point of the session's tree" },
+        { name: "settings", description: "Theme, compaction, message queues" },
+        { name: "bash", description: "Run a command yourself; the model sees it and its output" },
+        { name: "bash-quiet", description: "Run a command yourself, kept out of the model's context" },
         { name: "logout", description: "Remove a provider's login on this session's node" },
         { name: "quit", description: "Quit (agents keep running)" },
       ];
@@ -691,4 +776,10 @@ export class App {
 
 export function initClientTheme(name: string | undefined): void {
   initTheme(name, false);
+}
+
+/** The themes the TUI can draw: pi's own and the user's (`~/.harness/themes/*.json`). */
+export function clientThemes(home: string): string[] {
+  const own = existsSync(join(home, "themes")) ? readdirSync(join(home, "themes")).filter((file) => file.endsWith(".json")).map((file) => file.slice(0, -".json".length)) : [];
+  return ["dark", "light", ...own.sort()];
 }

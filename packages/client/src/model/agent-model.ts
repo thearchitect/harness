@@ -58,6 +58,8 @@ export class AgentModel {
   notices: Notice[] = [];
   /** Text an extension asked to put into the editor. */
   editorText: string | undefined;
+  /** Counts the agent's editor texts, so a client puts each one into its editor once. */
+  editorTextSeq = 0;
   private noticeCounter = 0;
   private liveCounter = 0;
   private readonly listeners = new Set<() => void>();
@@ -155,8 +157,9 @@ export class AgentModel {
         break;
       case "entry_appended": {
         const entry = r.entry as Entry;
-        if (entry.type === "message" || entry.type === "custom_message") {
-          // messages arrive as message_end
+        const operatorCommand = entry.type === "message" && (entry.message as Message | undefined)?.role === "bashExecution";
+        if ((entry.type === "message" && !operatorCommand) || entry.type === "custom_message") {
+          // messages arrive as message_end (the operator's commands only as their entry)
         } else {
           const item = itemOfEntry(entry);
           if (item !== undefined) {
@@ -228,6 +231,7 @@ export class AgentModel {
         break;
       case "editor_text":
         this.editorText = String(r.text);
+        this.editorTextSeq += 1;
         break;
       default:
         break; // a title: the client's own business
