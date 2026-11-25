@@ -1,0 +1,1524 @@
+[
+  {
+    "name": "ask_secret",
+    "description": "Ask the operator for a secret (token, password, API key) in a masked dialog. The value never reaches you: it is kept in memory for this session only (lost when the agent exits), every bash command of the session gets it as the environment variable `name`, and tool results show it as ****************. Works in PLAN and BUILD: nothing is written to disk. Call it only on the operator's explicit command.\n\nCodemode: `tools.ask_secret(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "name",
+        "description"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The environment variable for bash commands: A-Z, 0-9 and _, e.g. GITHUB_TOKEN"
+        },
+        "description": {
+          "type": "string",
+          "description": "What the operator should enter and where to get it"
+        }
+      }
+    }
+  },
+  {
+    "name": "ask_user",
+    "description": "Ask the user a question with optional multiple-choice answers. Use this to gather information interactively. Ask one focused question per call, or 2-4 independent questions together through questions. Before calling, gather context with tools (read/web/ref) and pass a short summary via the context field.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "description": "The question to ask the user. With questions, it is only an optional heading for the batch; put every actual question inside questions.",
+          "type": "string"
+        },
+        "questions": {
+          "minItems": 2,
+          "maxItems": 4,
+          "description": "2-4 independent questions shown together, used instead of question. Set context, options, allowMultiple, and allowFreeform on each entry; the remaining parameters apply to the whole batch.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "question"
+            ],
+            "properties": {
+              "question": {
+                "description": "One question in the batch",
+                "type": "string"
+              },
+              "context": {
+                "description": "Relevant context to show with this question (summary of findings)",
+                "type": "string"
+              },
+              "options": {
+                "description": "List of options for this question",
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "title"
+                  ],
+                  "properties": {
+                    "title": {
+                      "description": "Short title for this option",
+                      "type": "string"
+                    },
+                    "description": {
+                      "description": "Longer description explaining this option",
+                      "type": "string"
+                    }
+                  }
+                }
+              },
+              "allowMultiple": {
+                "description": "Allow selecting multiple options. Default: false",
+                "type": "boolean"
+              },
+              "allowFreeform": {
+                "description": "Add a freeform text option. Default: true",
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "context": {
+          "description": "Relevant context to show before the question (summary of findings)",
+          "type": "string"
+        },
+        "options": {
+          "description": "List of options for the user to choose from",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "title"
+            ],
+            "properties": {
+              "title": {
+                "description": "Short title for this option",
+                "type": "string"
+              },
+              "description": {
+                "description": "Longer description explaining this option",
+                "type": "string"
+              }
+            }
+          }
+        },
+        "allowMultiple": {
+          "description": "Allow selecting multiple options. Default: false",
+          "type": "boolean"
+        },
+        "allowFreeform": {
+          "description": "Add a freeform text option. Default: true",
+          "type": "boolean"
+        },
+        "allowComment": {
+          "description": "Collect an optional comment after selecting one or more options. Default: PI_ASK_USER_ALLOW_COMMENT env var or allowComment in ~/.pi/agent/ask-user.json (respecting PI_CODING_AGENT_DIR) if set, otherwise false.",
+          "type": "boolean"
+        },
+        "displayMode": {
+          "type": "string",
+          "enum": [
+            "overlay",
+            "inline"
+          ],
+          "description": "UI rendering mode. 'overlay' shows a centered modal, 'inline' renders in-place. Default: PI_ASK_USER_DISPLAY_MODE env var, then displayMode in ~/.pi/agent/ask-user.json (respecting PI_CODING_AGENT_DIR), otherwise 'overlay'. Omit to respect the user's configured preference."
+        },
+        "singleSelectLayout": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "list"
+          ],
+          "description": "Single-select layout. 'auto' uses a details pane on wide terminals; 'list' always keeps descriptions below options. Default: PI_ASK_USER_SINGLE_SELECT_LAYOUT env var, then singleSelectLayout in ~/.pi/agent/ask-user.json (respecting PI_CODING_AGENT_DIR), otherwise 'auto'."
+        },
+        "contextExpanded": {
+          "description": "Start with oversized context expanded instead of collapsed behind a one-line summary. Default: PI_ASK_USER_CONTEXT_EXPANDED env var or contextExpanded in ~/.pi/agent/ask-user.json (respecting PI_CODING_AGENT_DIR) if set, otherwise false.",
+          "type": "boolean"
+        },
+        "overlayToggleKey": {
+          "description": "Shortcut for hiding/showing the overlay popup (overlay mode only), e.g. 'alt+o' or 'ctrl+shift+h'. Pass 'off' to disable. Default: PI_ASK_USER_OVERLAY_TOGGLE_KEY env var, then overlayToggleKey in ~/.pi/agent/ask-user.json (respecting PI_CODING_AGENT_DIR), otherwise 'alt+o'.",
+          "type": "string"
+        },
+        "commentToggleKey": {
+          "description": "Shortcut for toggling the optional comment/extra-context row when allowComment is true, e.g. 'ctrl+g'. Pass 'off' to disable. Default: PI_ASK_USER_COMMENT_TOGGLE_KEY env var, then commentToggleKey in ~/.pi/agent/ask-user.json (respecting PI_CODING_AGENT_DIR), otherwise 'ctrl+g'.",
+          "type": "string"
+        },
+        "timeout": {
+          "description": "Auto-dismiss after N milliseconds. Returns null (cancelled) when expired.",
+          "type": "number"
+        }
+      }
+    }
+  },
+  {
+    "name": "bash",
+    "description": "Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last 2000 lines or 50KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.\n\nCodemode: `tools.bash(args)` resolves to `{ output, truncated, full_output_path?, exit_code, wall_time_seconds }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "Shell command to execute"
+        },
+        "timeout": {
+          "type": "number",
+          "description": "Timeout in seconds (optional, no default timeout)"
+        }
+      }
+    }
+  },
+  {
+    "name": "codemode",
+    "description": "Run JavaScript that calls other tools. The input is raw JavaScript (not JSON, no code fence), run as an async function body in a QuickJS sandbox: top-level `await` and `return` work. No Node, file system, network, or timers.\n- `await tools.<name>({ ...args })` resolves to a string, or an object if the tool's declaration says so, and rejects with an Error on failure. A tool whose declaration returns an object resolves on failure too when it returned that object; check its fields. Calls still running when the script ends are cancelled.\n- Optional first line: `// @options: {\"max_output_tokens\": 10000, \"timeout_ms\": 60000}`\n\nGlobals:\n- `text(value)`, `image(dataUrlOrImageBlock)`, `console.log(...)`, and top-level `return` add output; `exit()` ends the script. With several text items, each starts with a `==> text N/M <==` line, and `console` lines follow the other output in one `<console_output>` block. `image()` also saves the image to a temp file and the result names its path.\n- `store(key, value)` and `load(key)` keep JSON values across codemode calls.\n- `ALL_TOOLS`, `await searchTools(query, { limit?, namespace? })`, `await describeTool(name)`, `await describeNamespace(name)`: find unlisted tools, such as MCP tools.\n- `models`: classifiers and image generation. Read /nix/store/<hash>-harness-npm-tools/node_modules/@earendil-works/pi-coding-agent/docs/codemode.md first.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "code"
+      ],
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "Raw JavaScript source."
+        }
+      }
+    }
+  },
+  {
+    "name": "ctx_expand",
+    "description": "Recover original content that is no longer on your desk. It takes two kinds of number, and they are never interchangeable:\n- `tag=N`: the number from a §N§ tag or a `[dropped §N§]` placeholder. Returns that one item whole: a text, or a tool call with its full input and output.\n- `message=N`, `start`/`end`: message ordinals, the positions shown in `<session-history>` headings (`## start-end`) and in `ctx_search` hits. An ordinal counts whole messages; a tag counts each text and tool result separately, so the same number points at different things.\n\nEarlier turns are summarized in <session-history> under `## start-end · date · title` headings; each heading stands for the raw messages in that ordinal range. When the summary isn't enough — exact wording, a value, an error message, the reasoning behind a decision — expand the range: ctx_expand(start=120, end=245). Also works around a ctx_search message hit: start=N-10, end=N+5. Ranges after the last compartment are your live tail — already visible, not expandable.\n\nReturns the raw transcript as [N] U:/A: lines, capped at ~15K tokens; an oversized range returns the head and says where to continue.\n\nFiner recovery:\n- verbose=true lists each message separately with its ordinal and a per-part preview (tool calls with output sizes) so you can pick one.\n- message=N returns that one message in full — every text part and every tool call's complete input and output — from stored history. This is the way back to a tool output you released with ctx_reduce; if the message was deleted from history it says so.\n\nCodemode: `tools.ctx_expand(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "tag": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string"
+            }
+          ],
+          "description": "Tag number from a §N§ tag or a [dropped §N§] placeholder, not a message ordinal. Returns that one item in full. Use alone."
+        },
+        "start": {
+          "type": "number",
+          "description": "First message ordinal of the range (a <session-history> heading's start, or a ctx_search hit), not a tag number."
+        },
+        "end": {
+          "type": "number",
+          "description": "Last message ordinal of the range, inclusive, not a tag number."
+        },
+        "verbose": {
+          "type": "boolean",
+          "description": "With start/end: one entry per message with ordinal and per-part preview instead of the transcript."
+        },
+        "message": {
+          "type": "number",
+          "description": "Message ordinal from a <session-history> heading or a ctx_search hit, not a tag number. Returns that one message in full. Use alone."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "ctx_memory",
+    "description": "Durable facts about this project, shared with every agent working on it and kept for the months this work lasts.\n\nYour active memories are already in <project-memory> as `#id: fact` lines. Write one when you learn something that must not have to be found again — a project rule, an architectural fact, a hard-won constraint, a config value, a naming convention — and especially when it cost you turns to find. One standalone fact per memory, phrased to make sense on its own. A pending intention with its evidence (\"do X later, here is what we know\") is ctx_note, not memory.\n\nActions:\n- write: new memory (content + category).\n- update: rewrite one memory whose fact changed (ids: [one], content; category optional to recategorize).\n- archive: retire wrong or obsolete memories (ids: [one or more], optional reason).\n- merge: collapse duplicates into one (ids: [two or more], content).\n- get: fetch by id (ids: 1–20), readable in every status.\nExamples: category=\"CONFIG_VALUES\", content=\"OpenCode source is at ~/Work/OSS/opencode\" · category=\"CONSTRAINTS\", content=\"Dashboard Tauri build needs RGBA PNGs, not grayscale\"\n\nCodemode: `tools.ctx_memory(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "action",
+        "content",
+        "category",
+        "ids"
+      ],
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "write"
+            },
+            {
+              "type": "string",
+              "const": "update"
+            },
+            {
+              "type": "string",
+              "const": "archive"
+            },
+            {
+              "type": "string",
+              "const": "merge"
+            },
+            {
+              "type": "string",
+              "const": "get"
+            }
+          ],
+          "description": "write | update | archive | merge | get"
+        },
+        "content": {
+          "type": "string",
+          "description": "The memory text — one standalone fact (write, update, merge). Archive and get take an empty string."
+        },
+        "category": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "PROJECT_RULES"
+            },
+            {
+              "type": "string",
+              "const": "ARCHITECTURE"
+            },
+            {
+              "type": "string",
+              "const": "CONSTRAINTS"
+            },
+            {
+              "type": "string",
+              "const": "CONFIG_VALUES"
+            },
+            {
+              "type": "string",
+              "const": "NAMING"
+            }
+          ],
+          "description": "Kind of fact: the new fact's kind for write; on update/merge, the memory's current category to keep it. Archive and get ignore it."
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "Memory ids from <project-memory>: one for update, one or more for archive, two or more for merge, 1–20 for get. Write takes an empty list."
+        },
+        "reason": {
+          "type": "string",
+          "description": "Why it is being archived (optional)."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "ctx_note",
+    "description": "Session notes are pending intentions: work you intend to return to, with its findings attached.\n\nUse notes for:\n- A finding to revisit when you return to the intended work\n- A decision with its reasoning, when follow-up work remains\n- A backlog item with evidence already found\n- Something the user explicitly asks you to note\n\nDon't use notes for: the next few steps; a plan you are actively executing; restart/fold insurance; or a record of how things stand (world-state, a design at a point in time) with nothing you intend to do about it — that goes stale silently; a fact worth keeping is memory, the rest is nothing. Use todos for active work. If the detail already lives in a file, record the path and what to inspect — don't copy the file into a note. Durable project facts belong in ctx_memory, not notes.\n\nFirst line is the title (under 80 chars), followed by detail. Operations:\n- write: save a new note (content required)\n- read: one row per note — `#id · age · title` — newest first; rows untouched 30+ days are marked stale. Pass note_ids to read full bodies; limit/offset page; filter selects other statuses.\n- update: change one note (note_ids=[N])\n- dismiss: retire 1–50 notes (note_ids). Dismiss a note when its work lands or is abandoned; a queue you never dismiss from stops being read.\n\nCodemode: `tools.ctx_note(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "action",
+        "content",
+        "note_ids"
+      ],
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "write"
+            },
+            {
+              "type": "string",
+              "const": "read"
+            },
+            {
+              "type": "string",
+              "const": "dismiss"
+            },
+            {
+              "type": "string",
+              "const": "update"
+            }
+          ],
+          "description": "write | read | update | dismiss."
+        },
+        "content": {
+          "type": "string",
+          "description": "Note text for write/update: first line is the title (under 80 chars), then the detail."
+        },
+        "note_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "maxItems": 50,
+          "description": "Note ids: one for update, 1–50 for dismiss, or 1–50 to read those notes in full. Write and a plain read take an empty list."
+        },
+        "filter": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "active"
+            },
+            {
+              "type": "string",
+              "const": "pending"
+            },
+            {
+              "type": "string",
+              "const": "ready"
+            },
+            {
+              "type": "string",
+              "const": "dismissed"
+            },
+            {
+              "type": "string",
+              "const": "all"
+            }
+          ],
+          "description": "Read filter: all, active, pending, ready, dismissed. Omitted: active session notes plus every current project note; active shows only active-status notes."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Rows per read (default 25)."
+        },
+        "offset": {
+          "type": "number",
+          "description": "Skip this many newest rows (default 0)."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "ctx_reduce",
+    "description": "Stamp an item on your desk as no longer needed for the work ahead. Not a delete: stamping QUEUES it, the item stays fully readable until Magic Context clears stamped items in one sweep, and the newest tags are protected so stamping recent output is harmless. A cleared item goes to the archive — a recent one leaves a `[dropped §N§]` placeholder, an older one leaves nothing — and `ctx_expand(tag=N)` is the way back. So the question before stamping is not \"have I finished reading this?\" but \"does this need to stay on my desk for what comes next?\" — a file you read and will keep editing stays; the grep that found it goes.\n\nStamp: file reads, search results and tool outputs the work ahead no longer needs; build/test output after you acted on it; repeated or redundant dumps; data written to disk; status/log output that only confirmed what you expected; a large block pasted inside a user message once you have used it.\nKeep: user messages (never stamp one for its directive), your own conversation text, unresolved errors, raw evidence you haven't extracted yet, and outputs whose exact wording may still matter.\n\nLook at each tag before stamping it; never blanket-stamp a range like \"1-50\". Many small targeted stamps beat one sweep. `drop` accepts \"3-5\", \"1,2,9\", \"1-5,8,12-15\".\n\nCodemode: `tools.ctx_reduce(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "drop": {
+          "type": "string",
+          "description": "Tag IDs to drop: \"3-5\", \"1,2,9\", \"1-5,8,12-15\"."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "ctx_search",
+    "description": "Search the archive — everything that ever happened in this project, not just what is on your desk.\n\nRetrieval matches meaning and exact words and fuses them, so phrase `query` as a natural-language question that still carries the exact terms you expect in the answer (paths, symbols, config keys, error strings); a bare keyword stack finds less.\n- \"where is the opencode source code path?\"  (a location you once knew)\n- \"why did we choose SQLite over postgres?\"  (a decision and its reasons)\n- \"how does the dreamer lease work?\"  (a mechanism discussed or implemented earlier)\n- Not: \"upload client retry backoff config\"\n\nResults only contain what you CANNOT currently see — memories already in <project-memory> and the live tail are filtered out. A query that is just memory ids (`#7234`, `12, 34`) resolves them directly.\n\nSources (omit for all):\n- memory — rules, constraints, conventions; \"what's our convention for X\"\n- message — the raw conversation behind compacted history; \"did we discuss this\"; hits carry ordinals for ctx_expand(start=N-10, end=N+5)\n- git_commit — commit history; \"when did this change\" (pair with message for regression hunts)\n- primer — reusable project Q&A the dreamer distils from recurring questions; \"have we answered this before\"\n- note — parked follow-ups with their recorded text; \"did we leave a follow-up\"\nUse from/to to restrict every source to an inclusive UTC date range.\n\nCodemode: `tools.ctx_search(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "A natural-language question carrying the exact terms you expect in the answer."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum results (default 10)."
+        },
+        "from": {
+          "type": "string",
+          "description": "Earliest date, YYYY-MM-DD (inclusive)."
+        },
+        "to": {
+          "type": "string",
+          "description": "Latest date, YYYY-MM-DD (inclusive; default open)."
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "string",
+                "const": "memory"
+              },
+              {
+                "type": "string",
+                "const": "message"
+              },
+              {
+                "type": "string",
+                "const": "git_commit"
+              },
+              {
+                "type": "string",
+                "const": "primer"
+              },
+              {
+                "type": "string",
+                "const": "note"
+              }
+            ]
+          },
+          "description": "Restrict to these sources; omitting it or passing [] searches every source."
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "display_file",
+    "description": "Show a text file or an image (PNG, JPEG, GIF, WebP) to the operator in the chat. You get only a one-line confirmation, never the content. Text: lines offset..offset+limit-1 (1-based; default the whole file), at most 2000 lines or 256 KB per call; Markdown is rendered, code highlighted.\n\nCodemode: `tools.display_file(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The file, relative to the cwd or absolute"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Text files: the first line to show, 1-based"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Text files: how many lines to show"
+        }
+      }
+    }
+  },
+  {
+    "name": "edit",
+    "description": "Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.\n\nCodemode: `tools.edit(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "path",
+        "edits"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the file to edit (relative or absolute)"
+        },
+        "edits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "oldText",
+              "newText"
+            ],
+            "properties": {
+              "oldText": {
+                "type": "string",
+                "description": "Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call."
+              },
+              "newText": {
+                "type": "string",
+                "description": "Replacement text for this targeted edit."
+              }
+            }
+          },
+          "description": "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead."
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_call_hierarchy",
+    "description": "Callers (incoming, across the whole repository) or callees (outgoing) of the function or method at { file, line, name }, with the call sites.\n\nCodemode: `tools.lsp_call_hierarchy(args)` resolves to `{ entries }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "name",
+        "direction"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File path, relative to the cwd or absolute"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line of the identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "The identifier on that line"
+        },
+        "occurrence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which occurrence of the identifier on the line (1-based), when it occurs more than once"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "incoming"
+            },
+            {
+              "type": "string",
+              "const": "outgoing"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_code_actions",
+    "description": "Code actions (quick fixes, organize imports, source actions) the server offers for a line range; apply one as a codeAction operation of lsp_refactor.\n\nCodemode: `tools.lsp_code_actions(args)` resolves to `{ actions }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "file",
+        "startLine"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File path, relative to the cwd or absolute"
+        },
+        "startLine": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "endLine": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Default: startLine"
+        },
+        "kinds": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Only these kinds, e.g. \"quickfix\", \"source.organizeImports\""
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_definition",
+    "description": "Where the symbol at { file, line, name } is defined.\n\nCodemode: `tools.lsp_definition(args)` resolves to `{ count, truncated, places }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "name"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File path, relative to the cwd or absolute"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line of the identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "The identifier on that line"
+        },
+        "occurrence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which occurrence of the identifier on the line (1-based), when it occurs more than once"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_diagnostics",
+    "description": "Errors and warnings the language server reports for the given files. The project's own build and type check stay authoritative (TypeScript is analyzed with TypeScript 7 whatever the project compiles with).\n\nCodemode: `tools.lsp_diagnostics(args)` resolves to `{ files }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "files"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "description": "File paths, relative to the cwd or absolute"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_hover",
+    "description": "Type, signature and documentation of the symbol at { file, line, name }.\n\nCodemode: `tools.lsp_hover(args)` resolves to `{ text }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "name"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File path, relative to the cwd or absolute"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line of the identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "The identifier on that line"
+        },
+        "occurrence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which occurrence of the identifier on the line (1-based), when it occurs more than once"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_implementations",
+    "description": "Every implementation of the interface, abstract member or method at { file, line, name }, across the whole repository.\n\nCodemode: `tools.lsp_implementations(args)` resolves to `{ count, truncated, places }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "name"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File path, relative to the cwd or absolute"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line of the identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "The identifier on that line"
+        },
+        "occurrence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which occurrence of the identifier on the line (1-based), when it occurs more than once"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_refactor",
+    "description": "Apply refactoring operations in order, each on the state the previous ones left: rename a symbol everywhere in the repository (all packages, modules, crates), move a file updating imports and module paths (Go files move only within their directory; a file no language server handles is moved as is), apply a code action listed by lsp_code_actions (organize imports, quick fix; without lines: the whole file), or replace exact text (edit semantics: oldText must occur exactly once). Paths are relative to the cwd or absolute. Pass the operations inline, or `plan`: the path of a JSON file with the same array in the session workspace. The whole list is approved once; each operation is then computed by the language servers and written atomically. A failing operation stops the run: the operations before it stay applied, and a plan file is cut down to the failed operation and the rest, so fix its first entry and run the same plan again. The result shows the diff of what was applied.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "operations": {
+          "type": "array",
+          "items": {
+            "anyOf": [
+              {
+                "type": "object",
+                "required": [
+                  "rename"
+                ],
+                "properties": {
+                  "rename": {
+                    "type": "object",
+                    "required": [
+                      "file",
+                      "line",
+                      "name",
+                      "newName"
+                    ],
+                    "properties": {
+                      "file": {
+                        "type": "string",
+                        "description": "File path, relative to the cwd or absolute"
+                      },
+                      "line": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "1-based line of the identifier"
+                      },
+                      "name": {
+                        "type": "string",
+                        "description": "The identifier on that line"
+                      },
+                      "occurrence": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Which occurrence of the identifier on the line (1-based), when it occurs more than once"
+                      },
+                      "newName": {
+                        "type": "string",
+                        "description": "The new identifier"
+                      }
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "move"
+                ],
+                "properties": {
+                  "move": {
+                    "type": "object",
+                    "required": [
+                      "from",
+                      "to"
+                    ],
+                    "properties": {
+                      "from": {
+                        "type": "string"
+                      },
+                      "to": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "codeAction"
+                ],
+                "properties": {
+                  "codeAction": {
+                    "type": "object",
+                    "required": [
+                      "file",
+                      "title"
+                    ],
+                    "properties": {
+                      "file": {
+                        "type": "string"
+                      },
+                      "title": {
+                        "type": "string",
+                        "description": "Exact title from lsp_code_actions"
+                      },
+                      "startLine": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Default: the whole file"
+                      },
+                      "endLine": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "description": "Default: startLine"
+                      }
+                    }
+                  }
+                },
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": [
+                  "edit"
+                ],
+                "properties": {
+                  "edit": {
+                    "type": "object",
+                    "required": [
+                      "file",
+                      "oldText",
+                      "newText"
+                    ],
+                    "properties": {
+                      "file": {
+                        "type": "string"
+                      },
+                      "oldText": {
+                        "type": "string",
+                        "description": "Exact text, occurring once in the file"
+                      },
+                      "newText": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "minItems": 1,
+          "description": "Operations, applied in order"
+        },
+        "plan": {
+          "type": "string",
+          "description": "Path of a JSON file holding the operations array (session workspace)"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_references",
+    "description": "Every reference to the symbol at { file, line, name } across the whole repository (all packages, modules and crates).\n\nCodemode: `tools.lsp_references(args)` resolves to `{ count, truncated, places }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "name"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File path, relative to the cwd or absolute"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line of the identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "The identifier on that line"
+        },
+        "occurrence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which occurrence of the identifier on the line (1-based), when it occurs more than once"
+        },
+        "includeDeclaration": {
+          "type": "boolean",
+          "description": "Include the declaration itself (default true)"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_symbols",
+    "description": "Symbols of one file (pass file), or symbols matching a query across the whole repository (pass query, optionally language).\n\nCodemode: `tools.lsp_symbols(args)` resolves to `{ symbols }`.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "List this file's symbols as a tree (relative to the cwd or absolute)"
+        },
+        "query": {
+          "type": "string",
+          "description": "Search symbols by name across the repository"
+        },
+        "language": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "ts"
+            },
+            {
+              "type": "string",
+              "const": "go"
+            },
+            {
+              "type": "string",
+              "const": "rust"
+            }
+          ],
+          "description": "Limit a query to one language"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_type_definition",
+    "description": "Where the type of the symbol at { file, line, name } is defined.\n\nCodemode: `tools.lsp_type_definition(args)` resolves to `{ count, truncated, places }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "name"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File path, relative to the cwd or absolute"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line of the identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "The identifier on that line"
+        },
+        "occurrence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which occurrence of the identifier on the line (1-based), when it occurs more than once"
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_type_hierarchy",
+    "description": "Supertypes or subtypes (across the whole repository) of the type at { file, line, name }.\n\nCodemode: `tools.lsp_type_hierarchy(args)` resolves to `{ entries }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "file",
+        "line",
+        "name",
+        "direction"
+      ],
+      "properties": {
+        "file": {
+          "type": "string",
+          "description": "File path, relative to the cwd or absolute"
+        },
+        "line": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "1-based line of the identifier"
+        },
+        "name": {
+          "type": "string",
+          "description": "The identifier on that line"
+        },
+        "occurrence": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Which occurrence of the identifier on the line (1-based), when it occurs more than once"
+        },
+        "direction": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "supertypes"
+            },
+            {
+              "type": "string",
+              "const": "subtypes"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "lsp_workspace",
+    "description": "What the language servers cover: the repository root and, per language present, its projects/modules/crates, exclusions with reasons, build tags and features.\n\nCodemode: `tools.lsp_workspace(args)` resolves to `{ root, languages }`.",
+    "parameters": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "mcp__lightpanda__markdown",
+    "description": "Render the page (or a subtree) as markdown. Scope with `selector` or `backendNodeId` to read just the relevant region — full-page markdown is the last resort. Use `maxBytes` to cap long pages.\n\nCodemode: `tools.mcp__lightpanda__markdown(args)` resolves to `{ content, structuredContent?, isError? }`.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "selector": {
+          "type": "string",
+          "description": "Optional CSS selector. Render markdown for just that element's subtree."
+        },
+        "backendNodeId": {
+          "type": "integer",
+          "description": "Optional backend node ID. Render markdown for just that node's subtree. 0 is treated as omitted."
+        },
+        "maxBytes": {
+          "type": "integer",
+          "description": "Optional soft cap on output size in bytes. Content is truncated at a UTF-8 boundary and a short '[truncated]' marker is appended past the cap."
+        },
+        "strip": {
+          "type": "object",
+          "description": "Optional. Omit element groups from the output; same groups as the html tool's strip. `shell` (page chrome by markup) and `clutter` (keep only the main content, in the manner of reader modes) are the ones that matter for reading; `ui` also drops images.",
+          "properties": {
+            "js": {
+              "type": "boolean"
+            },
+            "css": {
+              "type": "boolean"
+            },
+            "ui": {
+              "type": "boolean"
+            },
+            "invisible": {
+              "type": "boolean"
+            },
+            "shell": {
+              "type": "boolean"
+            },
+            "clutter": {
+              "type": "boolean"
+            }
+          }
+        },
+        "url": {
+          "type": "string",
+          "description": "Optional URL to navigate to before rendering. An empty string is treated as omitted."
+        },
+        "alternate": {
+          "type": "boolean",
+          "description": "Optional. When the page links a markdown version of itself (<link rel=\"alternate\" type=\"text/markdown\">), return that file instead of converting the page. It is the author's file and can differ from the rendered page; the output then starts with a comment naming its URL, which maxBytes does not count. Falls back to the page when there is no such link, the page itself failed to load (HTTP error status or bot challenge), or the alternate does not load as markdown within what is left of the timeout. Cannot be combined with selector or backendNodeId. Defaults to false."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Optional timeout in milliseconds. Defaults to 10000."
+        }
+      }
+    }
+  },
+  {
+    "name": "mcp__lightpanda__search",
+    "description": "Run a web search and return results as markdown: a numbered list of {title, url, snippet}. Search tries brave, tavily, exa, parallel, then keenable in order, each when its API key (BRAVE_API_KEY, TAVILY_API_KEY, EXA_API_KEY, PARALLEL_API_KEY or KEENABLE_API_KEY) is set; keenable also works without a key through its public endpoint (rate-limited per client IP). Prefer this over goto-ing google.com/search directly (Google blocks the browser on User-Agent/TLS). The browser does not navigate — to open a result, use `goto` with its URL.\n\nCodemode: `tools.mcp__lightpanda__search(args)` resolves to `{ content, structuredContent?, isError? }`.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The search query."
+        },
+        "timeout": {
+          "type": "integer",
+          "description": "Optional timeout in milliseconds. Defaults to 10000."
+        }
+      },
+      "required": [
+        "query"
+      ]
+    }
+  },
+  {
+    "name": "ollama_web_fetch",
+    "description": "Fetch and extract text content from a web page URL using Ollama Cloud's web fetch API. Returns the page title, a 3000-char slice of the content, and links. Pages are cached for 24h. Pass offset=N to continue reading from char N (the output tells you the next offset), or full=true to get all remaining content from offset in one call. A failed URL is cached for 15 min — retrying it within the failure TTL (15 min) costs 0 API calls and fails the same way; pass refresh=true to force a live retry. Requires an Ollama Cloud API key.\n\nCodemode: `tools.ollama_web_fetch(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "URL to fetch and extract content from",
+          "format": "uri"
+        },
+        "offset": {
+          "type": "integer",
+          "description": "Start reading from this character index (default: 0)",
+          "default": 0,
+          "minimum": 0
+        },
+        "full": {
+          "type": "boolean",
+          "description": "Return all remaining content from offset in one call (default: false)",
+          "default": false
+        },
+        "refresh": {
+          "type": "boolean",
+          "description": "Bypass the cached page (or cached failure) and re-call the API (default: false). The fresh result replaces the cache entry.",
+          "default": false
+        }
+      }
+    }
+  },
+  {
+    "name": "ollama_web_search",
+    "description": "Search the web for real-time information using Ollama Cloud's web search API. Returns up to max_results results (default 5, max 10; title, URL, 500-char snippet; [truncated] means the source is longer — pass expand=<index> to get that result's full content from the cached search, 0 extra API calls). Results are cached for 24h: the same query within that window costs 0 API calls. Pass refresh=true to bypass the cache and re-call the API (e.g. results look stale). Requires an Ollama Cloud API key.\n\nCodemode: `tools.ollama_web_search(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "The search query to execute"
+        },
+        "max_results": {
+          "type": "integer",
+          "description": "Maximum number of search results to return (default: 5, max: 10)",
+          "default": 5,
+          "minimum": 1,
+          "maximum": 10
+        },
+        "refresh": {
+          "type": "boolean",
+          "description": "Bypass the cached search and re-call the API (default: false). The fresh result replaces the cache entry.",
+          "default": false
+        },
+        "expand": {
+          "type": "integer",
+          "description": "Return the full content of this result (1-based index) instead of snippets. Served from the cached search — 0 API calls if the query was searched recently.",
+          "minimum": 1
+        }
+      }
+    }
+  },
+  {
+    "name": "project_tree",
+    "description": "The whole directory tree of a project in one call, as sorted paths, one per line: every directory, ending with /, with the number of files directly in it and the first line of its .dirinfo.md after \" - \", plus the files of the listed directory itself (manifests, entry points). The first line is the listed directory. Use it in two steps: first without arguments, the full tree of the project, to see its modules and decide where to look; then, only where you need the files, path with files: true for each such directory, which lists every file of that subtree. Paths start with path as given (relative to the cwd when path is omitted), so they go straight to read. Leaves out what .ignore, .gitignore and the repository's info/exclude ignore (global git excludes are not read), plus .git and session workspaces; hidden entries are listed, symlinks are not. Unreadable directories and rule files are marked in place, never skipped silently.\n\nCodemode: `tools.project_tree(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Directory to list, relative to the cwd or absolute (default: the cwd, the whole project)"
+        },
+        "files": {
+          "type": "boolean",
+          "description": "List every file of the tree (default: directories with file counts, plus the files of the listed directory itself)"
+        }
+      }
+    }
+  },
+  {
+    "name": "read",
+    "description": "Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to 2000 lines or 50KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.\n\nCodemode: `tools.read(args)` resolves to `string | { data: string; mimeType: string; note: string; type: \"image\"; }`.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the file to read (relative or absolute)"
+        },
+        "offset": {
+          "type": "number",
+          "description": "Line number to start reading from (1-indexed)"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Maximum number of lines to read"
+        }
+      }
+    }
+  },
+  {
+    "name": "send_file",
+    "description": "Send one file to the operator's devices (download or share), with a comment that says what it is. For several files or a directory, pack them first: zip -r /tmp/<name>.zip <paths>, then send the zip. At most 40 MB.\n\nCodemode: `tools.send_file(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "path",
+        "comment"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "The file, relative to the cwd or absolute"
+        },
+        "comment": {
+          "type": "string",
+          "description": "What the file is, shown with it"
+        }
+      }
+    }
+  },
+  {
+    "name": "subagent",
+    "description": "Delegate a task to a subagent: it works in its own context on your instruction and, when given, the agreed markdown plan, and returns a handover block (its report, changed files, cost). Profiles: builder — Implements an agreed plan with Claude Code under harness's rules; explorer — Surveys a codebase and reports its structure, contracts and conventions; changes nothing.\n\nCodemode: `tools.subagent(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "agent",
+        "instruction"
+      ],
+      "properties": {
+        "agent": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "builder"
+            },
+            {
+              "type": "string",
+              "const": "explorer"
+            }
+          ],
+          "description": "The subagent profile"
+        },
+        "instruction": {
+          "type": "string",
+          "description": "What to do now: the subagent sees nothing of this conversation. With a plan: which of its parts to do, what not to touch, the checks, the report; without: a self-contained task. When continuing: what to do next and what you found since it stopped."
+        },
+        "plan": {
+          "type": "string",
+          "description": "Path of the agreed markdown plan (in the project or the session workspace, at most 256 KB): handed over whole the first time, its changes later"
+        },
+        "continue": {
+          "type": "boolean",
+          "description": "Continue this profile's last session"
+        },
+        "session": {
+          "type": "string",
+          "description": "Continue this session of the profile"
+        },
+        "background": {
+          "type": "boolean",
+          "description": "Return at once; the result arrives as a notification (the profile's default when absent)"
+        }
+      }
+    }
+  },
+  {
+    "name": "task_input",
+    "description": "Write text to a background task's stdin (add \\n for a line).\n\nCodemode: `tools.task_input(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "id",
+        "text"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "task_output",
+    "description": "A background task's recent output: from a character offset (the `next` of the previous call continues), the last lines, or the lines matching a pattern. The whole output is in the task's log file.\n\nCodemode: `tools.task_output(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "offset": {
+          "type": "number"
+        },
+        "tail_lines": {
+          "type": "number"
+        },
+        "grep": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "task_start",
+    "description": "Start a shell command as a background task: it runs in its own process group with the session's environment and secrets, its output goes to a log file you can read. Returns the task id at once (or after an optional wait).\n\nCodemode: `tools.task_start(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "command"
+      ],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "The shell command"
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Working directory, relative to the session cwd"
+        },
+        "name": {
+          "type": "string",
+          "description": "A short name shown to the operator"
+        },
+        "notify": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "wake"
+            },
+            {
+              "type": "string",
+              "const": "queue"
+            },
+            {
+              "type": "string",
+              "const": "none"
+            }
+          ],
+          "description": "What the task's exit (or a watched line) does: wake starts or joins a run, queue waits for your next run, none only updates its state"
+        },
+        "watch": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Regular expressions: a matching output line notifies once each"
+        },
+        "wait_for": {
+          "type": "object",
+          "properties": {
+            "exit": {
+              "type": "boolean"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "timeout_s": {
+              "type": "number"
+            }
+          },
+          "description": "Wait before returning: for exit, a matching line, or the timeout (whichever comes first)"
+        }
+      }
+    }
+  },
+  {
+    "name": "task_status",
+    "description": "The background tasks of this session (or one of them): state, exit code, duration, output size.\n\nCodemode: `tools.task_status(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  {
+    "name": "task_stop",
+    "description": "Stop a background task: the signal (default SIGTERM) to its process group, SIGKILL after 5 s.\n\nCodemode: `tools.task_stop(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "id"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "signal": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "SIGTERM"
+            },
+            {
+              "type": "string",
+              "const": "SIGINT"
+            },
+            {
+              "type": "string",
+              "const": "SIGKILL"
+            },
+            {
+              "type": "string",
+              "const": "SIGHUP"
+            }
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "task_wait",
+    "description": "Wait for a background task: for its exit, a matching output line, or the timeout — whichever comes first. \"/-\" from the operator interrupts the wait.\n\nCodemode: `tools.task_wait(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "id",
+        "timeout_s"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "exit": {
+          "type": "boolean",
+          "description": "Return when the task exits (default true)"
+        },
+        "pattern": {
+          "type": "string",
+          "description": "Return on the first output line matching this regular expression"
+        },
+        "timeout_s": {
+          "type": "number",
+          "description": "The longest wait, in seconds"
+        }
+      }
+    }
+  },
+  {
+    "name": "web_fetch",
+    "description": "Fetch one HTTP(S) web page as Markdown using DeepSeek's standalone Fetch API. Works with any active Pi model when a DeepSeek API key is configured.\n\nCodemode: `tools.web_fetch(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "url"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 8192,
+          "description": "HTTP(S) page URL to fetch as Markdown."
+        }
+      }
+    }
+  },
+  {
+    "name": "web_search",
+    "description": "Search the live web with DeepSeek's Search API. Returns ranked pages with links and summaries.\n\nCodemode: `tools.web_search(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "query"
+      ],
+      "properties": {
+        "query": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Search query of up to 128 Unicode characters; supports site:, -site:, exact phrases, lang:, after:, and before:."
+        },
+        "allowed_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Restrict results to these domains. Cannot combine with blocked_domains."
+        },
+        "blocked_domains": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Exclude these domains. Cannot combine with allowed_domains."
+        }
+      }
+    }
+  },
+  {
+    "name": "write",
+    "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.\n\nCodemode: `tools.write(args)` resolves to a string.",
+    "parameters": {
+      "type": "object",
+      "required": [
+        "path",
+        "content"
+      ],
+      "properties": {
+        "path": {
+          "type": "string",
+          "description": "Path to the file to write (relative or absolute)"
+        },
+        "content": {
+          "type": "string",
+          "description": "Content to write to the file"
+        }
+      }
+    }
+  }
+]

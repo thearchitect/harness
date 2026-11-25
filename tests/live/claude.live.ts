@@ -60,10 +60,10 @@ async function run(stand: Stand, follow: (model: AgentModel) => void): Promise<v
 
   // 1: harness's bash through the bridge, then a Write that the operator allows
   const target = join(stand.project, "live.txt");
-  const task =
+  const instruction =
     `First run \`echo bridged-$((6*7))\` with the mcp__harness__bash tool and remember its output. ` +
     `Then create the file ${target} with the Write tool; its whole content is that output. Then reply with the single word: done.`;
-  stand.script([{ toolCalls: [{ name: "subagent", args: { agent: "builder", task } }] }, { text: "reviewed" }]);
+  stand.script([{ toolCalls: [{ name: "subagent", args: { agent: "builder", instruction } }] }, { text: "reviewed" }]);
   await call({ type: "harness_prompt", text: "delegate the file", mode: "build" });
   await until(model, () => model.interactions.some((request) => request.kind === "gate") || subagentResults(model).length > 0, "the gate of Claude's Write", 180_000);
   const gate = model.interactions.find((request) => request.kind === "gate");
@@ -77,7 +77,7 @@ async function run(stand: Stand, follow: (model: AgentModel) => void): Promise<v
   assert.equal(stand.claudeStarts().length, 0, "the fake was not used");
 
   // 2: a long run stops when the operator interrupts the parent
-  stand.script([{ toolCalls: [{ name: "subagent", args: { agent: "builder", task: "Run `sleep 120` with your Bash tool, then reply: slept." } }] }, { text: "stopped" }]);
+  stand.script([{ toolCalls: [{ name: "subagent", args: { agent: "builder", instruction: "Run `sleep 120` with your Bash tool, then reply: slept." } }] }, { text: "stopped" }]);
   await call({ type: "harness_prompt", text: "delegate a long wait", mode: "build" });
   await until(model, () => model.state.subagents.some((subagent) => subagent.state === "running"), "the running subagent", 120_000);
   await new Promise((resolve) => setTimeout(resolve, 15_000)); // Claude starts its Bash

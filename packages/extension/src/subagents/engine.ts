@@ -43,7 +43,7 @@ export interface SubagentSession {
   /** The subagent's last answer (a background subagent that finished while nobody followed it). */
   lastText(): Promise<string>;
   onEvent(listener: (event: SubagentEvent) => void): () => void;
-  /** The brief, a follow-up, or the operator's steering: the next message of the subagent. */
+  /** The instruction (with its plan), a follow-up, or the operator's steering: the next message of the subagent. */
   send(text: string, from: "caller" | "operator"): Promise<void>;
   /** Stops the run in flight (its result comes as a `stopped` result). */
   interrupt(): Promise<void>;

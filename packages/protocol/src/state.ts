@@ -82,6 +82,8 @@ export type SubagentInfo = {
   /** The latest steps (at most SUBAGENT_STEPS_SHOWN) and the latest text: what a client shows of a `claude` subagent. */
   steps?: string[];
   text?: string;
+  /** The path of the plan the subagent works by (its `plan`). */
+  plan?: string;
 };
 
 export const SUBAGENT_STEPS_SHOWN = 50;

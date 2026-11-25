@@ -24,7 +24,8 @@
  *   detectable.
  */
 
-import { getDocsPath, type NormalizedBuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
+import { formatSkillsForPrompt, getDocsPath, type NormalizedBuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
+import type { RunMode } from "#protocol/state.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -143,22 +144,93 @@ function loadPromptConfig(): PromptConfig {
 
 const PROMPT = loadPromptConfig();
 
+/** pi's tools that Claude has natively: the bridge leaves them out, the rules name Claude's own. */
+export const CLAUDE_NATIVE_TOOLS: Record<string, string> = { read: "Read", edit: "Edit", write: "Write" };
+
+/** The name Claude calls a harness tool by: its own for the native ones, the bridge's otherwise. */
+export function claudeToolName(name: string): string {
+  return CLAUDE_NATIVE_TOOLS[name] ?? `mcp__harness__${name}`;
+}
+
 /**
- * The prompt appended to Claude Code's own (engine `claude`): harness's preamble for Claude, the
- * profile's role, the `claude` block's sections and guidelines, and the rules of the harness tools
- * Claude gets (by their MCP names).
+ * A text of harness's prompt as Claude reads it: every tool name in backticks (`edit`, `lsp_*`), and
+ * the given tools' names with an underscore written bare (send_file), become the names Claude calls
+ * them by. Bare plain words (bash, read) stay: in prose they are not names.
  */
-export function claudeSystemPrompt(workspaceRoot: string, role: string, tools: { name: string; guidelines: string[] }[]): string {
-  const fill = (text: string): string => text.replaceAll("{{WORKSPACE_TMP}}", workspaceRoot);
-  const toolRules = tools.flatMap((tool) => {
-    const rules = PROMPT.toolGuidelines[tool.name] !== undefined ? [PROMPT.toolGuidelines[tool.name] ?? ""] : tool.guidelines;
-    return rules.map((rule) => `- ${tool.name} (mcp__harness__${tool.name}): ${rule.trim()}`);
+export function forClaude(text: string, tools: readonly string[]): string {
+  const bare = tools.filter((name) => name.includes("_")).sort((a, b) => b.length - a.length);
+  const unquoted =
+    bare.length > 0 ? text.replace(new RegExp(`(?<![\\w\`.])(${bare.join("|")})(?![\\w\`])`, "g"), (name: string) => claudeToolName(name)) : text;
+  return unquoted.replace(/`([a-z][a-z0-9_]*)(\*?)`/g, (whole, name: string, star: string) => {
+    if (star === "*" && tools.some((tool) => tool.startsWith(name))) {
+      return `\`mcp__harness__${name}*\``;
+    } else if (star === "" && (tools.includes(name) || name in CLAUDE_NATIVE_TOOLS)) {
+      return `\`${claudeToolName(name)}\``;
+    } else {
+      return whole;
+    }
   });
+}
+
+/** The policy of one mode, as prompt.yaml's mode_policies gives it to harness's own models. */
+function modePolicy(mode: RunMode, placeholders: Record<string, string>): string {
+  const policy = new RegExp(`<mode-prompt mode="${mode}">([\\s\\S]*?)</mode-prompt>`).exec(PROMPT.sections.mode_policies)?.[1];
+  if (policy === undefined) {
+    throw new Error(`harness: prompt.yaml: mode_policies has no mode-prompt for ${mode}`);
+  } else {
+    const body = policy
+      .split("\n")
+      .map((line) => line.replace(/^ {8}/, ""))
+      .join("\n")
+      .trim();
+    return fillPlaceholders(body, placeholders);
+  }
+}
+
+export type ClaudePromptInput = {
+  workspaceRoot: string;
+  role: string;
+  mode: RunMode;
+  /** The calling agent's own run options: its project context, skills and other extensions' sections. */
+  run: NormalizedBuildSystemPromptOptions;
+  /** The harness tools Claude gets through the bridge, with their own guidelines. */
+  tools: { name: string; guidelines: string[] }[];
+};
+
+/**
+ * The prompt appended to Claude Code's own (engine `claude`), assembled from the same parts as
+ * harness's: the preamble for Claude, the profile's role, the calling agent's project context and
+ * skills (Claude loads none of its own: see launch.ts), the rules of the `claude` block and of every
+ * harness tool Claude gets, the current mode's policy, the `claude` block's sections and the MCP
+ * servers it reaches through codemode. Tool names are the ones Claude calls.
+ */
+export function claudeSystemPrompt(input: ClaudePromptInput): string {
+  const toolNames = input.tools.map((tool) => tool.name);
+  const placeholders = promptPlaceholders(input.workspaceRoot);
+  const claudeText = (text: string): string => forClaude(fillPlaceholders(text, placeholders), toolNames);
+  const block = (name: string, text: string): string => `<${name}>\n${text}\n</${name}>`;
+
+  const toolRules = input.tools.flatMap((tool) => {
+    const replacement = PROMPT.toolGuidelines[tool.name];
+    return replacement !== undefined ? [replacement] : tool.guidelines;
+  });
+  const rules = [...new Set([...PROMPT.claude.guidelines.map((name) => PROMPT.namedGuidelines[name] ?? ""), ...toolRules].map((rule) => rule.trim()))].filter((rule) => rule !== "");
+  const skills = input.run.skills.filter((skill) => !skill.name.startsWith("subagent-"));
+  const mcpServers = input.run.sections.mcp_servers;
+
   return [
-    fill(PROMPT.claude.preamble),
-    `<role>\n${role}\n</role>`,
-    ...PROMPT.claude.sections.map((name) => `<${name}>\n${fill(PROMPT.sections[name])}\n</${name}>`),
-    `<rules>\n${[...PROMPT.claude.guidelines.map((name) => `- ${(PROMPT.namedGuidelines[name] ?? "").trim()}`), ...toolRules].join("\n")}\n</rules>`,
+    claudeText(PROMPT.claude.preamble),
+    block("role", input.role),
+    ...(input.run.contextFiles.length > 0
+      ? [block("project_context", ["Project-specific instructions and guidelines:", ...input.run.contextFiles.map(({ path, content }) => `<project_instructions path="${path}">\n${content}\n</project_instructions>`)].join("\n\n"))]
+      : []),
+    ...(skills.length > 0 ? [block("skills", formatSkillsForPrompt(skills, "indirect").trim())] : []),
+    block("rules", rules.map((rule) => `- ${claudeText(rule)}`).join("\n")),
+    block("mode_policy", `harness runs you in ${input.mode.toUpperCase()} mode for this whole run; the caller's instruction works within it, and harness's checks of your changes follow it.\n\n${claudeText(modePolicy(input.mode, placeholders))}`),
+    ...PROMPT.claude.sections.map((name) => block(name, claudeText(PROMPT.sections[name]))),
+    ...(mcpServers !== undefined && mcpServers.trim() !== ""
+      ? [block("mcp_servers", `${mcpServers.trim()}\n\nThese are harness's MCP servers; whatever the list says about codemode, their tools reach you directly through harness's bridge as \`mcp__harness__mcp__<server>__<tool>\`.`)]
+      : []),
   ].join("\n\n");
 }
 
@@ -209,6 +281,20 @@ function renderRules(
   return [...rules].map((rule) => `- ${rule}`).join("\n");
 }
 
+function promptPlaceholders(workspaceRoot: string): Record<string, string> {
+  const paths = documentationPaths();
+  return {
+    "{{WORKSPACE_TMP}}": workspaceRoot,
+    "{{HARNESS_DOCS}}": paths.docs,
+    "{{HARNESS_SRC}}": paths.src,
+    "{{PI_DOCS}}": paths.piDocs,
+  };
+}
+
+function fillPlaceholders(text: string, placeholders: Record<string, string>): string {
+  return Object.entries(placeholders).reduce((filled, [placeholder, value]) => filled.replaceAll(placeholder, value), text);
+}
+
 /**
  * Builds the whole system prompt into pi's options for this run: the preamble
  * (with a foreign customPrompt - SYSTEM.md or an earlier handler - appended
@@ -221,29 +307,27 @@ export function assembleSystemPrompt(
   const foreignCustomPrompt = options.customPrompt?.trim() ?? "";
   // pi lists and rules only the declared tools; hidden ones reach the model through codemode.
   const declaredTools = run.activeTools.filter((name) => !options.hiddenTools.includes(name));
-  const paths = documentationPaths();
-  const placeholders: Record<string, string> = {
-    "{{WORKSPACE_TMP}}": run.workspaceRoot,
-    "{{HARNESS_DOCS}}": paths.docs,
-    "{{HARNESS_SRC}}": paths.src,
-    "{{PI_DOCS}}": paths.piDocs,
-  };
+  const placeholders = promptPlaceholders(run.workspaceRoot);
 
   if (foreignCustomPrompt !== "") {
     options.customPrompt = `${PROMPT.preamble}\n\n${foreignCustomPrompt}`;
   } else {
     options.customPrompt = PROMPT.preamble;
   }
-  options.sections.tools = renderTools(declaredTools, options.toolSnippets);
-  options.sections.rules = renderRules(declaredTools, options.toolGuidelines, [
-    ...PROMPT.guidelines,
-    ...options.promptGuidelines,
-  ]);
-  for (const name of SECTION_NAMES) {
-    options.sections[name] = Object.entries(placeholders).reduce(
-      (text, [placeholder, value]) => text.replaceAll(placeholder, value),
-      PROMPT.sections[name],
-    );
+
+  // pi renders sections in key order: harness's own first, then other extensions' in the order they
+  // came, whichever extension loaded first.
+  const own: Record<string, string> = {
+    tools: renderTools(declaredTools, options.toolSnippets),
+    rules: renderRules(declaredTools, options.toolGuidelines, [...PROMPT.guidelines, ...options.promptGuidelines]),
+    ...Object.fromEntries(SECTION_NAMES.map((name) => [name, fillPlaceholders(PROMPT.sections[name], placeholders)])),
+  };
+  const foreign = Object.entries(options.sections).filter(([name]) => !(name in own));
+  for (const name of Object.keys(options.sections)) {
+    delete options.sections[name];
+  }
+  for (const [name, text] of [...Object.entries(own), ...foreign]) {
+    options.sections[name] = text;
   }
   return { foreignCustomPrompt: foreignCustomPrompt !== "" };
 }

@@ -9,7 +9,7 @@
  * HarnessState there. How things look is presentation/'s.
  */
 
-import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, ExtensionFactory, InputEventResult, SessionEntry } from "@earendil-works/pi-coding-agent";
+import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, ExtensionFactory, InputEventResult, NormalizedBuildSystemPromptOptions, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { MAX_SUBAGENT_DEPTH, type HarnessState, type RunMode, type SubagentLaunch, type Variant } from "#protocol/state.ts";
@@ -77,10 +77,12 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
   let modelRefs: ModelRefs | undefined;
   let subagents: Subagents | undefined;
   let registry: Registry = { profiles: new Map(), problems: [] };
+  /** The system prompt options of the current run, as every extension's before_agent_start leaves them. */
+  let promptRun: NormalizedBuildSystemPromptOptions | undefined;
   const launch = host.subagent;
   const engines = {
     harness: harnessEngine(host.children),
-    claude: claudeEngine({ interactions: host.interactions, dataDir: host.dataDir, mirror: (task, source) => supervisor.mirror(task, source) }),
+    claude: claudeEngine({ interactions: host.interactions, dataDir: host.dataDir, mirror: (task, source) => supervisor.mirror(task, source), promptRun: () => promptRun }),
   };
 
   function rememberModel(ref: string): void {
@@ -337,6 +339,7 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
         // a session's own agent declares every tool
       }
       const { foreignCustomPrompt } = assembleSystemPrompt(event.systemPromptOptions, { activeTools: pi.getActiveTools(), workspaceRoot });
+      promptRun = event.systemPromptOptions;
       if (launch !== undefined) {
         event.systemPromptOptions.sections.subagent_role = roleSection(launch);
       } else {

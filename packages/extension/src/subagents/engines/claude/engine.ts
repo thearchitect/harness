@@ -2,10 +2,10 @@
 // under harness's rules — its file changes pass harness's authorization (the PreToolUse hook through
 // the bridge), harness's tools reach it over MCP (run in the calling tool's context), its limit
 // waits become a choice for the operator, its background commands are mirrored into the session's
-// tasks. Messages (the brief, follow-ups, the operator's steering) go to its stdin; it stops with
+// tasks. Messages (the instruction with its plan, follow-ups, the operator's steering) go to its stdin; it stops with
 // stop_task and interrupt control requests, or SIGTERM to its process group.
 
-import type { ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionContext, ExtensionToolContext, NormalizedBuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { join } from "node:path";
@@ -13,7 +13,7 @@ import type { ClaudeInput } from "#protocol/claude.ts";
 import { LineDecoder } from "#protocol/framing.ts";
 import type { TaskInfo } from "#protocol/state.ts";
 import { createAuthorizer, scratchWorkspaceRoot } from "../../../core/authorize.ts";
-import { claudeSystemPrompt, HARNESS_SRC } from "../../../core/prompt.ts";
+import { CLAUDE_NATIVE_TOOLS, claudeSystemPrompt, HARNESS_SRC } from "../../../core/prompt.ts";
 import type { Interactions } from "../../../host.ts";
 import type { MirroredSource } from "../../../supervisor/supervisor.ts";
 import type { SubagentEngine, SubagentEvent, SubagentSession, SubagentStart } from "../../engine.ts";
@@ -35,6 +35,8 @@ export type ClaudeEngineDeps = {
   command?: string;
   /** How Claude runs the bridge (default: this node on cli/src/claude-bridge.ts). */
   bridge?: string[];
+  /** The calling agent's system prompt options of its current run (its project context, skills, tool guidelines, sections). */
+  promptRun: () => NormalizedBuildSystemPromptOptions | undefined;
 };
 
 function isToolContext(ctx: ExtensionContext): ctx is ExtensionToolContext {
@@ -295,13 +297,16 @@ export function claudeEngine(deps: ClaudeEngineDeps): SubagentEngine {
         throw new Error("the claude engine runs inside a tool call");
       } else {
         const ready = await preflight(command);
+        const run = deps.promptRun();
         if (!ready.ok) {
           throw new Error(`${start.profile.name} is unavailable: ${ready.message}`);
+        } else if (run === undefined) {
+          throw new Error("the claude engine starts within a run of the calling agent (its prompt options are unknown)");
         } else {
           const authorize = createAuthorizer({ interactions: deps.interactions, mode: () => start.mode, madness: () => start.madness, steer: () => undefined, by: start.profile.name });
           const launch = { tools: start.profile.tools, subagents: [], depth: 0 };
-          // harness's tools for Claude: the profile's, never ctx_* or subagent
-          const allowed = ctx.tools.filter((tool) => tool.name !== "subagent" && toolAllowed(tool.name, launch, 0));
+          // harness's tools for Claude: the profile's, never ctx_*, subagent or the ones Claude has natively
+          const allowed = ctx.tools.filter((tool) => tool.name !== "subagent" && !(tool.name in CLAUDE_NATIVE_TOOLS) && toolAllowed(tool.name, launch, 0));
           let session: ClaudeSubagent | undefined;
           const bridge = await Bridge.open(deps.dataDir, {
             decide: (input) =>
@@ -329,14 +334,14 @@ export function claudeEngine(deps: ClaudeEngineDeps): SubagentEngine {
           });
           const sessionId = start.resume?.session ?? randomUUID();
           const workspace = await scratchWorkspaceRoot(ctx);
-          const toolRules = allowed.map((tool) => ({ name: tool.name, guidelines: [] as string[] }));
+          const tools = allowed.map((tool) => ({ name: tool.name, guidelines: run.toolGuidelines[tool.name] ?? [] }));
           const args = claudeArgs({
             sessionId,
             resume: start.resume !== undefined,
             model: start.profile.model,
             bridge: deps.bridge ?? [process.execPath, join(HARNESS_SRC, "packages", "cli", "src", "claude-bridge.ts")],
             workspace,
-            systemPrompt: claudeSystemPrompt(workspace, start.profile.role, toolRules),
+            systemPrompt: claudeSystemPrompt({ workspaceRoot: workspace, role: start.profile.role, mode: start.mode, run, tools }),
           });
           const child = spawn(command, args, { cwd: start.cwd, env: claudeEnv(process.env, { socket: bridge.socket, token: bridge.token }), detached: true, stdio: ["pipe", "pipe", "pipe"] });
           session = new ClaudeSubagent(child, bridge, sessionId, deps, start);

@@ -17,8 +17,9 @@ import {
   type Theme,
   type ToolExecutionOptions,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Spacer, Text, type Component, type MarkdownTheme, type TUI } from "@earendil-works/pi-tui";
+import { Container, Markdown, Spacer, Text, type Component, type MarkdownTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AgentModel, Message, TranscriptItem } from "#client/model/agent-model.ts";
+import { splitPlanMessage, type Plan } from "#protocol/plan.ts";
 import type { Renderers } from "./presentation.ts";
 
 type ToolCall = { type: "toolCall"; id: string; name: string; arguments: unknown };
@@ -72,6 +73,20 @@ export class TranscriptView extends Container {
   /** The trailing arguments of pi's message components: markdown theme, output pad, transformers. */
   private md(): [MarkdownTheme, number, readonly MarkdownTransformer[]] {
     return [this.options.markdownTheme(), this.options.outputPad(), this.options.transformers()];
+  }
+
+  /** A subagent's plan under the instruction it came with: its path, and the plan itself expanded. */
+  private planBlock(plan: Plan): Component {
+    const theme = this.theme();
+    const container = new Container();
+    container.addChild(new Spacer(1));
+    if (this.expanded) {
+      container.addChild(new Text(theme.fg("muted", `plan ${plan.path}:`), 1, 0));
+      container.addChild(new Markdown(plan.text, 1, 0, this.options.markdownTheme()));
+    } else {
+      container.addChild(new Text(`${theme.fg("muted", "plan ")}${theme.fg("accent", plan.path)}${theme.fg("dim", ` · ${plan.text.split("\n").length} lines, expand to read`)}`, 1, 0));
+    }
+    return container;
   }
 
   private assistant(message: Message): AssistantMessageComponent {
@@ -271,7 +286,13 @@ export class TranscriptView extends Container {
               // the skill alone
             }
           } else {
-            this.addChild(new UserMessageComponent(text, ...this.md()));
+            const { instruction, plan } = splitPlanMessage(text);
+            this.addChild(new UserMessageComponent(instruction, ...this.md()));
+            if (plan !== undefined) {
+              this.addChild(this.planBlock(plan));
+            } else {
+              // a message without a plan
+            }
           }
         } else {
           // an image-only message

@@ -1,14 +1,17 @@
-// The `subagent` tool (plan 12.2): runs a profile's subagent on a self-contained brief and returns
-// its handover block; or, in the background, returns at once and reports by the profile's notify.
+// The `subagent` tool (plan 12.2): runs a profile's subagent on an instruction (with the agreed plan
+// handed over whole, plan.ts) and returns its handover block; or, in the background, returns at once and reports by the profile's notify.
 // Only the model calls it, and only on the operator's request (prompt rule S5). Every subagent is a
 // row of the session's HarnessState and a `harness-subagent` entry; the operator's steering of a
 // live subagent (harness_subagent_send) reaches it here.
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import type { Plan } from "#protocol/plan.ts";
 import { SUBAGENT_STEPS_SHOWN, type RunMode, type SubagentInfo, type SubagentState } from "#protocol/state.ts";
 import { interruptedError, type Interrupts } from "../core/interrupts.ts";
+import { subagentRenderers } from "../presentation/subagent.ts";
 import type { SubagentEngine, SubagentEvent, SubagentSession } from "./engine.ts";
+import { planMessage, readPlan } from "./plan.ts";
 import type { Registry, SubagentProfile } from "./registry.ts";
 
 export const SUBAGENT_ENTRY = "harness-subagent";
@@ -16,6 +19,9 @@ export const SUBAGENT_MESSAGE_TYPE = "harness-subagent";
 
 /** What a `harness-subagent` entry records: every change of a subagent's row. */
 export type SubagentEntryData = SubagentInfo & { sessionFile?: string; background: boolean; toolCallId: string };
+
+/** The details of a `subagent` call's result: the handover, and the plan the subagent got with this call. */
+export type SubagentDetails = { handover: Handover; state: SubagentState; background?: boolean; plan?: Plan };
 
 /** What a run of a subagent gathered: the handover block is built from it. */
 export type Handover = {
@@ -34,6 +40,8 @@ export type Handover = {
   overage: boolean;
   text: string;
   error?: string;
+  /** The path of the plan the subagent works by. */
+  plan?: string;
 };
 
 export type SubagentToolDeps = {
@@ -53,6 +61,7 @@ export function handoverText(handover: Handover): string {
   const seconds = Math.round(handover.durationMs / 1000);
   return [
     `Subagent ${handover.profile} (${handover.engine}) — session ${handover.session}${handover.model !== undefined ? `, model ${handover.model}` : ""}`,
+    ...(handover.plan !== undefined ? [`Plan: ${handover.plan}`] : []),
     `State: ${handover.outcome}; ${handover.turns} turns, ${handover.steps.length} steps, ${seconds}s, $${handover.costUsd.toFixed(4)}${handover.overage ? ", usage credits used" : ""}`,
     ...(handover.files.length > 0 ? [`Files changed: ${[...new Set(handover.files)].join(", ")}`] : []),
     ...handover.operator.map((text) => `Operator → ${handover.profile}: ${text}`),
@@ -76,6 +85,8 @@ class Run {
   private readonly changeListeners = new Set<() => void>();
   waiting = false;
   ended = false;
+  /** The plan the subagent last got. */
+  plan: Plan | undefined;
 
   constructor(session: SubagentSession, profile: SubagentProfile, background: boolean, toolCallId: string) {
     this.session = session;
@@ -207,6 +218,7 @@ export class Subagents {
       costUsd: run.handover.costUsd,
       steps: run.handover.steps.slice(-SUBAGENT_STEPS_SHOWN),
       ...(run.handover.text !== "" ? { text: run.handover.text } : {}),
+      ...(run.plan !== undefined ? { plan: run.plan.path } : {}),
     };
   }
 
@@ -227,6 +239,16 @@ export class Subagents {
       .map((entry) => (entry as { data?: SubagentEntryData }).data)
       .filter((data): data is SubagentEntryData => data !== undefined && data.profile === profile && (session === undefined || data.session === session));
     return entries.at(-1);
+  }
+
+  /** The plan a profile's session last got from a call of this session (to hand over only its changes). */
+  private recordedPlan(ctx: ExtensionContext, session: string): Plan | undefined {
+    const plans = ctx.sessionManager
+      .getBranch()
+      .map((entry) => (entry.type === "message" && entry.message.role === "toolResult" && entry.message.toolName === "subagent" ? (entry.message.details as SubagentDetails | undefined) : undefined))
+      .filter((details): details is SubagentDetails & { plan: Plan } => details?.plan !== undefined && details.handover.session === session)
+      .map((details) => details.plan);
+    return plans.at(-1);
   }
 
   /** The operator's message to a live subagent (C12): taken at its next turn boundary. */
@@ -258,19 +280,26 @@ export class Subagents {
     this.pi.registerTool({
       name: "subagent",
       label: "Subagent",
-      description: `Delegate a task to a subagent: it works in its own context on your self-contained brief and returns a handover block (its report, changed files, cost). Profiles: ${profiles.map((profile) => `${profile.name} — ${profile.description}`).join("; ")}.`,
+      description: `Delegate a task to a subagent: it works in its own context on your instruction and, when given, the agreed markdown plan, and returns a handover block (its report, changed files, cost). Profiles: ${profiles.map((profile) => `${profile.name} — ${profile.description}`).join("; ")}.`,
       promptSnippet: "Delegate a task to a subagent (only on the operator's explicit request)",
       parameters: Type.Object({
         agent: Type.Union(
           names.map((name) => Type.Literal(name)),
           { description: "The subagent profile" },
         ),
-        task: Type.String({ description: "A self-contained brief: the subagent sees nothing of this conversation. When continuing: what to do next and what changed since it stopped." }),
+        instruction: Type.String({
+          description:
+            "What to do now: the subagent sees nothing of this conversation. With a plan: which of its parts to do, what not to touch, the checks, the report; without: a self-contained task. When continuing: what to do next and what you found since it stopped.",
+        }),
+        plan: Type.Optional(
+          Type.String({ description: "Path of the agreed markdown plan (in the project or the session workspace, at most 256 KB): handed over whole the first time, its changes later" }),
+        ),
         continue: Type.Optional(Type.Boolean({ description: "Continue this profile's last session" })),
         session: Type.Optional(Type.String({ description: "Continue this session of the profile" })),
         background: Type.Optional(Type.Boolean({ description: "Return at once; the result arrives as a notification (the profile's default when absent)" })),
       }),
       executionMode: "sequential",
+      ...subagentRenderers,
       execute: async (toolCallId, params, signal, onUpdate, ctx) => {
         const profile = this.deps.registry().profiles.get(params.agent);
         if (profile === undefined) {
@@ -282,15 +311,26 @@ export class Subagents {
           if ((params.continue === true || params.session !== undefined) && recorded === undefined) {
             throw new Error(params.session !== undefined ? `no session ${params.session} of ${profile.name} here` : `${profile.name} has no session here to continue`);
           } else {
+            const plan = params.plan !== undefined ? await readPlan(ctx, params.plan) : undefined;
             const background = params.background ?? profile.background;
             const live = recorded !== undefined ? this.runs.get(recorded.session) : undefined;
             const run = live !== undefined && !live.ended ? live : await this.start(profile, ctx, toolCallId, background, recorded);
-            const update = (): void => onUpdate?.({ content: [{ type: "text", text: `${profile.name}: ${run.handover.steps.length} steps` }], details: { handover: { ...run.handover }, state: run.state } });
-            await run.session.send(params.task, "caller");
+            const previous = run.plan ?? this.recordedPlan(ctx, run.session.info.session);
+            const planned: Pick<SubagentDetails, "plan"> = plan !== undefined ? { plan } : {};
+            const update = (): void =>
+              onUpdate?.({ content: [{ type: "text", text: `${profile.name}: ${run.handover.steps.length} steps` }], details: { handover: { ...run.handover }, state: run.state, ...planned } satisfies SubagentDetails });
+            run.plan = plan ?? previous;
+            if (run.plan !== undefined) {
+              run.handover.plan = run.plan.path;
+            } else {
+              // no plan: the instruction is the whole task
+            }
+            this.publish(run);
+            await run.session.send(planMessage(params.instruction, plan, previous), "caller");
             if (background) {
               return {
                 content: [{ type: "text", text: `Started subagent ${profile.name} in the background, session ${run.session.info.session}. Its result arrives as a notification.` }],
-                details: { handover: run.handover, state: run.state, background: true },
+                details: { handover: run.handover, state: run.state, background: true, ...planned } satisfies SubagentDetails,
               };
             } else {
               const interrupt = this.deps.interrupts.register(toolCallId);
@@ -308,7 +348,7 @@ export class Subagents {
                 if (reason !== undefined) {
                   throw interruptedError(new Error(`${text}\n\nSubagent stopped.`), reason);
                 } else {
-                  return { content: [{ type: "text", text }], details: { handover, state: run.state } };
+                  return { content: [{ type: "text", text }], details: { handover, state: run.state, ...planned } satisfies SubagentDetails };
                 }
               } finally {
                 offUpdate();

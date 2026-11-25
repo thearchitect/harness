@@ -2,7 +2,7 @@
 // the PreToolUse hook and the MCP server from its flags, control requests (interrupt, stop_task).
 // Its behavior is a script (HARNESS_FAKE_CLAUDE_SCRIPT: a JSON array of runs, one per message it
 // receives; each run an array of steps). Every start is logged to HARNESS_FAKE_CLAUDE_LOG (argv and
-// environment) for invariants.
+// environment) for invariants, every message it receives to `${log}.inputs`.
 //
 // Steps: { text } · { edit: { file_path, old_string?, new_string?, content? } } (asks the hook,
 // writes when allowed) · { mcp: { name, arguments } } (calls harness's MCP tool) · { limit: true }
@@ -175,15 +175,31 @@ async function play(steps: Step[]): Promise<void> {
   );
 }
 
+/** The text of a user message Claude received (a string, or text blocks). */
+function inputText(content: unknown): string {
+  if (typeof content === "string") {
+    return content;
+  } else if (Array.isArray(content)) {
+    return (content as { type?: string; text?: string }[]).map((block) => (block.type === "text" ? (block.text ?? "") : "")).join("");
+  } else {
+    return "";
+  }
+}
+
 let buffer = "";
 process.stdin.on("data", (chunk: Buffer) => {
   buffer += String(chunk);
   let newline = buffer.indexOf("\n");
   while (newline >= 0) {
-    const message = JSON.parse(buffer.slice(0, newline)) as { type: string; request?: { subtype: string; task_id?: string }; request_id?: string };
+    const message = JSON.parse(buffer.slice(0, newline)) as { type: string; message?: { content?: unknown }; request?: { subtype: string; task_id?: string }; request_id?: string };
     buffer = buffer.slice(newline + 1);
     newline = buffer.indexOf("\n");
     if (message.type === "user") {
+      if (log !== undefined) {
+        appendFileSync(`${log}.inputs`, `${JSON.stringify(inputText(message.message?.content))}\n`);
+      } else {
+        // not logged
+      }
       if (!initialized) {
         initialized = true;
         out({ type: "system", subtype: "init", session_id: session, model: "claude-opus-5-5", apiKeySource: state.keySource ?? "none", capabilities: ["interrupt_receipt_v1"], claude_code_version: "2.1.303" });

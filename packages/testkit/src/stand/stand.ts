@@ -18,6 +18,7 @@ import type { Server } from "node:net";
 const SCENARIO_MODEL_PATH = fileURLToPath(new URL("./scenario-model.ts", import.meta.url));
 const PROBE_EXTENSION_PATH = fileURLToPath(new URL("./probe-extension.ts", import.meta.url));
 const FAKE_CLAUDE_PATH = fileURLToPath(new URL("../fakes/claude.ts", import.meta.url));
+const MCP_PROBE_PATH = fileURLToPath(new URL("../fakes/mcp-server.ts", import.meta.url));
 
 export type Stand = {
   root: string;
@@ -34,6 +35,8 @@ export type Stand = {
   claudeStarts(): { argv: string[]; env: Record<string, string> }[];
   /** The MCP tools harness offered the fake Claude Code (its last tools/list). */
   claudeTools(): string[];
+  /** The messages the fake Claude Code received, in order (their text). */
+  claudeInputs(): string[];
   /** The requests the model received, in order: { agent: "main" | <profile>, context }. */
   requests(): unknown[];
   connect(via?: "inproc" | "unix"): Promise<NodeConnection>;
@@ -55,6 +58,8 @@ export type StandOptions = {
   server?: boolean;
   /** A real Claude Code instead of the fake (the live check, tests/live/): its path. */
   claudeCommand?: string;
+  /** The agents' mcp.json configures the test MCP server `probe` (fakes/mcp-server.ts). */
+  mcpProbe?: boolean;
 };
 
 export async function createStand(options: StandOptions = {}): Promise<Stand> {
@@ -67,9 +72,16 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
   mkdirSync(dataDir, { recursive: true });
   mkdirSync(project, { recursive: true });
   mkdirSync(agentTmp, { recursive: true });
+  const agentHome = join(root, "home");
+  mkdirSync(agentHome, { recursive: true });
   writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ defaultProvider: "scenario", defaultModel: "scripted" }));
   // a configured key: pi checks the provider's auth before every prompt
   writeFileSync(join(dataDir, "auth.json"), JSON.stringify({ scenario: { type: "api_key", key: "scripted" } }), { mode: 0o600 });
+  if (options.mcpProbe === true) {
+    writeFileSync(join(dataDir, "mcp.json"), JSON.stringify({ mcpServers: { probe: { description: "The test MCP server", command: process.execPath, args: [MCP_PROBE_PATH] } } }));
+  } else {
+    // no MCP servers of the user
+  }
   const scenarioPath = join(root, "scenario.json");
   const requestsPath = join(root, "requests.jsonl");
   const modelsPath = join(root, "models.json");
@@ -88,6 +100,17 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     agentCommand: options.bundle !== undefined ? [process.execPath, join(options.bundle, "share/harness/src/packages/agent/src/main.ts")] : undefined,
     agentEnv: {
       ...(options.server === true ? { HARNESS_SERVER: "1" } : {}),
+      // the user's own configuration (extensions' settings in ~/.config, ~/.claude) stays out of a stand;
+      // a real Claude Code needs its login in the real home
+      ...(options.claudeCommand === undefined
+        ? {
+            HOME: agentHome,
+            XDG_CONFIG_HOME: join(agentHome, ".config"),
+            XDG_DATA_HOME: join(agentHome, ".local/share"),
+            XDG_STATE_HOME: join(agentHome, ".local/state"),
+            XDG_CACHE_HOME: join(agentHome, ".cache"),
+          }
+        : {}),
       TMPDIR: agentTmp,
       // agents of a stand run the checkout without the bundle's MCP servers and packages, or a bundle with all of them
       HARNESS_MANIFEST: options.bundle !== undefined ? join(options.bundle, "share/harness/manifest.json") : "",
@@ -134,6 +157,14 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     },
     claudeTools() {
       return existsSync(`${claudeLog}.tools`) ? (JSON.parse(readFileSync(`${claudeLog}.tools`, "utf8")) as string[]) : [];
+    },
+    claudeInputs() {
+      return existsSync(`${claudeLog}.inputs`)
+        ? readFileSync(`${claudeLog}.inputs`, "utf8")
+            .split("\n")
+            .filter((line) => line !== "")
+            .map((line) => JSON.parse(line) as string)
+        : [];
     },
     script(turns) {
       // the model plays turns in order across scripts: each script adds the next ones

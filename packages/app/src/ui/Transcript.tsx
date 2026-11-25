@@ -8,6 +8,7 @@ import * as Clipboard from "expo-clipboard";
 import { FlatList, Image, Modal, Pressable, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { AgentModel, Message, ToolRun, TranscriptItem } from "#client/model/agent-model.ts";
 import { MODE_TEXT, isRunMode } from "#protocol/modes.ts";
+import { splitPlanMessage, type Plan } from "#protocol/plan.ts";
 import { useTheme, type Token } from "../theme/theme.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Button, T } from "./primitives.tsx";
@@ -23,6 +24,11 @@ function textOf(content: unknown): string {
     .filter((block) => block.type === "text")
     .map((block) => block.text ?? "")
     .join("\n");
+}
+
+/** The plan a `subagent` call handed over (its result's details). */
+function planOf(result: Message | undefined): Plan | undefined {
+  return (result as { details?: { plan?: Plan } } | undefined)?.details?.plan;
 }
 
 /** The most telling argument of a tool call, for its row's title. */
@@ -149,6 +155,7 @@ function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; re
           {preview}
         </T>
       ) : null}
+      {shown && planOf(result) !== undefined ? <PlanView plan={planOf(result) as Plan} /> : null}
       {shown && text !== "" ? (
         <View style={{ flexDirection: "row" }}>
           <Button label="Copy the output" onPress={() => void Clipboard.setStringAsync(text)} />
@@ -269,14 +276,17 @@ function ItemView({ item }: { item: TranscriptItem }) {
     case "message": {
       const message = item.message;
       switch (message.role) {
-        case "user":
+        case "user": {
+          const { instruction, plan } = splitPlanMessage(textOf(message.content));
           return (
             <View style={{ backgroundColor: theme.colors.userMessageBg, paddingHorizontal: 8, paddingVertical: 4 }}>
               <T zone="chat" color="userMessageText" selectable>
-                {textOf(message.content)}
+                {instruction}
               </T>
+              {plan !== undefined ? <PlanView plan={plan} /> : null}
             </View>
           );
+        }
         case "assistant":
           return <Assistant message={message} />;
         case "bashExecution": {
@@ -316,6 +326,19 @@ function ItemView({ item }: { item: TranscriptItem }) {
     default:
       throw new Error(`unknown transcript item: ${JSON.stringify(item satisfies never)}`);
   }
+}
+
+/** A subagent's plan: its path, the plan itself when opened. */
+function PlanView({ plan }: { plan: Plan }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <View>
+      <Pressable accessibilityRole="button" accessibilityLabel={`plan ${plan.path}`} accessibilityState={{ expanded: open }} onPress={() => setOpen(!open)}>
+        <T zone="chat" color="muted">{`plan ${plan.path}${open ? "" : ` · ${plan.text.split("\n").length} lines`}`}</T>
+      </Pressable>
+      {open ? <Markdown source={plan.text} /> : null}
+    </View>
+  );
 }
 
 function Summary({ title, text }: { title: string; text: string }) {

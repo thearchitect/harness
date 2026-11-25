@@ -8,8 +8,25 @@ import { promisify } from "node:util";
 
 const run = promisify(execFile);
 
-/** The oldest Claude Code with what harness uses: --permission-prompts (2.1.259), background task messages (2.1.203). */
-export const MIN_CLAUDE_VERSION = "2.1.259";
+/**
+ * The oldest Claude Code with what harness uses: --permission-prompts (2.1.259), background task
+ * messages (2.1.203), the instruction files setting under cc-plugin-agents-md@builtin (2.1.285).
+ */
+export const MIN_CLAUDE_VERSION = "2.1.285";
+
+/**
+ * Claude's settings for a harness run: the PreToolUse hook through the bridge; no instruction files
+ * of its own (`managed-only`: no CLAUDE.md, AGENTS.md or rules of the user and project; the prompt
+ * carries the project context harness loaded) and no auto memory of its own.
+ * https://code.claude.com/docs/en/memory
+ */
+export function claudeSettings(hookCommand: string): object {
+  return {
+    hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: hookCommand, timeout: 2_592_000 }] }] },
+    pluginConfigs: { "cc-plugin-agents-md@builtin": { options: { instructionFiles: "managed-only" } } },
+    autoMemoryEnabled: false,
+  };
+}
 
 /** Variables that would bill an API account or reroute Claude: never passed to it. */
 export const BILLING_VARIABLES = [
@@ -66,7 +83,7 @@ function shellQuote(argument: string): string {
 
 export function claudeArgs(options: LaunchOptions): string[] {
   const bridge = options.bridge.map(shellQuote).join(" ");
-  const settings = { hooks: { PreToolUse: [{ matcher: "*", hooks: [{ type: "command", command: `${bridge} hook`, timeout: 2_592_000 }] }] } };
+  const settings = claudeSettings(`${bridge} hook`);
   const mcp = { mcpServers: { harness: { type: "stdio", command: options.bridge[0], args: [...options.bridge.slice(1), "mcp"] } } };
   return [
     "-p",

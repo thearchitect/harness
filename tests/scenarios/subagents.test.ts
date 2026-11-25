@@ -70,7 +70,7 @@ export const scenario = defineScenario({
         const main = await session(raw, stand.project);
         memo.main = main;
         stand.script([
-          { toolCalls: [{ name: "subagent", args: { agent: "probe", task: "Report the weather." } }] },
+          { toolCalls: [{ name: "subagent", args: { agent: "probe", instruction: "Report the weather." } }] },
           { agent: "probe", text: "probe report: sunny" },
           { text: "got the report" },
         ]);
@@ -89,7 +89,7 @@ export const scenario = defineScenario({
         const main = memo.main as { id: string; model: AgentModel };
         const target = join(stand.project, "planned.txt");
         stand.script([
-          { toolCalls: [{ name: "subagent", args: { agent: "planner", task: "Write planned.txt." } }] },
+          { toolCalls: [{ name: "subagent", args: { agent: "planner", instruction: "Write planned.txt." } }] },
           { agent: "planner", toolCalls: [{ name: "write", args: { path: target, content: "x" } }] },
           { agent: "planner", text: "PLAN refused the write" },
           { text: "noted" },
@@ -107,7 +107,7 @@ export const scenario = defineScenario({
         const main = memo.main as { id: string; model: AgentModel };
         const target = join(stand.project, "built.txt");
         stand.script([
-          { toolCalls: [{ name: "subagent", args: { agent: "probe", task: "Write built.txt." } }] },
+          { toolCalls: [{ name: "subagent", args: { agent: "probe", instruction: "Write built.txt." } }] },
           { agent: "probe", toolCalls: [{ name: "write", args: { path: target, content: "built" } }] },
           { agent: "probe", text: "written" },
           { text: "done" },
@@ -131,7 +131,7 @@ export const scenario = defineScenario({
       async run({ stand, clients: { raw }, memo }) {
         const main = memo.main as { id: string; model: AgentModel };
         stand.script([
-          { toolCalls: [{ name: "subagent", args: { agent: "probe", task: "Think long." } }] },
+          { toolCalls: [{ name: "subagent", args: { agent: "probe", instruction: "Think long." } }] },
           { agent: "probe", toolCalls: [{ name: "bash", args: { command: "echo looking" } }], delayMs: 3000 },
           { agent: "probe", text: "steered answer" },
           { text: "ok" },
@@ -153,7 +153,7 @@ export const scenario = defineScenario({
       async run({ stand, clients: { raw }, memo }) {
         const main = memo.main as { id: string; model: AgentModel; info: AgentInfo };
         stand.script([
-          { toolCalls: [{ name: "subagent", args: { agent: "probe", task: "Report later.", background: true } }] },
+          { toolCalls: [{ name: "subagent", args: { agent: "probe", instruction: "Report later.", background: true } }] },
           { text: "started it" },
           { agent: "probe", text: "background report", delayMs: 3000 },
           { text: "read the report" },

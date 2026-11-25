@@ -10,9 +10,9 @@ import { toolAllowed } from "./registry.ts";
 export function roleSection(launch: SubagentLaunch): string {
   const calls =
     launch.subagents.length > 0 && launch.depth < MAX_SUBAGENT_DEPTH
-      ? "\n\nCall a subagent only when the brief explicitly says so."
+      ? "\n\nCall a subagent only when the instruction explicitly says so."
       : "";
-  return `You run as the subagent "${launch.profile}": another model gave you a brief and sees only your final answer; you do not see its conversation.\n\n${launch.role}${calls}`;
+  return `You run as the subagent "${launch.profile}": another model sends you an instruction and sees only your final answer; you do not see its conversation. When the instruction comes with a plan (a <plan path="…"> block: the markdown plan the caller agreed with the operator), the plan is the decided document and the instruction says which part of it to do now; where they disagree the plan wins, and you name the disagreement in your answer.\n\n${launch.role}${calls}`;
 }
 
 export function isToolAllowed(launch: SubagentLaunch, name: string): boolean {

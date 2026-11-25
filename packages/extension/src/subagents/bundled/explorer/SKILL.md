@@ -5,10 +5,11 @@ description: Only on the operator's explicit request — how to brief the explor
 
 # Briefing the explorer
 
-Call `subagent { agent: "explorer", task }` only when the operator asked for it in this
-conversation. The explorer sees nothing of the conversation: the brief is all it knows.
+Call `subagent { agent: "explorer", instruction }` only when the operator asked for it in this
+conversation. The explorer sees nothing of the conversation: the instruction is all it knows (pass
+`plan: "<path>"` too when a survey serves an agreed plan).
 
-Write the brief so it stands alone:
+Write the instruction so it stands alone:
 
 - **Scope**: the directories, packages or subsystems to survey, and what to leave out.
 - **Questions**: the concrete things you need to know (how X reaches Y, where Z is decided, which
@@ -19,4 +20,4 @@ It answers with a fixed report — purpose, structure, contracts and entry point
 tests, conventions, answers to your questions — with paths and line numbers. Treat it as a
 colleague's notes: check what your decision rests on in the code before you act on it.
 
-To ask a follow-up in the same context: `subagent { agent: "explorer", continue: true, task }`.
+To ask a follow-up in the same context: `subagent { agent: "explorer", continue: true, instruction }`.

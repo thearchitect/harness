@@ -2,11 +2,14 @@
 // tool and an approved change; a rejected change reaches Claude with the operator's reason; a limit
 // wait asks the operator and "continue in harness" stops Claude; a background task of Claude is a
 // task of the session and stops from there; Claude missing, logged out or too old stops the call
-// with the reason. Invariants: no API billing variables reach Claude; Claude sees neither ctx_* nor
-// subagent among harness's tools (the bridge's token: claude.test.ts of the engine).
+// with the reason; the agreed plan reaches Claude whole, then as its changes. Invariants: no API
+// billing variables reach Claude; Claude sees neither ctx_*, subagent nor pi's read/edit/write among
+// harness's tools (the bridge's token: claude.test.ts of the engine); its prompt carries the session's
+// project context, the mode's policy and harness's rules with Claude's names; it loads no instruction
+// files or memory of its own.
 
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentModel } from "#client/model/agent-model.ts";
 import type { RawDriver } from "#testkit/drivers/raw.ts";
@@ -31,10 +34,10 @@ function lastResult(model: AgentModel): string | undefined {
   return item?.kind === "message" ? (item.message.content as { text?: string }[]).map((block) => block.text ?? "").join("") : undefined;
 }
 
-async function delegate(raw: RawDriver, agent: string, model: AgentModel, script: (turns: unknown[]) => void, task: string): Promise<string> {
+async function delegate(raw: RawDriver, agent: string, model: AgentModel, script: (turns: unknown[]) => void, instruction: string, more: Record<string, unknown> = {}): Promise<string> {
   const before = lastResult(model);
-  script([{ toolCalls: [{ name: "subagent", args: { agent: "builder", task } }] }, { text: "reviewed" }]);
-  await raw.api.call(agent, { type: "harness_prompt", text: `delegate: ${task}`, mode: "build" });
+  script([{ toolCalls: [{ name: "subagent", args: { agent: "builder", instruction, ...more } }] }, { text: "reviewed" }]);
+  await raw.api.call(agent, { type: "harness_prompt", text: `delegate: ${instruction}`, mode: "build" });
   await until(model, () => lastResult(model) !== undefined && lastResult(model) !== before);
   return lastResult(model) ?? "";
 }
@@ -46,6 +49,7 @@ export const scenario = defineScenario({
     {
       name: "a run uses harness's tool and an approved change; nothing billable reaches Claude",
       async run({ stand, clients: { raw }, memo }) {
+        writeFileSync(join(stand.project, "AGENTS.md"), "Project rule: run the local checks.\n");
         const { agent } = await raw.api.request("agent_start", { cwd: stand.project });
         const model = await raw.client.follow(raw.node, agent.id);
         memo.agent = agent.id;
@@ -71,7 +75,46 @@ export const scenario = defineScenario({
         assert.deepEqual(start.argv.slice(start.argv.indexOf("--model"), start.argv.indexOf("--model") + 4), ["--model", "opus", "--effort", "medium"]);
         const tools = stand.claudeTools();
         assert.ok(tools.includes("bash") && tools.includes("permission"));
-        assert.ok(!tools.some((name) => name.startsWith("ctx_") || name === "subagent"), tools.join(","));
+        assert.ok(!tools.some((name) => name.startsWith("ctx_") || ["subagent", "read", "edit", "write"].includes(name)), tools.join(","));
+
+        const flag = (name: string): string => start.argv[start.argv.indexOf(name) + 1] ?? "";
+        const settings = JSON.parse(flag("--settings")) as { pluginConfigs?: Record<string, { options?: { instructionFiles?: string } }>; autoMemoryEnabled?: boolean; hooks?: unknown };
+        assert.equal(settings.pluginConfigs?.["cc-plugin-agents-md@builtin"]?.options?.instructionFiles, "managed-only");
+        assert.equal(settings.autoMemoryEnabled, false);
+        assert.ok(settings.hooks !== undefined);
+        const prompt = flag("--append-system-prompt");
+        assert.match(prompt, /<project_instructions path="[^"]*AGENTS\.md">\nProject rule: run the local checks\./);
+        assert.match(prompt, /harness runs you in BUILD mode/);
+        assert.match(prompt, /Change file contents only with the `Edit` and `Write` tools/);
+        assert.match(prompt, /<skills>/);
+        assert.doesNotMatch(prompt, /subagent-builder|`(read|edit|write)`/);
+        assert.match(prompt, /<code_exploration>/);
+        assert.match(stand.claudeInputs().at(-1) ?? "", /^implement the plan$/);
+      },
+    },
+    {
+      name: "the plan reaches Claude whole, then its changes; the handover names it",
+      async run({ stand, clients: { raw }, memo }) {
+        const agent = memo.agent as string;
+        const model = memo.model as AgentModel;
+        const plan = join(stand.project, "plan.md");
+        writeFileSync(plan, "# Plan\n\n## A\n\nWrite a.txt.\n\n## B\n\nWrite b.txt.\n");
+        stand.claude([[{ text: "did A" }]]);
+        const first = await delegate(raw, agent, model, (turns) => stand.script(turns as never), "Do section A.", { plan: "plan.md" });
+        assert.match(first, /Plan: .*plan\.md/);
+        assert.equal(stand.claudeInputs().at(-1), `Do section A.\n\n<plan path="${plan}">\n# Plan\n\n## A\n\nWrite a.txt.\n\n## B\n\nWrite b.txt.\n</plan>`);
+        assert.equal(model.state.subagents.at(-1)?.plan, plan);
+
+        writeFileSync(plan, "# Plan\n\n## A\n\nWrite a.txt.\n\n## B\n\nWrite b.md.\n");
+        stand.claude([[{ text: "did B" }]]); // a continued session is a new Claude process
+        await delegate(raw, agent, model, (turns) => stand.script(turns as never), "Now section B.", { plan: "plan.md", continue: true });
+        const second = stand.claudeInputs().at(-1) ?? "";
+        assert.match(second, /^Now section B\.\n\n<plan-update path="[^"]*plan\.md">/);
+        assert.match(second, /-Write b\.txt\.\n\+Write b\.md\./);
+        assert.doesNotMatch(second, /<plan path=/);
+
+        const outside = await delegate(raw, agent, model, (turns) => stand.script(turns as never), "x", { plan: "/etc/hostname.md" });
+        assert.match(outside, /no such file|outside the project/);
       },
     },
     {
@@ -127,7 +170,7 @@ export const scenario = defineScenario({
         stand.claude([], { auth: "out" });
         assert.match(await delegate(raw, agent, model, (turns) => stand.script(turns as never), "a"), /not logged in with a Claude subscription/);
         stand.claude([], { version: "2.1.10" });
-        assert.match(await delegate(raw, agent, model, (turns) => stand.script(turns as never), "b"), /older than 2\.1\.259/);
+        assert.match(await delegate(raw, agent, model, (turns) => stand.script(turns as never), "b"), /older than 2\.1\.285/);
         stand.claude([[{ text: "x" }]], { keySource: "ANTHROPIC_API_KEY" });
         assert.match(await delegate(raw, agent, model, (turns) => stand.script(turns as never), "c"), /uses an API key/);
       },
