@@ -51,6 +51,8 @@ export type StandOptions = {
   maxAgents?: number;
   /** Entries of an attach's snapshot (the node's default when absent): small, to test loading older ones. */
   snapshotEntries?: number;
+  /** A node declared a shared server (its agents get the `server` skill). */
+  server?: boolean;
 };
 
 export async function createStand(options: StandOptions = {}): Promise<Stand> {
@@ -83,6 +85,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     harnessVersion: "test",
     agentCommand: options.bundle !== undefined ? [process.execPath, join(options.bundle, "share/harness/src/packages/agent/src/main.ts")] : undefined,
     agentEnv: {
+      ...(options.server === true ? { HARNESS_SERVER: "1" } : {}),
       TMPDIR: agentTmp,
       // agents of a stand run the checkout without the bundle's MCP servers and packages, or a bundle with all of them
       HARNESS_MANIFEST: options.bundle !== undefined ? join(options.bundle, "share/harness/manifest.json") : "",

@@ -44,6 +44,19 @@ describe("node and agent", () => {
     assert.equal(readFileSync(join(stand.project, "hello.txt"), "utf8"), "hi\n");
   });
 
+  test("the server skill is an agent's only on a node declared a shared server", async () => {
+    const skills = async (server: boolean): Promise<string[]> => {
+      const stand = await createStand({ server });
+      stands.push(stand);
+      const client = await stand.connect();
+      const { agent } = await client.request("agent_start", { cwd: stand.project });
+      const { commands } = await client.call<{ commands: { name: string }[] }>(agent.id, { type: "get_commands" });
+      return commands.map((command) => command.name).filter((name) => name.startsWith("skill:"));
+    };
+    assert.ok((await skills(true)).includes("skill:server"));
+    assert.ok(!(await skills(false)).includes("skill:server"));
+  });
+
   test("two clients over the unix socket: the first answer closes the gate for both", async () => {
     const stand = await createStand();
     stands.push(stand);

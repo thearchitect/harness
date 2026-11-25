@@ -77,7 +77,7 @@ let
       else
         : # the user has no secrets in the deployment
       fi
-      jq -n --arg user "$user" '{ users: [$user], hubs: [{ url: "ws://127.0.0.1:8080", keyFile: "/data/home/\($user)/.harness/nodes/\($user).key" }] }' \
+      jq -n --arg user "$user" '{ users: [$user], server: true, hubs: [{ url: "ws://127.0.0.1:8080", keyFile: "/data/home/\($user)/.harness/nodes/\($user).key" }] }' \
         > $out/etc/harness-remote/node-$user.json
       {
         echo "#!/bin/sh"

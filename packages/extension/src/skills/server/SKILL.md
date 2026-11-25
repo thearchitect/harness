@@ -1,11 +1,11 @@
 ---
 name: server
-description: Working on the remote harness server (Telegram). Load before installing a tool, when a command is missing, or when a tool needs credentials (tokens, logins, keys).
+description: Working on a shared harness server (a node of the Fly image). Load before installing a tool, when a command is missing, or when a tool needs credentials (tokens, logins, keys).
 ---
 
 # The server
 
-You run on a remote server as your user's own Unix account. There is no root:
+You run on a shared server as your user's own Unix account. There is no root:
 no `sudo`, no `apt`, no `nix`. Your home (`~`) persists across restarts and
 deploys; everything outside it is reset on every deploy.
 
@@ -32,21 +32,20 @@ Everything goes into `~`, already on `PATH`, and survives deploys:
 
 ## Credentials
 
-- Your user's secrets (Telegram `/secrets`, and those of the deployment) are
-  environment variables of this process. `gh` reads `GH_TOKEN`, `glab`
-  `GITLAB_TOKEN` and `GITLAB_HOST`; `gh auth setup-git` makes git over https
-  use it.
-- To keep a new credential: `cd ~ && cage set -stdin harness.env NAME < file`
-  (or from a pipe). Never print a value, never pass one in argv.
-- This process does not see variables stored after it started. Right after
-  storing, run the tool through cage: `cd ~ && cage run @harness - gh …`.
-  Your next agents get the variable directly.
-- git over SSH uses the server key `~/.ssh/id_ed25519`; the user gets its
-  public part with `/key` and adds it where it is needed.
-- More on cage: the `cage` skill.
+- Your user's secrets of the deployment (its cage env) are environment
+  variables of this process. `gh` reads `GH_TOKEN`, `glab` `GITLAB_TOKEN` and
+  `GITLAB_HOST`; `gh auth setup-git` makes git over https use it.
+- A secret the user gives you in this session: `ask_secret` (only when the user
+  tells you to ask).
+- To keep a credential across sessions: `cd ~ && cage set -stdin harness.env NAME < file`
+  (or from a pipe). Never print a value, never pass one in argv. This process
+  does not see variables stored after it started: run the tool through cage
+  (`cd ~ && cage run @harness - gh …`). More on cage: the `cage` skill.
+- git over SSH: make a key in `~/.ssh` (`ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519`)
+  and give the user its public part to add where it is needed.
 
 ## Files and the user
 
-- Files the user sends arrive in `~/tmp/<chat>-<message>/`; their paths are
-  listed at the start of the message.
+- Files the user hands you from the app arrive in `~/.harness/uploads/`; their
+  paths are in the message as `@path`.
 - Send results with `send_file` (one file; zip several files or a folder first).

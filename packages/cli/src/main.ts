@@ -1,6 +1,6 @@
 // harness — the command line.
 //
-//   harness [-c | --continue] [--session <id>]   the TUI; a new session in the current directory
+//   harness [-c | --continue] [--session <id>] [--model <ref>]   the TUI; a new session in the current directory
 //   harness node [--name <name>] [--config <f>]  a node: agents of this user, a unix socket,
 //                                                links to the hubs of ~/.harness/nodes/<name>.json
 //   harness hub [--name <name>] [--listen h:p]   a node with the hub role: devices and nodes over WebSocket
@@ -79,7 +79,7 @@ async function runNode(args: string[], asHub: boolean): Promise<void> {
   ensureHome(home);
   const name = values.name ?? (asHub ? "hub" : DEFAULT_NODE);
   const config = readNodeConfig(home, name, values.config);
-  const node = new HarnessNode({ name, dataDir: home, harnessVersion: harnessVersion(), users: config.users });
+  const node = new HarnessNode({ name, dataDir: home, harnessVersion: harnessVersion(), users: config.users, ...(config.server === true ? { agentEnv: { HARNESS_SERVER: "1" } } : {}) });
   const path = socketPath(home, name);
   const server = await listenUnix(node, path);
   process.stderr.write(`harness node ${name}: ${path}\n`);
@@ -177,7 +177,7 @@ async function runWebApp(): Promise<void> {
 }
 
 async function runTui(args: string[]): Promise<void> {
-  const { values } = parseArgs({ args, options: { continue: { type: "boolean", short: "c" }, session: { type: "string" } } });
+  const { values } = parseArgs({ args, options: { continue: { type: "boolean", short: "c" }, session: { type: "string" }, model: { type: "string", short: "m" } } });
   const home = harnessHome();
   ensureHome(home);
   const cwd = process.cwd();
@@ -246,6 +246,16 @@ async function runTui(args: string[]): Promise<void> {
   } else {
     await workbench.newTab(nodeName, cwd);
   }
+  // --model: the session starts on this model reference (a family takes its newest model)
+  const started = workbench.activeTab();
+  if (values.model !== undefined && started?.agent !== undefined) {
+    await client
+      .connection(started.node)
+      .call(started.agent.id, { type: "harness_set", model: values.model })
+      .catch((error: unknown) => process.stderr.write(`--model ${values.model}: ${error instanceof Error ? error.message : String(error)}\n`));
+  } else {
+    // the session's own model
+  }
 
   let app: App | undefined;
   const quit = async (): Promise<void> => {
@@ -311,7 +321,7 @@ async function main(): Promise<void> {
     case "-h":
       process.stdout.write(
         [
-          "harness [-c] [--session <id>]               the TUI",
+          "harness [-c] [--session <id>] [-m <model>]  the TUI (model: provider/family[:thinking] or an exact id)",
           "harness node [--name <name>]                a node for this user",
           "harness hub [--name <name>] [--listen h:p]  a node with the hub role",
           "harness hub user|device|node add|remove|revoke|list …",

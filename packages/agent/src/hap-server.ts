@@ -487,7 +487,8 @@ export class HapServer {
       case "get_session_stats":
         return ok(session.getSessionStats());
       case "export_html":
-        return ok({ path: await session.exportToHtml(command.outputPath) });
+        // an absolute path: clients fetch it from the node
+        return ok({ path: resolve(session.sessionManager.getCwd(), await session.exportToHtml(command.outputPath)) });
       case "switch_session":
         return ok(await this.runtime.switchSession(command.sessionPath));
       case "fork": {

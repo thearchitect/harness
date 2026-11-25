@@ -20,12 +20,15 @@
 {
   "users": ["alice"],
   "hubs": [{ "url": "wss://hub.example", "keyFile": "/run/keys/harness-work" }],
-  "hub": { "listen": "127.0.0.1:8790" }
+  "hub": { "listen": "127.0.0.1:8790", "url": "https://hub.example" },
+  "server": false
 }
 ```
 
 `users` are the hub users allowed on this node through its hubs; `hubs` are the hubs it links to
-(`key` or `keyFile`, read at every connection attempt); `hub` makes it a hub too.
+(`key` or `keyFile`, read at every connection attempt); `hub` makes it a hub too (`url`: the
+address pairing links name); `server` declares a shared server without root (the Fly image's
+nodes): its agents get the `server` skill.
 
 ## Pairing a device
 

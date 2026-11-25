@@ -3,7 +3,7 @@
 // lies over the right strip; a narrow screen hides the strips and brings them back as overlays.
 
 import assert from "node:assert/strict";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineScenario, runScenario } from "#testkit/scenario/scenario.ts";
@@ -132,6 +132,19 @@ export const scenario = defineScenario({
         await tui.workbench.settingsPicker();
         await pick("theme");
         await pick("dark");
+      },
+    },
+    {
+      name: "/export writes the session as an HTML page on its node",
+      async run({ clients: { tui } }) {
+        await tui.type("/export");
+        await tui.submit();
+        await tui.waitForText((screen) => screen.includes("exported to "));
+        // the line on the screen may be cut: the path is the status line's
+        const line = tui.screen().zones.status.find((status) => status.text.startsWith("exported to "))?.text ?? "";
+        const path = /exported to (\S+\.html)/.exec(line)?.[1] ?? "";
+        assert.ok(path.startsWith("/"), line);
+        assert.match(readFileSync(path, "utf8"), /<html/i);
       },
     },
     {

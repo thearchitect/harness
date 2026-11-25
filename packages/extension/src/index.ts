@@ -296,9 +296,15 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       store.reset(launch !== undefined ? restoreChildState(store.current, launch) : restoreState(pi, ctx, defaultsPath, store.current));
     });
 
-    pi.on("session_shutdown", () => {
+    pi.on("session_shutdown", (event) => {
       live = undefined;
       void own.stopAll();
+      // background tasks outlive a /reload (the supervisor is the host's); another session does not inherit them
+      if (event.reason === "new" || event.reason === "resume" || event.reason === "fork") {
+        void supervisor.stopAll(`the session changed (${event.reason})`);
+      } else {
+        // reload: they go on; quit: the host stops them as the agent exits
+      }
     });
 
     pi.on("input", (event): InputEventResult => {
@@ -495,7 +501,8 @@ function registerExtensionParts(pi: ExtensionAPI, host: ExtensionHost, interrupt
   registerDisplayFile(pi);
   registerTaskTools(pi, supervisor, interrupts, host.dataDir);
 
-  const skills = ["web-research", "testing"].map((name) => join(EXTENSION_DIR, "skills", name, "SKILL.md"));
+  // `server`: only on a node its configuration declares a shared server (HARNESS_SERVER from the node)
+  const skills = ["web-research", "testing", ...(process.env.HARNESS_SERVER === "1" ? ["server"] : [])].map((name) => join(EXTENSION_DIR, "skills", name, "SKILL.md"));
   pi.on("resources_discover", () => ({
     skillPaths: [...skills, ...("manifest" in bundle ? Object.values(bundle.manifest.skills) : [])],
   }));

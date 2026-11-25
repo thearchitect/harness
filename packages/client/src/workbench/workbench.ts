@@ -202,6 +202,7 @@ export const CLIENT_COMMANDS: { name: string; description: string }[] = [
   { name: "settings", description: "Theme, compaction, message queues" },
   { name: "bash", description: "Run a command yourself; the model sees it and its output" },
   { name: "bash-quiet", description: "Run a command yourself, kept out of the model's context" },
+  { name: "export", description: "The session as an HTML page (optionally: where to write it)" },
   { name: "quit", description: "Quit (agents keep running)" },
 ];
 
@@ -249,6 +250,8 @@ export type WorkbenchOptions = {
   themes?: () => string[];
   /** Settings only this kind of UI has (the app's fonts and notifications): rows of /settings. */
   uiSettings?: () => UiSetting[];
+  /** Brings a file of a node to this device (the app downloads it); without it the path is shown. */
+  offerFile?: (node: string, path: string) => void;
 };
 
 /** A row of /settings a UI adds: choosing it runs `choose` (which may open its own list). */
@@ -266,6 +269,7 @@ export class Workbench {
   private readonly update: UpdateHook | undefined;
   private readonly themes: () => string[];
   private readonly uiSettings: () => UiSetting[];
+  private readonly offerFile: ((node: string, path: string) => void) | undefined;
   private prefill: Screen["prefill"];
   private prefillCounter = 0;
   private readonly agentPrefillSeen = new WeakMap<AgentModel, number>();
@@ -285,6 +289,7 @@ export class Workbench {
     this.update = options.update;
     this.themes = options.themes ?? (() => []);
     this.uiSettings = options.uiSettings ?? (() => []);
+    this.offerFile = options.offerFile;
   }
 
   /* ----- the screen ----- */
@@ -407,6 +412,9 @@ export class Workbench {
       case "/settings":
         await this.settingsPicker();
         return true;
+      case "/export":
+        await this.exportSession(rest === "" ? undefined : rest);
+        return true;
       case "/bash":
       case "/bash-quiet":
         // the operator's own command on the session's machine; "-quiet" keeps it out of the model's context
@@ -418,6 +426,25 @@ export class Workbench {
         return true;
       default:
         return false;
+    }
+  }
+
+  /** The session as an HTML page (pi's export), written on its node; the app downloads it. */
+  private async exportSession(outputPath: string | undefined): Promise<void> {
+    const tab = this.activeTab();
+    if (tab?.agent === undefined) {
+      this.notify("warning", "no session to export");
+    } else {
+      try {
+        const { path } = await this.client.connection(tab.node).call<{ path: string }>(tab.agent.id, { type: "export_html", ...(outputPath !== undefined ? { outputPath } : {}) });
+        if (this.offerFile !== undefined) {
+          this.offerFile(tab.node, path);
+        } else {
+          this.notify("info", `exported to ${path}${tab.node !== this.client.home ? ` on ${tab.node}` : ""}`);
+        }
+      } catch (error) {
+        this.notify("error", `export: ${error instanceof Error ? error.message : String(error)}`);
+      }
     }
   }
 

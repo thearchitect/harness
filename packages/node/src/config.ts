@@ -9,9 +9,13 @@ export type NodeFileConfig = {
   users?: string[];
   /** Hubs this node connects out to. */
   hubs?: { url: string; key?: string; keyFile?: string }[];
-  /** Roles besides the node: a hub listening for devices and nodes. */
-  /** `url`: the address devices reach the hub at (pairing links), e.g. https://my-harness.fly.dev. */
+  /**
+   * A hub besides the node, listening for devices and nodes; `url`: the address devices reach it
+   * at (pairing links), e.g. https://my-harness.fly.dev.
+   */
   hub?: { listen: string; url?: string };
+  /** A shared server (the Fly image): agents get the `server` skill (no root, installing into ~, credentials). */
+  server?: boolean;
 };
 
 /** `path`: an explicit file (the NixOS module's); otherwise ~/.harness/nodes/<name>.json. */

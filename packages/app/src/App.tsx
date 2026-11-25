@@ -47,6 +47,13 @@ async function connect(endpoint: Endpoint): Promise<Connected> {
     cwd: "~",
     themes: () => themeNames,
     uiSettings: () => appSettings(client, workbench, { supported: NOTIFICATIONS_SUPPORTED, request: requestNotifications }),
+    // an exported session comes to this device
+    offerFile: (node, path) =>
+      void client
+        .connection(node)
+        .request("files_get", { path })
+        .then((file) => saveFile(path.split("/").at(-1) ?? "file", file.base64))
+        .catch((reason: unknown) => workbench.notify("error", `download: ${reason instanceof Error ? reason.message : String(reason)}`)),
   });
   return { client, workbench, endpoint, themeNames };
 }
