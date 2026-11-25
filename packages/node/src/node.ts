@@ -18,6 +18,7 @@ import { SettingsStore } from "./settings.ts";
 import { checkClientFrame } from "#protocol/schemas.ts";
 import { systemClock, type Clock } from "#protocol/clock.ts";
 import { SummaryTracker } from "./summary.ts";
+import { Telemetry } from "./telemetry.ts";
 
 /** One client connection, whatever carries it. */
 export interface Connection {
@@ -55,6 +56,10 @@ export type NodeConfig = {
   /** Hub users allowed on this node through its hubs (the node checks again what the hub checked). */
   users?: string[];
   clock?: Clock;
+  /** Unload agents idle this long (default IDLE_UNLOAD_MS). */
+  idleUnloadMs?: number;
+  /** At most this many agents (default MAX_AGENTS). */
+  maxAgents?: number;
 };
 
 type Attachment = { level: AttachLevel; live: boolean };
@@ -71,7 +76,14 @@ type AgentEntry = {
   lastSummaryAt: number;
   /** Clients following in full that draw bridged components, as last told to the agent. */
   componentClients: number;
+  /** When the agent became idle (checked at `now`). */
+  idleSince(now: number): number;
 };
+
+/** Idle agents are unloaded after this long; checks run this often; at most this many agents run. */
+export const IDLE_UNLOAD_MS = 30 * 60_000;
+const UNLOAD_CHECK_MS = 60_000;
+export const MAX_AGENTS = 32;
 
 /** The agent of this checkout or bundle: node running packages/agent/src/main.ts. */
 export function defaultAgentCommand(): string[] {
@@ -87,10 +99,15 @@ export class HarnessNode {
   private counter = 0;
   hub: HubRole | undefined;
   readonly clock: Clock;
+  private unloadTimer: unknown;
+  readonly telemetry: Telemetry;
+  private closing = false;
 
   constructor(config: NodeConfig) {
     this.config = config;
     this.clock = config.clock ?? systemClock;
+    this.telemetry = new Telemetry(config.dataDir, config.name, () => this.clock.now());
+    this.scheduleUnload();
     this.locks = new SessionLocks(config.dataDir);
     this.settings = new SettingsStore(config.dataDir);
     this.settings.onChange((settings) => this.settingsChanged(this.settings, settings));
@@ -136,6 +153,7 @@ export class HarnessNode {
 
   disconnect(connection: Connection): void {
     this.connections.delete(connection.id);
+    this.telemetry.log({ event: "disconnect", connection: connection.id });
     this.hub?.disconnect(connection);
     for (const entry of this.agents.values()) {
       entry.attachments.delete(connection);
@@ -167,11 +185,13 @@ export class HarnessNode {
         connection.send({ k: "refused", error: { code: "invalid_record", message: "the first frame must be hello" } });
         connection.close();
       } else if (!compatibleProtocol(frame.protocol)) {
+        this.telemetry.log({ event: "refused", connection: connection.id, code: "version_mismatch" });
         connection.send({ k: "refused", error: { code: "version_mismatch", message: `protocol ${frame.protocol} is not ${PROTOCOL_VERSION}: update the client or the node` } });
         connection.close();
       } else {
         state.welcomed = true;
         state.capabilities = new Set(frame.capabilities ?? []);
+        this.telemetry.log({ event: "connect", connection: connection.id, client: frame.client, user: connection.user, trusted: connection.trusted });
         connection.send({ k: "welcome", protocol: PROTOCOL_VERSION, harness: this.config.harnessVersion, node: this.config.name, user: connection.user });
       }
     } else if (frame.k !== "hello" && frame.node !== undefined && frame.node !== this.config.name) {
@@ -339,10 +359,47 @@ export class HarnessNode {
     }
   }
 
+  /** Whether an agent may be unloaded: nobody follows it in full, no run, no open interaction, no live task. */
+  private idle(entry: AgentEntry): boolean {
+    const summary = entry.summary.current;
+    const followed = [...entry.attachments.values()].some((attachment) => attachment.level === "full");
+    return !followed && summary.status === "idle" && summary.waiting === 0 && summary.tasks.running === 0;
+  }
+
+  /** Unloads agents idle for longer than idleUnloadMs (their sessions stay; opening one starts an agent again). */
+  private async unloadIdle(): Promise<void> {
+    const limit = this.config.idleUnloadMs ?? IDLE_UNLOAD_MS;
+    const now = this.clock.now();
+    for (const entry of [...this.agents.values()]) {
+      if (this.idle(entry) && now - entry.idleSince(now) >= limit) {
+        this.telemetry.log({ event: "agent_unload", agent: entry.info.id });
+        await entry.link.stop();
+      } else {
+        // busy, followed, or not idle long enough
+      }
+    }
+  }
+
+  private scheduleUnload(): void {
+    this.unloadTimer = this.clock.setTimeout(() => {
+      void this.unloadIdle().finally(() => (this.closing ? undefined : this.scheduleUnload()));
+    }, UNLOAD_CHECK_MS);
+  }
+
   async startAgent(cwd: string, sessionFile?: string, parent?: string): Promise<AgentInfo> {
     const served = sessionFile !== undefined ? [...this.agents.values()].find((entry) => entry.info.sessionFile === sessionFile) : undefined;
+    const max = this.config.maxAgents ?? MAX_AGENTS;
     if (served !== undefined) {
       return { ...served.info, summary: served.summary.current };
+    } else if (this.agents.size >= max) {
+      // the oldest idle agent makes room; with none idle the start is refused
+      const oldest = [...this.agents.values()].filter((entry) => this.idle(entry)).sort((a, b) => a.idleSince(this.clock.now()) - b.idleSince(this.clock.now()))[0];
+      if (oldest === undefined) {
+        throw new HarnessError("agent_failed", `${max} agents run on node ${this.config.name} and none is idle: close a session first`);
+      } else {
+        await oldest.link.stop();
+        return this.startAgent(cwd, sessionFile, parent);
+      }
     } else {
       this.counter += 1;
       const id = `a${this.counter}-${randomUUID().slice(0, 4)}`;
@@ -389,6 +446,18 @@ export class HarnessNode {
         summary,
         attachments: new Map(),
         componentClients: 0,
+        idleSince: (() => {
+          // when the agent last became idle (by the clock): busy agents are "idle since now"
+          let since = this.clock.now();
+          return (now: number): number => {
+            if (!this.idle(entry)) {
+              since = now;
+            } else {
+              // idle since then
+            }
+            return since;
+          };
+        })(),
         requests: new Map(),
         summaryDue: false,
         lastSummaryAt: 0,
@@ -403,9 +472,11 @@ export class HarnessNode {
         } else {
           // no summary pending
         }
+        this.telemetry.log({ event: "agent_exit", agent: id, code, error });
         this.broadcast({ ev: "agent_exited", agent: id, code, error });
         this.broadcast({ ev: "agents", agents: this.agentList() });
       });
+      this.telemetry.log({ event: "agent_start", agent: id, session: entry.info.sessionId, cwd: entry.info.cwd });
       this.broadcast({ ev: "agents", agents: this.agentList() });
       return { ...entry.info, summary: summary.current };
     }
@@ -532,6 +603,9 @@ export class HarnessNode {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
+    this.telemetry.log({ event: "node_stop" });
+    this.clock.clearTimeout(this.unloadTimer);
     await Promise.all([...this.agents.values()].map((entry) => entry.link.stop()));
     this.locks.releaseAll();
     for (const { connection } of this.connections.values()) {

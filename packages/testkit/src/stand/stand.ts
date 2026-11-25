@@ -6,6 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, existsSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import type { Clock } from "#protocol/clock.ts";
 import type { HapRecord } from "#protocol/hap.ts";
 import { NodeConnection } from "#client/connection.ts";
 import { HarnessNode } from "#node/node.ts";
@@ -36,6 +37,9 @@ export type StandOptions = {
   bundle?: string;
   /** Hub users allowed on the stand's node through a hub. */
   users?: string[];
+  /** The node's clock (summaries, idle unloading, backoff); the system's by default. */
+  clock?: Clock;
+  maxAgents?: number;
 };
 
 export async function createStand(options: StandOptions = {}): Promise<Stand> {
@@ -72,6 +76,8 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     },
     summaryIntervalMs: 20,
     users: options.users,
+    clock: options.clock,
+    maxAgents: options.maxAgents,
   });
   const connections: NodeConnection[] = [];
   let server: Server | undefined;

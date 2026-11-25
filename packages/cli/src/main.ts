@@ -72,6 +72,7 @@ async function runNode(args: string[], asHub: boolean): Promise<void> {
   } else {
     // not a hub
   }
+  node.telemetry.log({ event: "node_start", roles: web !== undefined ? ["node", "hub"] : ["node"] });
 
   const uplinks = (config.hubs ?? []).map((hub) => {
     const uplink = new Uplink(node, { url: hub.url, key: () => hubKey(hub), onState: (state, detail) => process.stderr.write(`hub ${hub.url}: ${state}${detail !== undefined ? ` (${detail})` : ""}\n`) });
