@@ -20,6 +20,21 @@ builds are not published yet.
   address. Without `--url`, enter the code into the pairing form.
   `hub.url` in the hub's `nodes/<name>.json` sets the address once.
 
+## The strips and the panel, by keyboard and pointer
+
+The same in the TUI and the app:
+
+- `Alt+←` / `Alt+→` take the keyboard into the sessions strip / the session's items (a strip
+  hidden on a narrow screen comes over it): `↑`/`↓` move, `Enter` (or `Space`) opens, `Esc` goes
+  back to the editor; on a tab `Delete` closes it. A click opens a row, the middle button closes a
+  tab, the pointer lights a row up.
+- `Ctrl+\` opens the harness panel on the right: MODE (madness, simple — switches that keep the
+  panel open; implementer — a value that cycles) and HARNESS (update, dependencies, subagents,
+  logs — actions that close it). `↑`/`↓`, `Space`/`Enter` apply, `Esc` or `Ctrl+\` close; a click
+  applies a row.
+- Lists in the editor's place (`Ctrl+L` models, sessions, `/tree`, `/settings`) name each key in
+  their hint line; the model list has Favorites (pi's `enabledModels`) and All, `Tab` switches.
+
 ## Files, voice, logs
 
 - A file an agent sends (`send_file`) shows with its comment and a Download button; it comes from

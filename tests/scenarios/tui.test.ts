@@ -170,6 +170,100 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "keys come as presses and releases (kitty): the panel opens once, a toggle keeps it open, Esc closes it",
+      async run({ clients: { tui } }) {
+        // Ctrl+\ pressed, then released: one action
+        await tui.press("\x1b[92;5u");
+        await tui.press("\x1b[92;5:3u");
+        assert.deepEqual(tui.screen().zones.overlays, ["panel"]);
+        await tui.waitForText((screen) => screen.includes("MODE") && screen.includes("HARNESS") && screen.includes("━━○ off"));
+        // madness is the first row: Space turns it on, the panel stays
+        await tui.press(" ");
+        await tui.waitForText((screen) => screen.includes("●━━  on"));
+        assert.deepEqual(tui.screen().zones.overlays, ["panel"]);
+        assert.equal(tui.screen().agent?.state.madness, true);
+        await tui.press(" ");
+        await tui.waitForText((screen) => !screen.includes("●━━  on"));
+        await tui.press("\x1b");
+        assert.deepEqual(tui.screen().zones.overlays, []);
+      },
+    },
+    {
+      name: "Alt+← takes the keyboard into the tabs: ↓ to another, Enter opens it, Esc returns to the editor",
+      async run({ stand, clients: { tui } }) {
+        await tui.workbench.newTab(tui.client.home ?? "", stand.project);
+        await tui.settle();
+        assert.equal(tui.screen().active, 1);
+        await tui.press("\x1b[1;3D");
+        await tui.press("\x1b[A");
+        await tui.press("\r");
+        await tui.settle();
+        assert.equal(tui.screen().active, 0);
+        // back in the editor: typing goes there
+        await tui.type("x");
+        assert.equal(tui.app.editorText(), "x");
+        await tui.press("\x7f");
+      },
+    },
+    {
+      name: "Shift+Tab moves the thinking level by one, and the footer shows it",
+      async run({ stand, clients: { tui } }) {
+        // a model that thinks, in a session of its own
+        stand.models(["thinker"]);
+        await tui.workbench.newTab(tui.client.home ?? "", stand.project);
+        const tab = tui.workbench.activeTab();
+        assert.ok(tab?.agent !== undefined);
+        await tui.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", model: "scenario/thinker:low" });
+        await tui.waitForText(() => tui.screen().agent?.session?.thinkingLevel === "low");
+        const before = tui.screen().agent?.session?.thinkingLevel;
+        await tui.press("\x1b[9;2u");
+        await tui.press("\x1b[9;2:3u");
+        await tui.waitForText(() => tui.screen().agent?.session?.thinkingLevel !== before);
+        const after = tui.screen().agent?.session?.thinkingLevel;
+        assert.notEqual(after, undefined);
+        await tui.waitForText((screen) => screen.includes(String(after)));
+      },
+    },
+    {
+      name: "rules part the strips from the main area; a leading ! colors the editor's border for BUILD",
+      async run({ clients: { tui } }) {
+        const rows = tui.text().split("\n");
+        assert.ok(rows.filter((row) => row.split("│").length >= 3).length > 10, "two rules down the screen");
+        const plain = tui.app.borderMode();
+        await tui.type("!");
+        assert.equal(tui.app.borderMode(), "build");
+        assert.notEqual(plain, "build");
+        await tui.press("\x7f");
+        assert.equal(tui.app.borderMode(), plain);
+      },
+    },
+    {
+      name: "ask_user: pi-ask-user's prompt in the editor's place; the arrows choose, Enter answers",
+      async run({ stand, clients: { tui } }) {
+        stand.script([
+          { toolCalls: [{ name: "ask_user", args: { question: "Which database?", options: [{ title: "PostgreSQL", description: "relational" }, { title: "SQLite" }] } }] },
+          { text: "noted" },
+        ]);
+        await tui.type("ask me");
+        await tui.submit();
+        await tui.waitForText((screen) => screen.includes("Which database?") && screen.includes("Type something."));
+        await tui.press("\x1b[B");
+        await tui.press("\r");
+        await tui.waitForText((screen) => screen.includes("noted"));
+        assert.match(JSON.stringify(stand.requests().at(-1)), /User answered: SQLite/);
+      },
+    },
+    {
+      name: "the model picker shows the favorites first; Tab switches to all models",
+      async run({ clients: { tui } }) {
+        await tui.act("model.select");
+        const zone = tui.screen().zones.editor;
+        assert.ok(zone.kind === "picker");
+        await tui.waitForText((screen) => screen.includes("tab") && screen.includes("enter choose") && screen.includes("esc cancel"));
+        await tui.act("run.abort");
+      },
+    },
+    {
       name: "captures: text, ANSI and PNG",
       async run({ clients: { tui } }) {
         const files = await tui.capture(mkdtempSync(join(tmpdir(), "shot-")));

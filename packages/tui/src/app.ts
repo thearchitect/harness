@@ -11,17 +11,14 @@ import {
   CombinedAutocompleteProvider,
   Container,
   Editor,
-  HStack,
   Input,
   isKeyRelease,
-  KeybindingsManager,
+  type KeybindingsConfig,
   matchesKey,
   ProcessTerminal,
   ScrollView,
-  SelectList,
   setKeybindings,
   Text,
-  TUI_KEYBINDINGS,
   truncateToWidth,
   TuiAltScreen,
   VStack,
@@ -37,7 +34,6 @@ import type { InteractionRequest } from "#protocol/interactions.ts";
 import { modeOfText } from "#protocol/modes.ts";
 import { modeColor } from "#extension/presentation/modes.ts";
 import { GateDialog, selectListTheme } from "#extension/presentation/tui/gate.ts";
-import { QuestionsDialog } from "#extension/presentation/tui/questions.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
 import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
 import { ItemsColumn, Lines, TabsColumn, VRule, Workspace } from "./columns.ts";
@@ -46,6 +42,7 @@ import type { Renderers } from "./presentation.ts";
 import { HarnessPanel, PANEL_MIN_WIDTH, PANEL_WIDTH } from "./panel.ts";
 import { PickerView } from "./picker.ts";
 import { RemoteAutocompleteProvider } from "./remote-complete.ts";
+import { AskUserView } from "./ask-user.ts";
 import { TranscriptView, type TranscriptOptions } from "./transcript.ts";
 import { getTheme, mermaidTransformer, piKeybindings, themeController, type ThemeController } from "./pi-internals.ts";
 
@@ -61,6 +58,8 @@ export type AppOptions = {
   cwd: string;
   /** pi's settings of this user (~/.harness/settings.json): theme, output pad, images, thinking blocks. */
   settings: SettingsManager;
+  /** The user's keybindings (~/.harness/keybindings.json), over harness's and pi's. */
+  keybindings?: KeybindingsConfig;
   onQuit(): void;
   /** The terminal (a virtual one in tests); the process's by default. */
   terminal?: Terminal;
@@ -71,7 +70,7 @@ export type AppOptions = {
  * the app's, so the hints pi's components show name harness's keys. pi's defaults that harness gives
  * other work (Ctrl+T, Alt+↑, Ctrl+G) are unbound.
  */
-export function installKeybindings(): void {
+export function installKeybindings(user: KeybindingsConfig = {}): void {
   const keys = (action: keyof typeof ACTIONS): string[] => [...ACTIONS[action].keys];
   setKeybindings(
     piKeybindings({
@@ -87,6 +86,8 @@ export function installKeybindings(): void {
       "app.message.dequeue": [],
       "app.message.followUp": [],
       "app.editor.external": [],
+      // the user's own (~/.harness/keybindings.json, as pi reads them) win
+      ...(user as Record<string, string[]>),
     } as never),
   );
 }
@@ -212,7 +213,7 @@ export class App {
   private programStatus = "";
 
   constructor(options: AppOptions) {
-    installKeybindings();
+    installKeybindings(options.keybindings);
     this.settings = options.settings;
     this.client = options.client;
     this.workbench = options.workbench;
@@ -317,6 +318,11 @@ export class App {
   }
 
   /** The mode the editor's border shows, from the text as it is now (each draw: typing `!` recolors it). */
+  /** The mode the editor's border shows now (for tests and drivers). */
+  borderMode(): ReturnType<typeof modeOfText>["mode"] {
+    return this.editorMode();
+  }
+
   private editorMode(): ReturnType<typeof modeOfText>["mode"] {
     return this.workbench.editorMode(this.editor.getText());
   }
@@ -527,6 +533,8 @@ export class App {
       return;
     } else {
       this.editorShown = id;
+      // what the zone showed ends: a running ask_user prompt stops
+      (this.editorComponent as { dispose?: () => void } | undefined)?.dispose?.();
       this.editorZone.clear();
       switch (zone.kind) {
         case "editor":
@@ -574,11 +582,11 @@ export class App {
       case "secret":
         return new SecretDialog(this.tui, theme, request.payload, answer);
       case "questions":
-        return new QuestionsDialog(this.tui, theme, request.payload, answer);
+        return new AskUserView(this.tui, getTheme, request.payload, answer, (message) => this.workbench.notify("info", message));
       case "choice":
-        return choiceDialog(theme, request.payload, answer);
+        return choiceDialog(this.tui, request.payload, answer);
       case "pi-dialog":
-        return piDialog(this.tui, theme, request.payload, answer);
+        return piDialog(this.tui, request.payload, answer);
       case "display":
         return new Text(theme.fg("dim", ` display ${request.payload.path}`), 0, 0);
       default:
@@ -805,7 +813,8 @@ export class App {
   private enterStrip(side: "tabs" | "items"): void {
     this.leaveStrip();
     const strip = side === "tabs" ? this.tabsColumn : this.itemsColumn;
-    const hidden = this.screen !== undefined && !(side === "tabs" ? this.screen.strips.left : this.screen.strips.right);
+    const width = this.tui.terminal.columns;
+    const hidden = side === "tabs" ? width < LEFT_STRIP_MIN : width < RIGHT_STRIP_MIN;
     if (hidden && !(this.screen?.zones.overlays.includes(side) ?? false)) {
       this.workbench.toggleOverlay(side);
     } else {

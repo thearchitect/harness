@@ -1,6 +1,8 @@
 # The app on Android: the release build (signed with the debug key), installed on an emulator,
 # driven by Maestro against a hub running on the runner (the emulator reaches it at 10.0.2.2).
 # Started by hand: `gh workflow run native-android.yml`; screenshots and logs are artifacts.
+# Disabled on GitHub while the app is not released: enable it (`gh workflow enable`) and run it
+# only by hand, when nothing else can show what it shows.
 name: native-android
 
 on:

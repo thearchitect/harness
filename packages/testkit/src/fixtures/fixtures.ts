@@ -33,18 +33,15 @@ export const INTERACTIONS: Record<string, InteractionRequest> = {
     kind: "questions",
     openedAt: at,
     payload: {
-      questions: [
-        {
-          question: "Which database?",
-          context: "The service stores orders; both are available in the cluster.",
-          options: [
-            { title: "PostgreSQL", description: "relational, already used by billing" },
-            { title: "SQLite", description: "one file, no server" },
-          ],
-          allowMultiple: false,
-          allowFreeform: true,
-        },
-      ],
+      params: {
+        question: "Which database?",
+        context: "The service stores orders; both are available in the cluster.",
+        options: [
+          { title: "PostgreSQL", description: "relational, already used by billing" },
+          { title: "SQLite", description: "one file, no server" },
+        ],
+        allowComment: true,
+      },
     },
   },
   "questions-many": {
@@ -52,10 +49,13 @@ export const INTERACTIONS: Record<string, InteractionRequest> = {
     kind: "questions",
     openedAt: at,
     payload: {
-      questions: [
-        { question: "Targets?", options: [{ title: "Linux" }, { title: "macOS" }, { title: "Windows" }], allowMultiple: true, allowFreeform: false },
-        { question: "Release now?", options: [{ title: "Yes" }, { title: "No" }], allowMultiple: false, allowFreeform: false },
-      ],
+      params: {
+        question: "The release",
+        questions: [
+          { question: "Targets?", options: [{ title: "Linux" }, { title: "macOS" }, { title: "Windows" }], allowMultiple: true, allowFreeform: false },
+          { question: "Release now?", options: [{ title: "Yes" }, { title: "No" }], allowMultiple: false, allowFreeform: false },
+        ],
+      },
     },
   },
   "choice-limit": {

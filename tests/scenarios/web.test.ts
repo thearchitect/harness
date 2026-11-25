@@ -98,7 +98,8 @@ export const scenario = defineScenario({
         for (let tries = 0; ; tries += 1) {
           const panes = (await tui.client.homeRequest("settings_get", {})).settings["ui.web.panes"] as { left?: number } | undefined;
           if (panes?.left !== undefined) {
-            assert.ok(panes.left >= 280 && panes.left <= 320, String(panes.left));
+            // 154 by default, 80 more
+            assert.ok(panes.left >= 214 && panes.left <= 254, String(panes.left));
             break;
           } else {
             assert.ok(tries < 100, "the strip's width was not kept");
@@ -188,6 +189,43 @@ export const scenario = defineScenario({
         await menu.getByRole("button", { name: "Copy the session id" }).waitFor();
         await menu.getByRole("button", { name: "Close" }).click();
         await web.waitForScreen((screen) => screen.tabs.length === titles.length - 1);
+      },
+    },
+    {
+      name: "the harness panel: the TUI's sections; the keyboard comes in on its rows, Space toggles and keeps it open, Esc closes",
+      async run({ clients: { web } }) {
+        await web.page.keyboard.press("Control+Backslash");
+        const panel = web.page.getByRole("menu", { name: "harness panel" });
+        await panel.getByText("MODE", { exact: true }).waitFor();
+        await panel.getByText("HARNESS", { exact: true }).waitFor();
+        await panel.getByText("━━○ off").first().waitFor();
+        // the first row (madness) has the focus
+        await web.page.keyboard.press("Space");
+        await panel.getByText("●━━  on").waitFor();
+        await web.page.keyboard.press("ArrowDown");
+        await web.page.keyboard.press("ArrowUp");
+        await web.page.keyboard.press("Enter");
+        await panel.getByText("●━━  on").waitFor({ state: "detached" });
+        await web.page.keyboard.press("Escape");
+        await panel.waitFor({ state: "detached" });
+      },
+    },
+    {
+      name: "ask_user: the options as rows, a click answers as in pi-ask-user",
+      async run({ stand, clients: { web } }) {
+        stand.script([
+          { toolCalls: [{ name: "ask_user", args: { question: "Which database?", options: [{ title: "PostgreSQL" }, { title: "SQLite" }], allowComment: true } }] },
+          { text: "noted from the web" },
+        ]);
+        await web.type("ask me");
+        await web.submit();
+        await web.page.getByText("Type something.").waitFor();
+        await web.page.getByRole("button", { name: "Add extra context after selection" }).click();
+        await web.page.getByRole("button", { name: "SQLite" }).click();
+        await web.page.getByRole("textbox", { name: "Comment" }).fill("one file");
+        await web.page.getByRole("button", { name: "Submit" }).click();
+        await web.page.getByText("noted from the web").waitFor({ timeout: 15_000 });
+        assert.match(JSON.stringify(stand.requests().at(-1)), /User answered: SQLite — one file/);
       },
     },
     {

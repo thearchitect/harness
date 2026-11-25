@@ -35,21 +35,18 @@ export function secretValueProblem(value: string): string | undefined {
   }
 }
 
-export type QuestionOption = { title: string; description?: string };
+/**
+ * ask_user's call as the model made it: pi-ask-user's parameters (question or questions, context,
+ * options, allowMultiple, allowFreeform, allowComment, …). The client asks the operator and returns
+ * the tool's result as pi-ask-user makes it (text for the model, details for its renderers); the
+ * TUI runs pi-ask-user's own prompt, the app draws its own (packages/client/src/ask-user.ts).
+ */
+export type QuestionsPayload = { params: Record<string, unknown> };
 
-export type Question = {
-  question: string;
-  context?: string;
-  options: QuestionOption[];
-  allowMultiple: boolean;
-  allowFreeform: boolean;
-};
+export type AskUserResult = { content: { type: "text"; text: string }[]; details: unknown };
 
-export type QuestionsPayload = { questions: Question[] };
-
-export type QuestionAnswer = { selected: string[]; freeform?: string; comment?: string };
-
-export type QuestionsAnswer = { answers: QuestionAnswer[] } | { cancelled: true };
+/** `error`: the call was malformed (the model reads why and calls again). */
+export type QuestionsAnswer = { result: AskUserResult } | { error: string } | { cancelled: true };
 
 export type ChoicePayload = { title: string; message?: string; options: { id: string; title: string; description?: string }[] };
 

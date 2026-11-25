@@ -8,7 +8,7 @@ import { Container, CURSOR_MARKER, TuiAltScreen, type Component, type TUI } from
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { GateDialog } from "#extension/presentation/tui/gate.ts";
-import { QuestionsDialog } from "#extension/presentation/tui/questions.ts";
+import { AskUserView } from "#tui/ask-user.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
 import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
@@ -35,11 +35,11 @@ function interaction(tui: TUI, request: InteractionRequest): Component {
     case "secret":
       return new SecretDialog(tui, theme, request.payload, answer);
     case "questions":
-      return new QuestionsDialog(tui, theme, request.payload, answer);
+      return new AskUserView(tui, getTheme, request.payload, answer, () => undefined);
     case "choice":
-      return choiceDialog(theme, request.payload, answer);
+      return choiceDialog(tui, request.payload, answer);
     case "pi-dialog":
-      return piDialog(tui, theme, request.payload, answer);
+      return piDialog(tui, request.payload, answer);
     case "display":
       throw new Error("display has no dialog in the TUI");
     default:
@@ -86,6 +86,8 @@ async function draw(exhibit: Exhibit): Promise<VirtualTerminal> {
   const tui = new TuiAltScreen(probe); // never started: the dialogs only need its render requests
   const frame = new Container();
   frame.addChild(exhibit.component(tui));
+  // some prompts show once their tool got going (ask_user runs pi-ask-user's tool first)
+  await new Promise((resolve) => setTimeout(resolve, 20));
   // pi-tui's cursor markers (APC "pi:…") are for the TUI to place cursors, never written to a terminal
   const lines = frame.render(exhibit.width).map((line) => line.split(CURSOR_MARKER).join("").replace(/\x1b_pi:[^\x07]*\x07/g, ""));
   if (lines.length === 0 || lines.every((line) => line.trim() === "")) {

@@ -1,84 +1,61 @@
-// ask_user: the model asks the operator one question, or two to four independent ones together,
-// with optional multiple-choice answers, through the `questions` interaction every client draws
-// natively. A freeform answer and an extra comment are always offered (the harness rule: the
-// operator can always say something the options do not).
+// ask_user is pi-ask-user's (0.17.2): its parameters, description, guidelines and renderers, as
+// its extension registers the tool. Only the asking moves to the clients: the call goes to them as
+// the `questions` interaction, and the one who answers returns the tool result pi-ask-user makes —
+// the TUI by running pi-ask-user's own prompt (tui/src/ask-user.ts), the app by drawing its own
+// (client/src/ask-user.ts builds the same result).
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Type, type Static } from "typebox";
-import type { Question, QuestionAnswer } from "#protocol/interactions.ts";
+import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createJiti } from "jiti";
+import type { AskUserResult } from "#protocol/interactions.ts";
 import type { Interactions } from "../host.ts";
 
-const OPTION = Type.Object({
-  title: Type.String({ description: "Short title for this option" }),
-  description: Type.Optional(Type.String({ description: "Longer description explaining this option" })),
-});
-
-const QUESTION = Type.Object({
-  question: Type.String({ description: "One question in the batch" }),
-  context: Type.Optional(Type.String({ description: "Relevant context to show with this question (summary of findings)" })),
-  options: Type.Optional(Type.Array(OPTION, { description: "List of options for this question" })),
-  allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple options. Default: false" })),
-});
-
-const PARAMETERS = Type.Object({
-  question: Type.Optional(Type.String({ description: "The question to ask the user. With questions, it is only an optional heading for the batch; put every actual question inside questions." })),
-  context: Type.Optional(Type.String({ description: "Relevant context to show before the question (summary of findings)" })),
-  options: Type.Optional(Type.Array(OPTION, { description: "List of options for the user to choose from" })),
-  allowMultiple: Type.Optional(Type.Boolean({ description: "Allow selecting multiple options. Default: false" })),
-  questions: Type.Optional(Type.Array(QUESTION, { minItems: 2, maxItems: 4, description: "2-4 independent questions shown together, used instead of question" })),
-});
-
-type Params = Static<typeof PARAMETERS>;
-
-/** The questions of a call: the batch, or the single question. */
-export function questionsOf(params: Params): Question[] {
-  const toQuestion = (q: { question: string; context?: string; options?: { title: string; description?: string }[]; allowMultiple?: boolean }): Question => ({
-    question: q.question,
-    context: q.context,
-    options: q.options ?? [],
-    allowMultiple: q.allowMultiple ?? false,
-    allowFreeform: true,
-  });
-  if (params.questions !== undefined && params.questions.length > 0) {
-    return params.questions.map(toQuestion);
-  } else if (params.question !== undefined && params.question.trim() !== "") {
-    return [toQuestion({ question: params.question, context: params.context, options: params.options, allowMultiple: params.allowMultiple })];
+/** pi-ask-user's tool definition, captured from its extension (it registers nothing else that harness uses). */
+async function loadAskUserTool(): Promise<ToolDefinition> {
+  const jiti = createJiti(import.meta.url);
+  const module = (await jiti.import(import.meta.resolve("pi-ask-user/index.ts"))) as { default: (pi: ExtensionAPI) => void };
+  let tool: ToolDefinition | undefined;
+  const pi = new Proxy(
+    {
+      registerTool: (definition: ToolDefinition) => {
+        tool = definition;
+      },
+      events: { on: () => () => undefined, emit: () => undefined },
+    },
+    {
+      get(target, property) {
+        return property in target ? target[property as keyof typeof target] : () => undefined;
+      },
+    },
+  ) as unknown as ExtensionAPI;
+  module.default(pi);
+  if (tool === undefined) {
+    throw new Error("pi-ask-user registered no ask_user tool");
   } else {
-    throw new Error("ask_user needs a question, or 2-4 questions");
+    return tool;
   }
 }
 
-/** The answers as the model reads them. */
-export function describeAnswers(questions: Question[], answers: QuestionAnswer[]): string {
-  return questions
-    .map((question, index) => {
-      const answer = answers[index];
-      const parts = [
-        ...(answer?.selected ?? []),
-        ...(answer?.freeform !== undefined && answer.freeform.trim() !== "" ? [`(own answer) ${answer.freeform.trim()}`] : []),
-      ];
-      const comment = answer?.comment !== undefined && answer.comment.trim() !== "" ? `\nComment: ${answer.comment.trim()}` : "";
-      return `Q: ${question.question}\nA: ${parts.length > 0 ? parts.join("; ") : "(no answer)"}${comment}`;
-    })
-    .join("\n\n");
+export const piAskUserTool: ToolDefinition = await loadAskUserTool();
+
+/** The result of a dismissed question, as pi-ask-user words it. */
+function cancelled(params: Record<string, unknown>): AskUserResult {
+  return params.questions !== undefined && params.questions !== null
+    ? { content: [{ type: "text", text: "User cancelled the questions" }], details: { kind: "batch", questions: [], answers: [], cancelled: true } }
+    : { content: [{ type: "text", text: "User cancelled the question" }], details: { question: params.question, options: [], response: null, cancelled: true } };
 }
 
 export function registerAskUser(pi: ExtensionAPI, interactions: Interactions): void {
   pi.registerTool({
-    name: "ask_user",
-    label: "Ask user",
-    description:
-      "Ask the user a question with optional multiple-choice answers. Use this to gather information interactively. Ask one focused question per call, or 2-4 independent questions together through questions. Before calling, gather context with tools and pass a short summary via the context field.",
-    promptSnippet: "Ask the user one focused question (or 2-4 independent ones together) with optional multiple-choice answers to gather information interactively",
-    parameters: PARAMETERS,
-    executionMode: "sequential",
-    async execute(toolCallId, params, signal): Promise<{ content: { type: "text"; text: string }[]; details: { questions: Question[]; answers?: QuestionAnswer[]; cancelled?: boolean } }> {
-      const questions = questionsOf(params);
-      const answer = await interactions.ask("questions", { questions }, { signal, toolCallId });
+    ...piAskUserTool,
+    async execute(toolCallId, params, signal) {
+      const call = params as Record<string, unknown>;
+      const answer = await interactions.ask("questions", { params: call }, { signal, toolCallId });
       if (answer === undefined || "cancelled" in answer) {
-        return { content: [{ type: "text", text: "The user dismissed the question without answering." }], details: { questions, cancelled: true } };
+        return cancelled(call) as never;
+      } else if ("error" in answer) {
+        throw new Error(answer.error);
       } else {
-        return { content: [{ type: "text", text: describeAnswers(questions, answer.answers) }], details: { questions, answers: answer.answers } };
+        return answer.result as never;
       }
     },
   });

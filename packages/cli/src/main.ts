@@ -12,7 +12,8 @@
 
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import type { KeybindingsConfig } from "@earendil-works/pi-tui";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appWebDir, serveStatic } from "#node/endpoints/static.ts";
@@ -189,6 +190,8 @@ async function runTui(args: string[]): Promise<void> {
   // pi's theme loader finds custom themes under its agent directory: ~/.harness/themes
   process.env.PI_CODING_AGENT_DIR = home;
   const settings = SettingsManager.create(cwd, home);
+  const keybindingsFile = join(home, "keybindings.json");
+  const keybindings = existsSync(keybindingsFile) ? (JSON.parse(readFileSync(keybindingsFile, "utf8")) as KeybindingsConfig) : {};
 
   const local = await localNode(home);
   const embedded = local.embedded;
@@ -272,7 +275,7 @@ async function runTui(args: string[]): Promise<void> {
       // a system configuration updates the bundle
     }
   };
-  app = new App({ client, workbench, renderers, cwd, settings, onQuit: () => void quit() });
+  app = new App({ client, workbench, renderers, cwd, settings, keybindings, onQuit: () => void quit() });
   await app.start();
   await app.loadCompletions().catch(() => undefined);
   process.on("SIGTERM", () => void quit());

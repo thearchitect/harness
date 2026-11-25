@@ -4,7 +4,8 @@
 
 import { useState } from "react";
 import { Image, TextInput, View } from "react-native";
-import type { InteractionRequest, QuestionAnswer } from "#protocol/interactions.ts";
+import type { InteractionRequest } from "#protocol/interactions.ts";
+import { AskUser } from "./AskUser.tsx";
 import { secretValueProblem } from "#protocol/interactions.ts";
 import { fontOf, useTheme } from "../theme/theme.tsx";
 import { Button, Frame, T } from "./primitives.tsx";
@@ -73,44 +74,6 @@ function Secret({ request, answer }: { request: Extract<InteractionRequest, { ki
       {problem !== undefined ? <T color="warning">{problem}</T> : null}
       <View style={{ flexDirection: "row", gap: 6 }}>
         <Button label="Save" tone="success" disabled={value === "" || problem !== undefined} onPress={() => answer({ value })} />
-        <Button label="Cancel" onPress={() => answer({ cancelled: true })} />
-      </View>
-    </Frame>
-  );
-}
-
-function Questions({ request, answer }: { request: Extract<InteractionRequest, { kind: "questions" }>; answer: Answer }) {
-  const [answers, setAnswers] = useState<QuestionAnswer[]>(request.payload.questions.map(() => ({ selected: [] })));
-  const update = (index: number, change: Partial<QuestionAnswer>): void => setAnswers(answers.map((current, at) => (at === index ? { ...current, ...change } : current)));
-  return (
-    <Frame title="Questions" tone="accent">
-      {request.payload.questions.map((question, index) => {
-        const current = answers[index] ?? { selected: [] };
-        return (
-          <View key={index} style={{ gap: 4 }}>
-            <T bold>{question.question}</T>
-            {question.context !== undefined ? <T color="muted" selectable>{question.context}</T> : null}
-            <View style={{ flexDirection: "row", gap: 6, flexWrap: "wrap" }}>
-              {question.options.map((option) => {
-                const chosen = current.selected.includes(option.title);
-                return (
-                  <Button
-                    key={option.title}
-                    label={`${chosen ? "✓ " : ""}${option.title}`}
-                    tone={chosen ? "accent" : "border"}
-                    onPress={() =>
-                      update(index, { selected: question.allowMultiple ? (chosen ? current.selected.filter((title) => title !== option.title) : [...current.selected, option.title]) : chosen ? [] : [option.title] })
-                    }
-                  />
-                );
-              })}
-            </View>
-            {question.allowFreeform ? <Field label={`Answer to ${question.question}`} value={current.freeform ?? ""} onChange={(text) => update(index, { freeform: text })} placeholder="your own answer" /> : null}
-          </View>
-        );
-      })}
-      <View style={{ flexDirection: "row", gap: 6 }}>
-        <Button label="Answer" tone="success" onPress={() => answer({ answers: answers.map((current) => ({ selected: current.selected, ...(current.freeform !== undefined && current.freeform !== "" ? { freeform: current.freeform } : {}) })) })} />
         <Button label="Cancel" onPress={() => answer({ cancelled: true })} />
       </View>
     </Frame>
@@ -195,7 +158,7 @@ export function InteractionBlock({ request, from, answer }: { request: Interacti
       case "secret":
         return <Secret request={request} answer={answer} />;
       case "questions":
-        return <Questions request={request} answer={answer} />;
+        return <AskUser request={request} answer={answer} />;
       case "choice":
         return <Choice request={request} answer={answer} />;
       case "display":

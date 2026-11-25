@@ -1,6 +1,8 @@
 # The app on iOS: a Release build for the simulator (the JS bundled in), driven by Maestro against
 # a hub running on the runner (the simulator reaches it at localhost). Started by hand:
 # `gh workflow run native-apple.yml`; screenshots and logs are artifacts.
+# Disabled on GitHub while the app is not released: enable it (`gh workflow enable`) and run it
+# only by hand, when nothing else can show what it shows.
 name: native-apple
 
 on:

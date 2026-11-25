@@ -15,7 +15,7 @@ payload, { signal, toolCallId })` (`packages/extension/src/host.ts`), never thro
 |---|---|
 | `gate` | approval of a file change (Allow / Reject with a comment / Stop) |
 | `secret` | a secret value that never reaches the model |
-| `questions` | one or more questions with options and free text (`ask_user`) |
+| `questions` | `ask_user`'s call (the parameters of the bundled `pi-ask-user` package, whose tool it is); the answer is the tool's result: the TUI runs pi-ask-user's own prompt, the app builds the same result (`packages/client/src/ask-user.ts`) |
 | `choice` | one of a few options (the Claude limit dialog) |
 | `display` | showing a file to the operator |
 | `pi-dialog` | pi's `select`/`confirm`/`input`/`editor` of foreign extensions |

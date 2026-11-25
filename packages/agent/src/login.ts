@@ -79,13 +79,14 @@ class LoginFlow {
     switch (prompt.type) {
       case "text":
       case "manual_code": {
+        // a line of text, as pi asks for it: its input dialog
         const answer = await this.interactions.ask(
-          "questions",
-          { questions: [{ question: prompt.message, ...(context !== "" ? { context } : {}), options: [], allowMultiple: false, allowFreeform: true }] },
+          "pi-dialog",
+          { method: "input", title: [context, prompt.message].filter((line) => line !== "").join("\n"), ...(prompt.placeholder !== undefined ? { placeholder: prompt.placeholder } : {}) },
           { signal },
         );
-        const value = answer !== undefined && "answers" in answer ? answer.answers[0]?.freeform : undefined;
-        return value !== undefined && value !== "" ? value : cancelled();
+        const value = answer !== undefined && "value" in answer ? answer.value.trim() : "";
+        return value !== "" ? value : cancelled();
       }
       case "secret": {
         const answer = await this.interactions.ask("secret", { name: this.title, description: [prompt.message, context].filter((line) => line !== "").join("\n"), replaces: false }, { signal });
