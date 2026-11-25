@@ -44,7 +44,7 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
   harness_snapshot: Request("harness_snapshot", { limit: Int }),
   harness_entries_before: Request("harness_entries_before", { cursor: Str, limit: Int }),
   harness_prompt: Request("harness_prompt", { text: Str, mode: Opt(Mode), images: Opt(Type.Array(Image)) }),
-  harness_set: Request("harness_set", { variant: Opt(Str), madness: Opt(Type.Boolean()), implementer: Opt(Str) }),
+  harness_set: Request("harness_set", { variant: Opt(Str), madness: Opt(Type.Boolean()), implementer: Opt(Str), model: Opt(Str) }),
   harness_interrupt: Request("harness_interrupt", { reason: Str }),
   harness_interaction_response: Request("harness_interaction_response", { interactionId: Str, answer: Type.Unknown() }),
   harness_task_stop: Request("harness_task_stop", { taskId: Str }),

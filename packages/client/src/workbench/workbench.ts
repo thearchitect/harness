@@ -5,6 +5,7 @@
 
 import { systemClock, type Clock } from "#protocol/clock.ts";
 import type { BridgedComponent } from "#protocol/hap.ts";
+import { familyRefs } from "#protocol/model-ref.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import type { AgentInfo, AgentSummary } from "#protocol/node.ts";
 import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#protocol/state.ts";
@@ -608,19 +609,24 @@ export class Workbench {
       const api = this.client.connection(tab.node);
       const agentId = tab.agent.id;
       const { models } = await api.call<{ models: { provider: string; id: string; name?: string }[] }>(agentId, { type: "get_available_models" });
+      // references first: they follow the newest model of their family (plan 6.2)
+      const refs = familyRefs(models).map(({ ref, model }) => ({ value: `ref:${ref}`, label: `${ref} → ${model.id}`, description: "the newest of the family, now and later" }));
       this.openPicker({
         id: "model",
         title: "Model",
-        items: models.map((model) => ({ value: `${model.provider}/${model.id}`, label: `${model.provider}/${model.id}`, description: model.name })),
+        items: [...refs, ...models.map((model) => ({ value: `${model.provider}/${model.id}`, label: `${model.provider}/${model.id}`, description: model.name }))],
         choose: async (value) => {
-          const slash = value.indexOf("/");
-          await api.call(agentId, { type: "set_model", provider: value.slice(0, slash), modelId: value.slice(slash + 1) });
+          if (value.startsWith("ref:")) {
+            await api.call(agentId, { type: "harness_set", model: value.slice("ref:".length) });
+          } else {
+            const slash = value.indexOf("/");
+            await api.call(agentId, { type: "set_model", provider: value.slice(0, slash), modelId: value.slice(slash + 1) });
+          }
         },
       });
     }
   }
 
-  /** Answers the active session's interaction. */
   /** Keys for, and the width of, a bridged component of the active session. */
   async componentInput(componentId: string, data: string): Promise<void> {
     await this.componentCall({ type: "harness_component_input", componentId, data });

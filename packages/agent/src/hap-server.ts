@@ -66,6 +66,12 @@ export class HapServer {
       // kept only in the stream
     }
     this.output(event);
+    if (event.type === "harness_state" && this.unsubscribe !== undefined) {
+      // harness changes the model and thinking level too (model references), which pi reports to nobody
+      this.output({ type: "harness_session", session: this.view() });
+    } else {
+      // other records leave the session view as it is
+    }
   }
 
   async start(): Promise<void> {
@@ -248,6 +254,11 @@ export class HapServer {
       }
       case "harness_set":
         this.controller.set({ variant: request.variant, madness: request.madness, implementer: request.implementer });
+        if (request.model !== undefined) {
+          await this.controller.setModelRef(request.model);
+        } else {
+          // the model stays
+        }
         return this.controller.state();
       case "harness_interrupt":
         return { stopped: this.controller.interrupt(request.reason) };

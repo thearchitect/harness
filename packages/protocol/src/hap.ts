@@ -18,7 +18,8 @@ export type HapRequest =
   | { type: "harness_snapshot"; id: string; limit: number }
   | { type: "harness_entries_before"; id: string; cursor: string; limit: number }
   | { type: "harness_prompt"; id: string; text: string; mode?: RunMode; images?: ImageAttachment[] }
-  | { type: "harness_set"; id: string; variant?: Variant; madness?: boolean; implementer?: string }
+  /** `model`: a model reference (model-ref.ts) the session selects and follows. */
+  | { type: "harness_set"; id: string; variant?: Variant; madness?: boolean; implementer?: string; model?: string }
   | { type: "harness_interrupt"; id: string; reason: string }
   | { type: "harness_interaction_response"; id: string; interactionId: string; answer: unknown }
   | { type: "harness_task_stop"; id: string; taskId: string }

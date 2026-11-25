@@ -1,13 +1,14 @@
 /**
- * harness - the defaults of new sessions: the last chosen variant, madness
- * and implementer, kept in ~/.harness/harness.json. A session records its own
+ * harness - the defaults of new sessions: the last chosen variant, madness,
+ * implementer and model reference, kept in ~/.harness/harness.json. A session records its own
  * values in session entries (state/); this file only seeds new ones.
  */
 
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Variant } from "#protocol/state.ts";
 
-export type Defaults = { variant: Variant; madness: boolean; implementer: string };
+/** `model`: a model reference (plan 6.2) new sessions resolve and select; pi's own default when absent. */
+export type Defaults = { variant: Variant; madness: boolean; implementer: string; model?: string };
 
 /** What a new session starts with when nothing has been chosen yet. */
 export const BUILTIN_DEFAULTS: Defaults = { variant: "advanced", madness: false, implementer: "self" };
@@ -44,6 +45,7 @@ export function loadDefaults(path: string): { defaults: Defaults; problem?: stri
       variant = BUILTIN_DEFAULTS.variant,
       madness = BUILTIN_DEFAULTS.madness,
       implementer = BUILTIN_DEFAULTS.implementer,
+      model,
     } = data as Record<string, unknown>;
     if (variant !== "advanced" && variant !== "simple") {
       return { defaults: BUILTIN_DEFAULTS, problem: `${path}: variant must be "advanced" or "simple"` };
@@ -51,8 +53,10 @@ export function loadDefaults(path: string): { defaults: Defaults; problem?: stri
       return { defaults: BUILTIN_DEFAULTS, problem: `${path}: madness must be true or false` };
     } else if (typeof implementer !== "string" || implementer === "") {
       return { defaults: BUILTIN_DEFAULTS, problem: `${path}: implementer must be "self" or a subagent profile name` };
+    } else if (model !== undefined && (typeof model !== "string" || !model.includes("/"))) {
+      return { defaults: BUILTIN_DEFAULTS, problem: `${path}: model must be a model reference like "anthropic/opus:medium"` };
     } else {
-      return { defaults: { variant, madness, implementer } };
+      return { defaults: { variant, madness, implementer, ...(model !== undefined ? { model } : {}) } };
     }
   }
 }

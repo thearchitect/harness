@@ -3,8 +3,10 @@
 // HARNESS_TEST_EXTENSION; the file is HARNESS_TEST_SCENARIO (JSON: an array of turns). Each request
 // the model receives is appended to HARNESS_TEST_REQUESTS (JSONL), for assertions on what the model
 // was told. A turn without a script left answers "(no scripted turn)" so a test fails visibly.
+// HARNESS_TEST_MODELS (a JSON array of ids, read when the agent starts) adds models to the
+// provider's catalog, for tests of model references.
 
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { fauxAssistantMessage, fauxProvider, fauxText, fauxThinking, fauxToolCall, type FauxContentBlock } from "@earendil-works/pi-ai";
 
@@ -26,7 +28,9 @@ export default function scenarioModel(pi: ExtensionAPI): void {
   const turns = (): ScriptedTurn[] => (scenarioPath !== undefined && scenarioPath !== "" ? (JSON.parse(readFileSync(scenarioPath, "utf8")) as ScriptedTurn[]) : []);
   let next = 0;
 
-  const faux = fauxProvider({ provider: SCENARIO_PROVIDER, models: [{ id: SCENARIO_MODEL }] });
+  const modelsPath = process.env.HARNESS_TEST_MODELS;
+  const extra = modelsPath !== undefined && modelsPath !== "" && existsSync(modelsPath) ? (JSON.parse(readFileSync(modelsPath, "utf8")) as string[]) : [];
+  const faux = fauxProvider({ provider: SCENARIO_PROVIDER, models: [{ id: SCENARIO_MODEL }, ...extra.map((id) => ({ id, reasoning: true }))] });
   faux.setResponses(
     Array.from({ length: 1000 }, () => async (context: unknown) => {
       if (requestsPath !== undefined && requestsPath !== "") {

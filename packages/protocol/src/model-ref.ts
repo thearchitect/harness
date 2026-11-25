@@ -72,6 +72,31 @@ export function compareVersions(a: number[], b: number[]): number {
   return 0;
 }
 
+/**
+ * The family references the catalog offers, each with the model it resolves to now: every
+ * non-numeric token of an id that resolves unambiguously as a family ("anthropic/opus" →
+ * claude-opus-5-5). Sorted by reference.
+ */
+export function familyRefs(catalog: readonly CatalogModel[]): { ref: string; model: CatalogModel }[] {
+  const found = new Map<string, CatalogModel>();
+  for (const model of catalog) {
+    for (const token of tokens(model.id)) {
+      const ref = `${model.provider}/${token}`;
+      if (isNumeric(token) || token.length < 3 || found.has(ref)) {
+        continue; // a version, too short to name a family, or found already
+      } else {
+        const resolved = resolveModelRef(ref, catalog);
+        if (resolved.ok && resolved.family) {
+          found.set(ref, resolved.model);
+        } else {
+          // ambiguous, or an exact id
+        }
+      }
+    }
+  }
+  return [...found].map(([ref, model]) => ({ ref, model })).sort((a, b) => a.ref.localeCompare(b.ref));
+}
+
 export function resolveModelRef(ref: string, catalog: readonly CatalogModel[]): ResolvedModelRef {
   const parsed = parseModelRef(ref);
   if (parsed === undefined) {

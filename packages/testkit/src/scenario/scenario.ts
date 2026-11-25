@@ -13,6 +13,9 @@ import { Report } from "../report/report.ts";
 
 export type ClientKind = "tui" | "raw";
 
+/** A step that runs longer has hung (steps wait for events, never for time). */
+const STEP_TIMEOUT_MS = 45_000;
+
 export type ClientSpec = { kind: ClientKind; columns?: number; rows?: number };
 
 export type Clients = Record<string, TuiDriver | RawDriver>;
@@ -82,7 +85,12 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
       throw new Error(`${this.scenario.name}: no steps left`);
     } else {
       try {
-        await step.run(this.context);
+        // a hang fails the step here, so the report is written before the test runner gives up
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const hang = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error(`step "${step.name}" hung for ${STEP_TIMEOUT_MS / 1000}s`)), STEP_TIMEOUT_MS);
+        });
+        await Promise.race([step.run(this.context), hang]).finally(() => clearTimeout(timer));
         this.next += 1;
         await this.report.passed(step.name);
         return step;
@@ -123,7 +131,8 @@ export function runScenario<C extends Record<string, ClientSpec>>(scenario: Scen
       await run?.down();
     });
     for (const step of scenario.steps) {
-      test(step.name, async () => {
+      // the timeout only guards against a hang: a step waits for events, never for time
+      test(step.name, { timeout: 60_000 }, async () => {
         if (run.scenario.steps[run.next] !== step) {
           throw new Error(`skipped: an earlier step failed (${run.scenario.steps[run.next]?.name ?? "?"})`);
         } else {

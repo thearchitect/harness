@@ -29,7 +29,11 @@ export class Footer implements Component {
       const left = `${this.node}:${cwd}`;
       const context = session.usage.contextPercent !== undefined ? `${Math.round(session.usage.contextPercent)}%` : "?%";
       const right = [
-        session.model !== undefined ? `${session.model.provider}/${session.model.id}` : "no model",
+        model.state.model !== undefined
+          ? `${model.state.model.ref} → ${model.state.model.resolved.split("/").slice(1).join("/")}`
+          : session.model !== undefined
+            ? `${session.model.provider}/${session.model.id}`
+            : "no model",
         session.thinkingLevel !== "off" ? session.thinkingLevel : undefined,
         `ctx ${context}`,
         formatCost(session.usage.costUsd),

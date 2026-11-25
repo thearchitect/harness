@@ -25,6 +25,8 @@ export type Stand = {
   node: HarnessNode;
   /** Queues the model's next turns (each request plays the next queued turn, across agents). */
   script(turns: ScriptedTurn[]): void;
+  /** Models of the scenario provider besides `scripted`, for agents started from now on. */
+  models(ids: string[]): void;
   /** The requests the model received, in order. */
   requests(): unknown[];
   connect(via?: "inproc" | "unix"): Promise<NodeConnection>;
@@ -57,6 +59,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
   writeFileSync(join(dataDir, "auth.json"), JSON.stringify({ scenario: { type: "api_key", key: "scripted" } }), { mode: 0o600 });
   const scenarioPath = join(root, "scenario.json");
   const requestsPath = join(root, "requests.jsonl");
+  const modelsPath = join(root, "models.json");
   writeFileSync(scenarioPath, "[]");
 
   const node = new HarnessNode({
@@ -73,6 +76,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
       HARNESS_EXTRA_EXTENSIONS: `${SCENARIO_MODEL_PATH}:${PROBE_EXTENSION_PATH}`,
       HARNESS_TEST_SCENARIO: scenarioPath,
       HARNESS_TEST_REQUESTS: requestsPath,
+      HARNESS_TEST_MODELS: modelsPath,
     },
     summaryIntervalMs: 20,
     users: options.users,
@@ -87,6 +91,9 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     dataDir,
     project,
     node,
+    models(ids) {
+      writeFileSync(modelsPath, JSON.stringify(ids));
+    },
     script(turns) {
       // the model plays turns in order across scripts: each script adds the next ones
       const queued = JSON.parse(readFileSync(scenarioPath, "utf8")) as unknown[];

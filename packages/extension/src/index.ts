@@ -21,6 +21,7 @@ import { assembleSystemPrompt, systemPromptProblem } from "./core/prompt.ts";
 import { DEFAULTS_FILE, loadDefaults, saveDefault, type Defaults } from "./core/settings.ts";
 import { bundledMcpServers, lspToolchain, readManifest } from "./deps.ts";
 import { entryRenderers, type FinishedEntryData, type ModeEntryData, type SystemPromptEntryData } from "./presentation/modes.ts";
+import { lastModelRef, MODEL_REF_ENTRY, ModelRefs } from "./models/refs.ts";
 import { ENTRY, StateStore } from "./state/store.ts";
 import { Supervisor } from "./supervisor/supervisor.ts";
 import { registerTaskTools } from "./supervisor/tools.ts";
@@ -42,6 +43,8 @@ export type HarnessController = {
   /** The mode of the next prompt a client sends (harness_prompt names it explicitly). */
   setNextMode(mode: RunMode): void;
   set(change: { variant?: Variant; madness?: boolean; implementer?: string }): void;
+  /** Selects the model a reference (plan 6.2) names now; the session follows the reference. */
+  setModelRef(ref: string): Promise<{ resolved: string }>;
   /** "/-": stops the long calls in flight and steers the reason; returns how many calls stopped. */
   interrupt(reason: string): number;
   state(): HarnessState;
@@ -57,6 +60,15 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
   const defaultsPath = join(host.dataDir, DEFAULTS_FILE);
   let live: Live | undefined;
   let nextMode: RunMode | undefined;
+  let modelRefs: ModelRefs | undefined;
+
+  function rememberModel(ref: string): void {
+    try {
+      saveDefault(defaultsPath, "model", ref);
+    } catch (error) {
+      live?.ctx?.ui.notify(`harness: model not saved for new sessions: ${error instanceof Error ? error.message : String(error)}`, "error");
+    }
+  }
 
   function steer(text: string): void {
     live?.pi.sendUserMessage(text, { deliverAs: "steer", expandPromptTemplates: false });
@@ -102,6 +114,20 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       store.update(next);
     },
 
+    async setModelRef(ref) {
+      if (live?.ctx === undefined || modelRefs === undefined) {
+        throw new Error("no session yet");
+      } else {
+        const outcome = await modelRefs.apply(live.ctx, ref);
+        if (!outcome.ok) {
+          throw new Error(outcome.message);
+        } else {
+          rememberModel(ref);
+          return { resolved: outcome.resolved };
+        }
+      }
+    },
+
     interrupt(reason) {
       const stopped = interrupts.interruptAll(reason);
       steer(reason);
@@ -117,6 +143,8 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
 
   const factory: ExtensionFactory = (pi) => {
     live = { pi, ctx: undefined };
+    const refs = new ModelRefs(pi, (model) => store.update({ model }));
+    modelRefs = refs;
 
     const authorizeChange: Authorize = createAuthorizer({
       interactions: host.interactions,
@@ -153,6 +181,24 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       gateComments.clear();
       interrupts.clear();
       store.reset(restoreState(pi, ctx, defaultsPath, store.current));
+      // the session's model reference resolves again; a new session takes the default reference
+      const defaultRef = loadDefaults(defaultsPath).defaults.model;
+      const fresh = !ctx.sessionManager.getBranch().some((entry) => entry.type === "message");
+      if (fresh && defaultRef !== undefined && lastModelRef(ctx) === undefined) {
+        void refs.apply(ctx, defaultRef).then((outcome) => {
+          if (!outcome.ok) {
+            ctx.ui.notify(`default model ${defaultRef}: ${outcome.message}`, "warning");
+          } else {
+            // selected
+          }
+        });
+      } else {
+        void refs.refresh(ctx);
+      }
+    });
+
+    pi.on("model_select", (_event, ctx) => {
+      refs.selected(ctx);
     });
 
     pi.on("session_tree", (_event, ctx) => {
@@ -318,6 +364,7 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
     pi.registerEntryRenderer<ModeEntryData>(ENTRY.mode, entryRenderers.mode);
     pi.registerEntryRenderer<FinishedEntryData>(ENTRY.finished, entryRenderers.finished);
     pi.registerEntryRenderer<SystemPromptEntryData>(ENTRY.systemPrompt, entryRenderers.systemPrompt);
+    pi.registerEntryRenderer(MODEL_REF_ENTRY, entryRenderers.modelRef as never);
   };
 
   return { factory, controller };

@@ -107,6 +107,18 @@ export const entryRenderers = {
     return new Text(modeColor(storedMode(entry.data), theme.getColorMode(), text) + tail, 0, 0);
   },
 
+  /** A model reference chosen or resolved again: "opus: claude-opus-5-5 → claude-opus-5-6" when the model changed. */
+  modelRef(entry: CustomEntry<{ ref?: string; resolved?: string; previous?: string }>, _options: EntryRenderOptions, theme: Theme): Text | undefined {
+    const data = entry.data;
+    if (data?.ref === undefined || data.resolved === undefined) {
+      return undefined; // dropped for an exact model: nothing to show
+    } else if (data.previous !== undefined && data.previous !== data.resolved) {
+      return new Text(theme.fg("warning", `◆ ${data.ref}: ${data.previous} → ${data.resolved}`), 0, 0);
+    } else {
+      return new Text(theme.fg("muted", `◆ model ${data.ref} → ${data.resolved}`), 0, 0);
+    }
+  },
+
   systemPrompt(entry: CustomEntry<SystemPromptEntryData>, options: EntryRenderOptions, theme: Theme): Text {
     const data = entry.data;
     const summary = data !== undefined ? `◆ System prompt · ${data.model}` : "◆ System prompt";

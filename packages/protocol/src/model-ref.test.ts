@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { resolveModelRef, type CatalogModel } from "./model-ref.ts";
+import { familyRefs, resolveModelRef, type CatalogModel } from "./model-ref.ts";
 
 const catalog: CatalogModel[] = [
   "claude-opus-4-5",
@@ -40,6 +40,15 @@ test("an exact id is taken as is, and the thinking suffix is kept", () => {
   assert.equal(result.model.id, "claude-opus-4-8");
   assert.equal(result.thinking, "high");
   assert.equal(result.family, false);
+});
+
+test("the catalog's family references, each with the model it names now", () => {
+  const refs = Object.fromEntries(familyRefs(catalog).map(({ ref, model }) => [ref, model.id]));
+  assert.equal(refs["anthropic/opus"], "claude-opus-5-5");
+  assert.equal(refs["anthropic/sonnet"], "claude-sonnet-5-5");
+  assert.equal(refs["openai-codex/sol"], "gpt-10-sol");
+  assert.equal(refs["anthropic/claude"], undefined, "claude names opus and sonnet: ambiguous");
+  assert.equal(refs["anthropic/fast"], "claude-opus-5-5-fast");
 });
 
 test("a reference that cannot resolve says why", () => {
