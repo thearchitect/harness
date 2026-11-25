@@ -8,6 +8,8 @@ appId: dev.harness.app
     visible: "Pairing code"
     timeout: 60000
 - tapOn: "Hub address"
+# typing before the keyboard is up loses all but the first character (iOS)
+- waitForAnimationToEnd
 - inputText: ${HUB}
 - tapOn: "Pairing code"
 - inputText: ${CODE}
