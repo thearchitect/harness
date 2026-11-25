@@ -128,8 +128,8 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
         // madness unchanged
       }
       if (change.implementer !== undefined && change.implementer !== current.implementer) {
+        // the session's own: new sessions start with `self`
         live?.pi.appendEntry(ENTRY.implementer, { implementer: change.implementer });
-        rememberDefault("implementer", change.implementer);
         next.implementer = change.implementer;
       } else {
         // implementer unchanged
@@ -548,8 +548,8 @@ function restoreState(pi: ExtensionAPI, ctx: ExtensionContext, defaultsPath: str
     }
     pi.appendEntry(ENTRY.variant, { variant: defaults.variant });
     pi.appendEntry(ENTRY.madness, { enabled: defaults.madness });
-    pi.appendEntry(ENTRY.implementer, { implementer: defaults.implementer });
-    return { ...previous, variant: defaults.variant, madness: defaults.madness, implementer: defaults.implementer, mode };
+    pi.appendEntry(ENTRY.implementer, { implementer: "self" });
+    return { ...previous, variant: defaults.variant, madness: defaults.madness, implementer: "self", mode };
   }
 }
 

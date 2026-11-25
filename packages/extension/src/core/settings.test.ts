@@ -24,15 +24,15 @@ describe("defaults of new sessions", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  test("nothing saved yet: advanced, no madness, implemented by the session itself, no problem", () => {
-    assert.deepEqual(loadDefaults(path), { defaults: { variant: "advanced", madness: false, implementer: "self" } });
+  test("nothing saved yet: advanced, no madness, no problem", () => {
+    assert.deepEqual(loadDefaults(path), { defaults: { variant: "advanced", madness: false } });
   });
 
-  test("saved values are read back; a missing one takes its built-in default", () => {
+  test("saved values are read back; a missing one takes its built-in default; an implementer left by an earlier harness is not read", () => {
     writeFileSync(path, JSON.stringify({ variant: "simple", madness: true, implementer: "builder" }));
-    assert.deepEqual(loadDefaults(path), { defaults: { variant: "simple", madness: true, implementer: "builder" } });
+    assert.deepEqual(loadDefaults(path), { defaults: { variant: "simple", madness: true } });
     writeFileSync(path, JSON.stringify({ variant: "simple" }));
-    assert.deepEqual(loadDefaults(path), { defaults: { variant: "simple", madness: false, implementer: "self" } });
+    assert.deepEqual(loadDefaults(path), { defaults: { variant: "simple", madness: false } });
   });
 
   for (const [name, content, problem] of [
@@ -40,7 +40,6 @@ describe("defaults of new sessions", () => {
     ["not an object", "[]", /not a JSON object/],
     ["unknown variant", JSON.stringify({ variant: "plan" }), /variant must be/],
     ["madness not a boolean", JSON.stringify({ madness: "yes" }), /madness must be/],
-    ["implementer not a name", JSON.stringify({ implementer: "" }), /implementer must be/],
   ] as const) {
     test(`${name}: built-in defaults and the problem`, () => {
       writeFileSync(path, content);
@@ -50,12 +49,12 @@ describe("defaults of new sessions", () => {
     });
   }
 
-  test("saving one default keeps the others and leaves no temporary file", () => {
+  test("saving one default keeps the others, drops an earlier harness's implementer, leaves no temporary or lock file", () => {
+    writeFileSync(path, JSON.stringify({ implementer: "builder" }));
     saveDefault(path, "madness", true);
     saveDefault(path, "variant", "simple");
     saveDefault(path, "madness", false);
-    saveDefault(path, "implementer", "builder");
-    assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { variant: "simple", madness: false, implementer: "builder" });
+    assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { variant: "simple", madness: false });
     assert.deepEqual(readdirSync(dir), [DEFAULTS_FILE]);
   });
 

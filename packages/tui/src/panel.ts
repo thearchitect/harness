@@ -6,6 +6,8 @@
 //
 // Keys: ↑/↓ move (cyclic, titles skipped), Space/Enter apply, Esc or Ctrl+\ close. The mouse: a click
 // applies a row, the pointer over a row selects it. A toggle keeps the panel open; an action closes it.
+// A text field (the session's name) takes typing and Backspace as soon as it is selected; leaving it
+// (↑/↓, closing) applies what was typed.
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, matchesKey, truncateToWidth, visibleWidth, type Component, type Focusable, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
@@ -27,6 +29,10 @@ export type PanelOptions = {
   theme: () => Theme;
   sections: () => PanelSection[];
   apply: (id: PanelId) => void;
+  /** A text field's new value (typed). */
+  edit: (id: PanelId, text: string) => void;
+  /** The selection leaves a text field. */
+  leave: (id: PanelId) => void;
   close: () => void;
   /** The keys that close it besides Esc (the panel's own shortcut). */
   closeKeys: readonly string[];
@@ -66,16 +72,27 @@ export class HarnessPanel implements Component, Focusable {
     const items = this.items(this.rows());
     const count = items.length;
     const index = this.selectedIndex(items);
+    const current = items[index];
     if (matchesKey(data, "escape") || this.options.closeKeys.some((key) => matchesKey(data, key as never))) {
       this.options.close();
     } else if (count === 0) {
       // nothing to move to or apply
-    } else if (keys.matches(data, "tui.select.up")) {
-      this.selectedId = items[(index - 1 + count) % count]?.id;
+    } else if (keys.matches(data, "tui.select.up") || keys.matches(data, "tui.select.down")) {
+      if (current?.kind === "text") {
+        this.options.leave(current.id);
+      } else {
+        // not a field
+      }
+      this.selectedId = items[(index + (keys.matches(data, "tui.select.up") ? count - 1 : 1)) % count]?.id;
       this.options.tui.requestRender();
-    } else if (keys.matches(data, "tui.select.down")) {
-      this.selectedId = items[(index + 1) % count]?.id;
-      this.options.tui.requestRender();
+    } else if (current?.kind === "text") {
+      if (keys.matches(data, "tui.editor.deleteCharBackward")) {
+        this.options.edit(current.id, [...current.value].slice(0, -1).join(""));
+      } else if (visibleWidth(data) > 0 && !/[\x00-\x1f\x7f]/.test(data)) {
+        this.options.edit(current.id, `${current.value}${data}`);
+      } else {
+        // other keys do nothing in a field
+      }
     } else if (keys.matches(data, "tui.select.confirm") || matchesKey(data, "space")) {
       const item = items[index];
       if (item !== undefined) {
@@ -94,14 +111,27 @@ export class HarnessPanel implements Component, Focusable {
       return { handled: true }; // the panel's own space: nothing under it takes the pointer
     } else if (event.type === "move") {
       const changed = item.id !== this.selectedId;
+      this.leaveField(item);
       this.selectedId = item.id;
       return { handled: true, render: changed };
     } else if (event.type === "click" && event.button === "left") {
+      this.leaveField(item);
       this.selectedId = item.id;
       this.options.apply(item.id);
       return { handled: true, render: true };
     } else {
       return { handled: true };
+    }
+  }
+
+  /** The pointer moves the selection off a text field: what was typed applies. */
+  private leaveField(next: PanelItem): void {
+    const items = this.items(this.rows());
+    const current = items[this.selectedIndex(items)];
+    if (current?.kind === "text" && current.id !== next.id) {
+      this.options.leave(current.id);
+    } else {
+      // not leaving a field
     }
   }
 
@@ -163,6 +193,23 @@ export class HarnessPanel implements Component, Focusable {
       case "value":
         value = theme.fg("muted", item.value);
         break;
+      case "text": {
+        // the field: what is typed, a cursor while selected; the session's title when empty
+        const room = Math.max(4, contentWidth - visibleWidth(item.label) - 2);
+        const cursor = selected ? theme.fg("accent", "▏") : "";
+        if (item.value === "") {
+          value = `${truncateToWidth(theme.fg("dim", item.placeholder), room - 1)}${cursor}`;
+        } else {
+          // the end of a long name stays in sight while it is typed
+          const chars = [...item.value];
+          let start = 0;
+          while (start < chars.length && visibleWidth(chars.slice(start).join("")) > room - 1) {
+            start += 1;
+          }
+          value = `${chars.slice(start).join("")}${cursor}`;
+        }
+        break;
+      }
       case "action":
         value = theme.fg("dim", item.hint);
         break;

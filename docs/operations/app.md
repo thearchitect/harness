@@ -29,9 +29,11 @@ The same in the TUI and the app:
   back to the editor; on a tab `Delete` closes it. A click opens a row, the middle button closes a
   tab, the pointer lights a row up.
 - `Ctrl+\` opens the harness panel on the right: MODE (madness, simple — switches that keep the
-  panel open; implementer — a value that cycles) and HARNESS (update, dependencies, subagents,
-  logs — actions that close it). `↑`/`↓`, `Space`/`Enter` apply, `Esc` or `Ctrl+\` close; a click
-  applies a row.
+  panel open; new sessions start with the last choice), SESSION (its name — a field that takes
+  typing as soon as it is selected and names the session as you type, no Enter; the implementer —
+  `self` or a subagent profile in turn, for this session only) and HARNESS (update, dependencies,
+  subagents, logs, restart node — actions that close it). `↑`/`↓`, `Space`/`Enter` apply, `Esc` or
+  `Ctrl+\` close (a name being typed applies); a click applies a row.
 - Lists in the editor's place (`Ctrl+L` models, sessions, `/tree`, `/settings`) name each key in
   their hint line; the model list has Favorites (pi's `enabledModels`) and All, `Tab` switches.
 

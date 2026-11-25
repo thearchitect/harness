@@ -194,6 +194,39 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "the panel's SESSION: the name field takes typing at once and names the tab without Enter; the implementer is the session's alone",
+      async run({ stand, clients: { tui } }) {
+        await tui.act("panel.toggle");
+        await tui.waitForText((screen) => screen.includes("SESSION") && screen.includes("implementer") && screen.includes("restart node"));
+        await tui.press("\x1b[B"); // simple
+        await tui.press("\x1b[B"); // name
+        for (const key of "renamed") {
+          await tui.press(key);
+        }
+        await tui.waitForText(() => tui.workbench.tabs().some((tab) => tab.title === "renamed"));
+        await tui.press("\x1b[B"); // implementer
+        await tui.press(" ");
+        await tui.waitForText(() => tui.screen().agent?.state.implementer !== "self");
+        await tui.press("\x1b");
+        assert.deepEqual(tui.screen().zones.overlays, []);
+        const defaults = JSON.parse(readFileSync(join(stand.dataDir, "harness.json"), "utf8")) as Record<string, unknown>;
+        assert.equal(defaults.madness, false, "madness is kept for new sessions");
+        assert.equal("implementer" in defaults, false, "the implementer is not");
+        await tui.act("panel.toggle");
+        await tui.press("\x1b[B");
+        await tui.press("\x1b[B");
+        await tui.press("\x1b[B");
+        // in turn through the profiles back to self
+        for (let turn = 0; tui.screen().agent?.state.implementer !== "self"; turn += 1) {
+          assert.ok(turn < 5, "the implementer never came back to self");
+          const before = tui.screen().agent?.state.implementer;
+          await tui.press(" ");
+          await tui.waitForText(() => tui.screen().agent?.state.implementer !== before);
+        }
+        await tui.press("\x1b");
+      },
+    },
+    {
       name: "Alt+← takes the keyboard into the tabs: ↓ to another, Enter opens it, Esc returns to the editor",
       async run({ stand, clients: { tui } }) {
         await tui.workbench.newTab(tui.client.home ?? "", stand.project);

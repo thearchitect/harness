@@ -206,6 +206,10 @@ export const scenario = defineScenario({
         await web.page.keyboard.press("ArrowUp");
         await web.page.keyboard.press("Enter");
         await panel.getByText("●━━  on").waitFor({ state: "detached" });
+        // SESSION: the name field names the tab as it is typed
+        await panel.getByText("SESSION", { exact: true }).waitFor();
+        await panel.getByLabel("session name").fill("web-named");
+        await web.page.getByText("web-named").first().waitFor();
         await web.page.keyboard.press("Escape");
         await panel.waitFor({ state: "detached" });
       },

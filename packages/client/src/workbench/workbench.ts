@@ -126,16 +126,21 @@ export type Screen = {
   prefill: { key: string; text: string } | undefined;
 };
 
-export type PanelId = "madness" | "simple" | "implementer" | "subagents" | "dependencies" | "logs" | "update";
+export type PanelId = "madness" | "simple" | "name" | "implementer" | "subagents" | "dependencies" | "logs" | "restart" | "update";
 
 /**
  * A row of the harness panel (Ctrl+\): a toggle (on/off, its tone when on) keeps the panel open; an
- * action (with a hint on the right) closes it, so what it shows is not under the panel.
+ * action (with a hint on the right) closes it, so what it shows is not under the panel; a text field
+ * takes typing as soon as it is selected and applies it as it is typed (editSessionName).
  */
 export type PanelItem =
   | { kind: "toggle"; id: PanelId; label: string; tone: "success" | "error"; on: boolean }
   | { kind: "value"; id: PanelId; label: string; value: string }
+  | { kind: "text"; id: PanelId; label: string; value: string; placeholder: string }
   | { kind: "action"; id: PanelId; label: string; hint: string };
+
+/** A typed session name goes to the session this long after the last key (pi writes an entry per change). */
+export const NAME_APPLY_MS = 400;
 
 export type PanelSection = { title: string; items: PanelItem[] };
 
@@ -835,13 +840,28 @@ export class Workbench {
   closeOverlay(kind: OverlayKind): void {
     if (this.overlays.includes(kind)) {
       this.overlays = this.overlays.filter((overlay) => overlay !== kind);
+      this.overlayClosed(kind);
       this.client.changed();
     } else {
       // not open
     }
   }
 
+  /** The panel closes with a name being typed: it applies now. */
+  private overlayClosed(kind: OverlayKind): void {
+    if (kind === "panel") {
+      void this.commitSessionName();
+    } else {
+      // nothing pending in the strips
+    }
+  }
+
   toggleOverlay(kind: OverlayKind): void {
+    if (this.overlays.includes(kind)) {
+      this.overlayClosed(kind);
+    } else {
+      // opening
+    }
     this.overlays = this.overlays.includes(kind) ? this.overlays.filter((overlay) => overlay !== kind) : [...this.overlays, kind];
     this.client.changed();
   }
@@ -864,12 +884,15 @@ export class Workbench {
   }
 
   /**
-   * The harness panel: MODE (the active session's switches) and HARNESS (the bundle, the node). The
-   * same sections, rows and order in every UI. Without a session only HARNESS.
+   * The harness panel: MODE (the active session's switches, kept for new sessions too), SESSION (its
+   * name, its implementer) and HARNESS (the bundle, the node). The same sections, rows and order in
+   * every UI. Without a session only HARNESS.
    */
   panel(): PanelSection[] {
     const tab = this.activeTab();
-    const state = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id))?.state : undefined;
+    const model = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    const state = model?.state;
+    const name = this.nameDraft?.text ?? model?.session?.sessionName ?? "";
     const mode: PanelSection[] =
       state !== undefined
         ? [
@@ -878,6 +901,12 @@ export class Workbench {
               items: [
                 { kind: "toggle", id: "madness", label: "madness", tone: "error", on: state.madness },
                 { kind: "toggle", id: "simple", label: "simple", tone: "success", on: state.variant === "simple" },
+              ],
+            },
+            {
+              title: "session",
+              items: [
+                { kind: "text", id: "name", label: "name", value: name, placeholder: tab?.title ?? "" },
                 { kind: "value", id: "implementer", label: "implementer", value: state.implementer },
               ],
             },
@@ -895,9 +924,61 @@ export class Workbench {
             ]
           : []),
         { kind: "action", id: "logs", label: "logs", hint: "node events" },
+        { kind: "action", id: "restart", label: "restart node", hint: this.panelNode() ?? "" },
       ],
     };
     return [...mode, harness];
+  }
+
+  /** The node the HARNESS rows act on: the active session's, else the home one. */
+  private panelNode(): string | undefined {
+    return this.activeTab()?.node ?? this.client.home;
+  }
+
+  /** The session name being typed in the panel, and where it goes. */
+  private nameDraft: { node: string; agent: string; text: string; timer: unknown } | undefined;
+
+  /** The panel's name field changed: the session gets the name NAME_APPLY_MS after the last change. */
+  editSessionName(text: string): void {
+    const tab = this.activeTab();
+    if (tab?.agent === undefined) {
+      return;
+    } else {
+      if (this.nameDraft !== undefined) {
+        this.clock.clearTimeout(this.nameDraft.timer);
+      } else {
+        // the first change of this edit
+      }
+      const draft = { node: tab.node, agent: tab.agent.id, text, timer: undefined as unknown };
+      draft.timer = this.clock.setTimeout(() => void this.applySessionName(draft), NAME_APPLY_MS);
+      this.nameDraft = draft;
+      this.client.changed();
+    }
+  }
+
+  /** The name field is left (another row, the panel closed): the typed name applies now. */
+  async commitSessionName(): Promise<void> {
+    const draft = this.nameDraft;
+    if (draft !== undefined) {
+      this.clock.clearTimeout(draft.timer);
+      this.nameDraft = undefined;
+      await this.applySessionName(draft);
+      this.client.changed();
+    } else {
+      // nothing typed
+    }
+  }
+
+  private async applySessionName(draft: { node: string; agent: string; text: string }): Promise<void> {
+    const name = draft.text.trim();
+    if (name === "") {
+      // pi keeps a name: an emptied field leaves it as it was
+    } else {
+      await this.client
+        .connection(draft.node)
+        .call(draft.agent, { type: "set_session_name", name })
+        .catch((error: unknown) => this.notify("error", `session name: ${error instanceof Error ? error.message : String(error)}`));
+    }
   }
 
   /**
@@ -912,9 +993,12 @@ export class Workbench {
       this.notify("warning", `${id}: not here now`);
       return true;
     } else if (item.kind === "action") {
+      await this.commitSessionName();
       this.closeOverlay("panel");
       await this.choosePanel(id);
       return false;
+    } else if (item.kind === "text") {
+      return true; // a field takes typing, not applying
     } else {
       await this.choosePanel(id);
       return true;
@@ -934,6 +1018,16 @@ export class Workbench {
         await this.update.run();
       } else {
         this.notify("info", `update: ${this.update?.hint() ?? "not available here"}`);
+      }
+    } else if (value === "restart") {
+      const node = this.panelNode();
+      if (node === undefined) {
+        this.notify("warning", "no node");
+      } else {
+        const agents = [...this.client.agents.values()].filter((agent) => agent.node === node).length;
+        this.confirm(`Restart node ${node}? Stops ${agents} agents and their background tasks`, "Restart", async () => {
+          await this.client.connection(node).request("node_restart", {});
+        });
       }
     } else if (value === "logs") {
       try {
@@ -959,9 +1053,26 @@ export class Workbench {
     } else {
       const state = agent.state;
       const variant: Variant = state.variant === "simple" ? "advanced" : "simple";
-      const change =
-        value === "madness" ? { madness: !state.madness } : value === "simple" ? { variant } : { implementer: state.implementer === "self" ? "builder" : "self" };
-      await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", ...change });
+      switch (value) {
+        case "madness":
+          await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", madness: !state.madness });
+          break;
+        case "simple":
+          await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", variant });
+          break;
+        case "implementer": {
+          // in turn: self, then the profiles this session may call
+          const { profiles } = await this.client.connection(tab.node).call<{ profiles: SubagentProfileView[] }>(tab.agent.id, { type: "harness_subagents" });
+          const choices = ["self", ...profiles.map((profile) => profile.name)];
+          const next = choices[(choices.indexOf(state.implementer) + 1) % choices.length] ?? "self";
+          await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", implementer: next });
+          break;
+        }
+        case "name":
+          break; // a field: typing applies it (editSessionName)
+        default:
+          throw new Error(`panel row ${value} has no change`);
+      }
     }
   }
 

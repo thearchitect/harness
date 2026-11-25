@@ -6,7 +6,7 @@
   settings.json         # pi's settings (model, thinking, packages, theme)
   ui-settings.json      # the UI settings of the node's user (below)
   auth.json             # provider credentials (pi)
-  harness.json          # defaults of new sessions: variant, madness, implementer, model
+  harness.json          # defaults of new sessions: variant, madness, model
   remotes.json          # this client's hubs and device tokens (0600)
   sessions/             # pi sessions
   locks/                # one agent per session
@@ -35,5 +35,7 @@ the node user's `ui-settings.json`. Clients read them with `settings_get` and ch
 
 ## Defaults of new sessions
 
-`harness.json` keeps the last choice of the simple mode, madness, the implementer and the model
-reference; a new session starts with them and records its own values in its entries.
+`harness.json` keeps the last choice of the simple mode, madness and the model reference (written
+under `harness.json.lock`: every agent of the user may write it); a new session starts with them and
+records its own values in its entries. The implementer is the session's alone: a new session starts
+with `self`.

@@ -5,11 +5,11 @@
 
 import * as Clipboard from "expo-clipboard";
 import { useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
-import { PanResponder, Platform, Pressable, View } from "react-native";
+import { PanResponder, Platform, Pressable, TextInput, View } from "react-native";
 import type { AgentModel } from "#client/model/agent-model.ts";
 import type { Item, PanelId, PanelItem, Screen, StatusLine, Tab, Workbench } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
-import { useTheme, type Token } from "../theme/theme.tsx";
+import { fontOf, useTheme, type Token } from "../theme/theme.tsx";
 import { EditorZoneView, type Completion } from "./EditorZone.tsx";
 import { Button, GlyphMark, ListRow, T } from "./primitives.tsx";
 import { Transcript } from "./Transcript.tsx";
@@ -183,11 +183,36 @@ function PanelValue({ item }: { item: PanelItem }) {
       return item.on ? <T color={item.tone}>●━━  on</T> : <T color="dim">━━○ off</T>;
     case "value":
       return <T color="muted">{item.value}</T>;
+    case "text":
+      return <T color="muted">{item.value !== "" ? item.value : item.placeholder}</T>;
     case "action":
       return <T color="dim">{item.hint}</T>;
     default:
       throw new Error(`unknown panel item: ${JSON.stringify(item satisfies never)}`);
   }
+}
+
+/**
+ * The panel's text field (the session's name): typing applies as it goes (Workbench.editSessionName),
+ * leaving it applies at once; ↑/↓ move on to the next rows as on every row.
+ */
+function PanelField({ item, workbench }: { item: Extract<PanelItem, { kind: "text" }>; workbench: Workbench }) {
+  const theme = useTheme();
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 2 }}>
+      <T style={{ marginRight: 8 }}>{item.label}</T>
+      <TextInput
+        accessibilityLabel={`session ${item.label}`}
+        value={item.value}
+        placeholder={item.placeholder}
+        placeholderTextColor={theme.colors.dim}
+        onChangeText={(text) => workbench.editSessionName(text)}
+        onBlur={() => void workbench.commitSessionName()}
+        onKeyPress={(event) => (event.nativeEvent.key === "Escape" ? workbench.closeOverlay("panel") : undefined)}
+        style={[fontOf(theme.chrome), { flex: 1, color: theme.colors.text, borderBottomWidth: 1, borderColor: theme.colors.borderMuted, paddingVertical: 2 }]}
+      />
+    </View>
+  );
 }
 
 /**
@@ -221,16 +246,20 @@ function Panel({ workbench }: { workbench: Workbench }) {
             <T color="muted" style={{ paddingHorizontal: 8 }}>
               {section.title.toUpperCase()}
             </T>
-            {section.items.map((item) => (
-              <ListRow key={item.id} label={item.label} onPress={() => apply(item.id)}>
-                <T lines={1} style={{ flexShrink: 1 }}>
-                  {item.label}
-                </T>
-                <View style={{ marginLeft: "auto" as never, paddingLeft: 8 }}>
-                  <PanelValue item={item} />
-                </View>
-              </ListRow>
-            ))}
+            {section.items.map((item) =>
+              item.kind === "text" ? (
+                <PanelField key={item.id} item={item} workbench={workbench} />
+              ) : (
+                <ListRow key={item.id} label={item.label} onPress={() => apply(item.id)}>
+                  <T lines={1} style={{ flexShrink: 1 }}>
+                    {item.label}
+                  </T>
+                  <View style={{ marginLeft: "auto" as never, paddingLeft: 8 }}>
+                    <PanelValue item={item} />
+                  </View>
+                </ListRow>
+              ),
+            )}
           </View>
         ))}
       </View>

@@ -650,6 +650,8 @@ export class App {
           theme: getTheme,
           sections: () => this.workbench.panel(),
           apply: (id) => void this.workbench.applyPanel(id).catch((error: unknown) => this.workbench.notify("error", error instanceof Error ? error.message : String(error))),
+          edit: (id, text) => (id === "name" ? this.workbench.editSessionName(text) : undefined),
+          leave: (id) => (id === "name" ? void this.workbench.commitSessionName() : undefined),
           close: () => this.workbench.closeOverlay("panel"),
           closeKeys: ACTIONS["panel.toggle"].keys,
         });
