@@ -66,7 +66,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     name: options.name ?? "test",
     dataDir,
     harnessVersion: "test",
-    agentCommand: options.bundle !== undefined ? [process.execPath, join(options.bundle, "share/harness/app/packages/agent/src/main.ts")] : undefined,
+    agentCommand: options.bundle !== undefined ? [process.execPath, join(options.bundle, "share/harness/src/packages/agent/src/main.ts")] : undefined,
     agentEnv: {
       TMPDIR: agentTmp,
       // agents of a stand run the checkout without the bundle's MCP servers and packages, or a bundle with all of them

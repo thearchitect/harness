@@ -46,6 +46,15 @@ describe("the bundle", { skip }, () => {
     assert.ok((manifest?.piExtensions.length ?? 0) > 0);
   });
 
+  test("share/harness: the documents, the sources and pi's documents the documents link to", () => {
+    for (const path of ["docs/index.md", "docs/protocol/reference/hap.md", "src/packages/extension/src/core/prompt.yaml", "pi/coding-agent/docs/extensions.md", "pi/tui/dist/index.d.ts"]) {
+      assert.ok(existsSync(join(root, "share/harness", path)), path);
+    }
+    // the prompt's paths, as an agent of the bundle computes them
+    assert.ok(existsSync(join(root, "share/harness/src/docs/index.md")));
+    assert.ok(existsSync(join(root, "share/harness/src/pi/coding-agent/docs")));
+  });
+
   test("bundled tools: installed ones exist where the manifest says, \"path\" ones are linked in bin/", () => {
     for (const [id, tool] of Object.entries(manifest?.bundled ?? {})) {
       for (const bin of tool.bins) {

@@ -17,6 +17,8 @@ stdenvNoCC.mkDerivation {
     fileset = lib.fileset.unions [
       ../packages
       ../tests
+      ../docs
+      ../README.md
       ../package.json
       ../tsconfig.json
       ./check.sh

@@ -69,6 +69,7 @@ let
       root = ../.;
       fileset = lib.fileset.unions [
         ../packages
+        ../docs
         ../package.json
         ../tsconfig.json
         ../LICENSE
@@ -76,10 +77,17 @@ let
       ];
     };
     dontBuild = true;
+    # docs/ links into pi/ (../pi/coding-agent/docs/…): the pi packages of this bundle, so the
+    # links point at the documents of the pi that runs.
     installPhase = ''
       runHook preInstall
       cp -r . $out
       ln -s ${nodeModules} $out/node_modules
+      mkdir $out/pi
+      ln -s ${nodeModules}/@earendil-works/pi-coding-agent $out/pi/coding-agent
+      ln -s ${nodeModules}/@earendil-works/pi-tui $out/pi/tui
+      ln -s ${nodeModules}/@earendil-works/pi-ai $out/pi/ai
+      ln -s ${nodeModules}/@earendil-works/pi-agent-core $out/pi/agent-core
       runHook postInstall
     '';
   };
@@ -481,7 +489,10 @@ stdenvNoCC.mkDerivation {
     # from `readlink -f $(command -v harness)`.
     install -Dm755 ${harness}/bin/harness $out/bin/harness
     ln -s ${dev}/bin/harness-dev $out/bin/harness-dev
-    ln -s ${app} $out/share/harness/app
+    # share/harness: the sources, the documents (docs/ links into pi/), the pi packages
+    ln -s ${app} $out/share/harness/src
+    ln -s ${app}/docs $out/share/harness/docs
+    ln -s ${app}/pi $out/share/harness/pi
     ln -s ${lib.getExe pnpm} $out/bin/pnpm
     ln -s ${cage}/bin/cage $out/bin/cage
     ln -s ${lightpandaCli}/bin/lightpanda $out/bin/lightpanda

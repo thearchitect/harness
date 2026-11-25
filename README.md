@@ -1,35 +1,24 @@
 # harness
 
-Personal pi workflow, distributed as a Nix bundle: the pinned `pi` with the
-harness extension, the bundled pi packages and the pinned MCP tools. On PATH:
-`pi`, `pi-dev`, `herdr`, `pnpm`, `cage`, `lightpanda`, `playwright-mcp`,
-`chrome-devtools-mcp` (the last ones with telemetry off by default), and the
-runtimes `node`, `npm`, `npx`, `bun`, `bunx` at a low priority (your own
-node or bun wins). pi also has `ffmpeg`, `ffprobe` and `exiftool`, appended
-to its PATH and not on yours (bundled tools: see Install). The bundled MCP servers: `lightpanda`
-(search and reading), `browser` (a real Chromium through Patchright for logins
-and bot checks; Chromium prebuilt from cache.nixos.org on Linux, Google Chrome
-from Google on macOS), `playwright` and `chromium-devtools` (the user's own
-browser; registered disabled, enable them in `/mcp`). herdr's pi integration is
-part of the bundle: do not `herdr integration install pi` (the dependencies
-report of the panel warns about such a copy). `HARNESS_PROFILE=server` runs pi headless (as the Telegram
-gateway does): no user-browser MCP servers, no `ask_user`, `ask_secret` or
-`display_file`, no `browser` window.
+A multi-session coding agent platform on [pi](https://github.com/earendil-works/pi), distributed as
+a Nix bundle. Nodes run agents — pi sessions with the harness extension — as the user who runs
+them; a hub links nodes and devices; the full-screen TUI (`harness`) works with sessions on the
+local node and on remote ones at once. The documents start at [docs/index.md](docs/index.md).
 
-On macOS the bundle also brings Ghostty and a Finder item: right-click a
-folder → **Harness** opens a new Ghostty window running pi in that folder (the
-window closes when pi exits). On PATH: `ghostty`, `harness-open [DIR...]` (the
-same from a terminal) and `harness-setup`, which installs the item
-(`~/Library/Services/Harness.workflow`, a copy: macOS does not reliably pick
-up symlinked services). The item is static and finds `harness-open` in the Nix
-profiles, so upgrades need no reinstall. A Ghostty of your own
-(`/Applications` or `~/Applications`, 1.3 or later) wins over the bundled one:
-both share one bundle id, hence configuration and defaults, so you keep one.
-With only the bundled Ghostty, `harness-setup` turns its self-update off
-(`SUEnableAutomaticChecks`, `SUAutomaticallyUpdate`, unless already set): Nix
-updates it; do not use its *Check for Updates…*, which would overwrite the
-Nix store. The first window asks once for permission to control Ghostty
-(AppleScript).
+On PATH: `harness`, `harness-dev`, `pnpm`, `cage`, `lightpanda`, `playwright-mcp`,
+`chrome-devtools-mcp` (telemetry off by default), and the runtimes `node`, `npm`, `npx`, `bun`,
+`bunx` at a low priority (your own node or bun wins). Agents also have `ffmpeg`, `ffprobe` and
+`exiftool` on their PATH, not on yours (bundled tools: see Install). The bundled MCP servers:
+`lightpanda` (search and reading), `browser` (a real Chromium through Patchright for logins and
+bot checks; Chromium from cache.nixos.org on Linux, Google Chrome from Google on macOS),
+`playwright` and `chromium-devtools` (your own browser; registered disabled, enable them in
+`/mcp`).
+
+On macOS the bundle also brings Ghostty and a Finder item: right-click a folder → **Harness**
+opens a Ghostty window running `harness` in that folder. On PATH: `ghostty`, `harness-open
+[DIR...]` (the same from a terminal) and `harness-setup`, which installs the item
+(`~/Library/Services/Harness.workflow`). A Ghostty of your own (1.3 or later) wins over the bundled
+one; with only the bundled one, `harness-setup` turns its self-update off (Nix updates it).
 
 ## Install
 
@@ -39,21 +28,16 @@ Linux / macOS (installs Nix first if needed, after asking):
 curl -fsSL https://raw.githubusercontent.com/thearchitect/harness/master/install.sh | bash
 ```
 
-NixOS / home-manager: the flake input, the package and the binary cache
-(without the cache Nix builds the bundle locally):
+NixOS / home-manager: the flake input and the package:
 
 ```nix
 inputs.harness.url = "github:thearchitect/harness";
 home.packages = [ inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default ];
-nix.settings.extra-substituters = [ "https://github.com/thearchitect/harness/releases/download/nix-cache" ];
-nix.settings.extra-trusted-public-keys = [ "harness-1:YE1emDZFHptBwqvSGZIoVkGgCUwvCrBxoMFA+zps0Dg=" ];
 ```
 
-The script installs the default bundle. A configuration chooses the mode of
-each bundled tool with `bundled` (unlisted tools keep their defaults):
-`"none"` leaves it out, `"hidden"` puts it on pi's PATH only (appended, so
-your own or a project's version wins), `"path"` also on yours at a low
-priority.
+A configuration chooses the mode of each bundled tool with `bundled` (unlisted tools keep their
+defaults): `"none"` leaves it out, `"hidden"` puts it on the agents' PATH only (appended, so your
+own or a project's version wins), `"path"` also on yours at a low priority.
 
 | tool | executables | default | modes |
 |---|---|---|---|
@@ -70,225 +54,76 @@ priority.
 })
 ```
 
-The script runs `harness-setup` on macOS (so does *update* in the panel); with
-home-manager on macOS run it on activation:
+Nodes as services: [docs/operations/nixos.md](docs/operations/nixos.md); a hub on Fly.io:
+[docs/operations/fly.md](docs/operations/fly.md). Upgrade: rerun the script, or `nix flake update
+harness` and rebuild. Host settings: `HARNESS_BROWSER` (your own Chrome/Chromium for `browser` and
+playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools), `HARNESS_HOME`
+(instead of `~/.harness`).
 
-```nix
-home.activation.harness = lib.mkIf pkgs.stdenv.hostPlatform.isDarwin (
-  lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-    run ${inputs.harness.packages.${pkgs.stdenv.hostPlatform.system}.default}/bin/harness-setup
-  ''
-);
-```
+## Using it
 
-Upgrade: pi checks master in the background at startup and announces new
-commits; `Ctrl+\` → *update* upgrades an install made by the script (`nix
-profile upgrade`, then pi restarts on the same session) and, for a NixOS /
-home-manager install, says to update its `harness` flake input and rebuild.
-The panel's *dependencies* report lists what the new commits change. By hand:
-rerun the script, or `nix flake update harness` and rebuild. Verify:
-`pi --version`; inside pi, `Ctrl+\` → *dependencies*. Host settings: `HARNESS_BROWSER` (your own
-Chrome/Chromium executable, used instead of the bundled one by `browser` and by
-playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for
-chromium-devtools). Details and after-install checks: `install/SKILL.md`.
-
-## Layout
-
-- `index.ts` — the extension: PLAN/BUILD modes (a message plans, `!` builds) and the simple mode (`/simple`: one mode that decides itself whether to answer, change or plan first; writes inside the current directory without confirmation, elsewhere asks; a leading `!` is dropped; recorded in the session, and new sessions start with the last choice of simple and madness, see `settings.ts`), mutation gates (one review per change set, shared by `write`/`edit` and the code tools), `/-`, sequential `write`/`edit`/`bash` (a batch containing one runs in order, so dependent calls see its effect), system prompt per run, UI
-- `lsp/` — code intelligence: a facade over the bundle's language servers (see below)
-- `tool_project_tree.ts` — `project_tree`: a project's layout in one call (see below)
-- `tool_send_file.ts` — `send_file` (server profile only): a file to the user in Telegram, delivered by `remote/`
-- `tool_ask_secret.ts` — `ask_secret` (desktop profile only): a secret from the operator through a masked dialog, kept in memory for the session, given to bash commands as an environment variable and masked in every tool result; the model never sees it and asks only on the operator's explicit command (secrets a task needs are named in the plan; PLAN and BUILD alike; it reaches cage through `cage set -stdin` in BUILD)
-- `tool_display_file.ts` — `display_file` (desktop profile only): a text file (Markdown rendered, code highlighted) or an image shown to the operator in the transcript; the model gets one line, never the content
-- `browser/` — the `browser` MCP server (`server.ts`, run on the bundle's node): Patchright on a persistent profile, `run` (Playwright code on the live page) and `show` (a visible window for the operator); `browser.ts` holds the browser
-- `prompt.ts` — the system prompt: assembles it from `prompt.yaml`, checks the final prompt
-- `prompt.yaml` — every system prompt text: `preamble`, `sections` (`mode_policies`, `engineering_principles`, `code_exploration`, `pi_docs`), `tool_guidelines` (a declared tool's rule replacing its own guidelines), `guidelines` (bullets in `<rules>`, in order)
-- `remote/` — `harness-telegram`, the Telegram gateway of a server deployment (`core/`: agents, workspaces, pi processes; `telegram/`: chats; `app/`: the Mini App; see "Remote" below); a separate package (`nix/remote.nix`), not loaded by pi
-- `gate.ts` — the write/edit gate's pure parts: each mode's review by how far a change reaches (scratch space, the current directory, elsewhere) and by profile (the server profile builds without asking), and the gate as plain select/input dialogs outside the TUI
-- `panel.ts` — the side panel (desktop TUI, `Ctrl+\` opens and closes it): a full-height overlay on the right quarter with the madness and simple toggles, *update* and *dependencies*; ↑/↓, Space/Enter, Esc
-- `settings.ts` — the defaults of new sessions (desktop profile): the last chosen simple and madness in `<agent dir>/harness.json`; an existing session keeps the values recorded in it
-- `update.ts` — the bundle's update: the background check of master at startup (one GitHub API request; the pin changes come from the bodies of CI's "Update bundle pins" commits), the install kind (`nix profile` or a system configuration) and the one-press upgrade
-- `skills/<name>/SKILL.md` — on-demand skills the model loads itself: `web-research`, `testing`, `server` (server profile only); the `cage` skill is cage's own `cage skill`, generated at build time (manifest `skills`)
-- `install/SKILL.md` — the install/upgrade skill
-- `deps.ts` — the bundle: manifest, bundled MCP servers, the language servers of `lsp/`, the dependencies report, the double-load guard (registered by `index.ts`)
-- `workarounds.ts` — temporary compensations for upstream gaps, each with its removal condition (called by `index.ts` at `// WORKAROUND Wn`)
-- `macos/` — the macOS integration (bundled on macOS only): the Finder Quick Action `Harness.workflow`, `harness-open.sh` with `open.applescript` (a Ghostty window running pi), `harness-setup.sh` (installs the Quick Action, Ghostty's self-update off), `lib.sh`
-- `nix/` — the bundle: `package.nix` (launchers, extension fileset, manifest), `npm/` (pi, pi packages, npm MCP servers, TypeScript and the extension's own npm dependencies from one lockfile), `sources.json`, `update.sh`, `smoke.sh`, `test.sh`, CI tests
-- `TODO.md` — waiting on upstream
-
-Where a text goes: always in the system prompt → `prompt.yaml`; loaded on
-demand → `skills/`. A file that defines tools for the model is named
-`tool_<name>.ts`.
-
-## System prompt
-
-The harness owns the whole system prompt. It sets pi's `customPrompt` (the
-documented `SYSTEM.md` mechanism), so pi's built-in preamble, `<tools>`,
-`<rules>` and `<docs>` never appear; `prompt.ts` renders the preamble,
-`<tools>`, `<rules>` (guidelines of the declared tools, each replaced by its
-`prompt.yaml` `tool_guidelines` entry where there is one, then `prompt.yaml`
-`guidelines`, then other extensions' `promptGuidelines`) and the `prompt.yaml`
-sections. `pi-ask-user` is loaded as an extension file, without its `ask-user`
-skill: when and how to ask is `prompt.yaml`'s own rule. pi still renders `<addendum>` (`APPEND_SYSTEM.md`),
-`<project_context>`, `<skills>` and `<cwd>`; other extensions add their own
-sections. A `SYSTEM.md` is appended after the harness preamble, with a notice.
-
-Limits of pi's extension API: `<tools>`/`<rules>` are rendered once per run (a
-tool activated mid-run is declared at once and listed from the next run), and
-`promptGuidelines` added by `before_agent_start` handlers that run after the
-harness are not rendered — the launcher loads the harness first, and today
-every other guideline comes from tool definitions. Every run checks the final
-prompt: if it does not open with the harness preamble or contains pi's
-built-in prompt, the harness reports an error once per session.
+- `harness` opens the TUI in the current directory: tabs of open sessions on the left, the active
+  session in the middle, its background tasks and subagents on the right. A message plans; a
+  message starting with `!` builds (`/simple`: one mode that decides itself). Ctrl+Enter (or
+  Alt+Enter) sends, Ctrl+T opens a new session, Ctrl+O an existing one, Alt+1…9 switches tabs,
+  Ctrl+\ opens the harness panel, Ctrl+F searches the transcript, Ctrl+L chooses the model.
+- Sessions live on their node: closing the TUI leaves a node started as a service (and its
+  agents) running; reopening shows everything again. Every client of a user sees the same tabs.
+- `harness hub`, `harness remote add`: [docs/operations/nodes.md](docs/operations/nodes.md).
+- Provider accounts: `harness auth login` (pi's command on `~/.harness`).
 
 ## Code intelligence
 
-`lsp/` drives the bundle's language servers itself — TypeScript 7
-(`tsc --lsp`, for TypeScript and JavaScript), gopls and rust-analyzer — and
-gives the model one set of tools over them: `lsp_definition`,
-`lsp_type_definition`, `lsp_implementations`, `lsp_references`, `lsp_hover`,
-`lsp_symbols`, `lsp_call_hierarchy`, `lsp_type_hierarchy`, `lsp_diagnostics`,
-`lsp_code_actions`, `lsp_workspace` (read-only; declared to the model and
-callable from scripts, namespace `lsp`) and `lsp_refactor` (changes files,
-called directly). A symbol is addressed by `{ file, line, name }`; paths are
-relative to the session's cwd, in arguments and results, like every other
-tool's. A file no language server handles is moved as is, with a note to find
-its references with `rg`.
-
-- **Whole repository.** The workspace is the git repository of the session
-  (the superproject of a submodule). TypeScript: every `tsconfig.json`/
-  `jsconfig.json` and everything reachable through `references`, held open
-  through the server's API session, plus every source file outside them.
-  Go: one generated go.work with the repository's go.work modules, the local
-  targets of their `replace` directives and every go.mod of the tree, and the
-  union of user-defined build tags. Rust: every Cargo workspace
-  (`linkedProjects`), all features. `lsp_workspace` and `/lsp` show the
-  coverage and every exclusion.
-- **Fresh or failing.** Before each request the servers hear about every file
-  created, changed or deleted on disk since the previous one (stamps of the
-  git file list, not watchers), the workspace model is updated, and the server
-  must be ready (rust-analyzer: quiescent). Anything that fails is an error,
-  never a partial answer.
-- **Refactoring.** `lsp_refactor` takes a list of operations — `rename`,
-  `move`, `codeAction`, `edit` (exact text) — inline or as a plan file (a JSON
-  array in the session workspace, typically written by a codemode script). The
-  list is reviewed once (PLAN refuses, BUILD asks, SIMPLE passes inside the
-  current directory and asks outside it, `/madness` passes); the
-  operations then run in order, each on the state the previous ones left. Each
-  one's edit is replayed on a virtual file system, checked against the files
-  the server saw, kept inside the repository and written atomically. A failing
-  operation stops the run: the ones before it stay applied and the plan file is
-  cut down to the failed one and the rest, to fix and rerun. Renamed symbols
-  defined in files that look generated (`linguist-generated`, `Code generated …
-  DO NOT EDIT.`, header comments, generator file names) are reported: change
-  the source and regenerate afterwards.
-- **Lifecycle.** A server starts on first use and stops with the session
-  (`session_shutdown`: reload, `/new`, `/resume`, exit), or is killed with its
-  process group if pi dies; a crashed server restarts on the next request (three
-  crashes in two minutes need `/lsp restart`). The projects' toolchains (`go`,
-  `cargo`) come from `PATH`: the user's, or the bundle's when configured
-  (`bundled`, see Install).
+The extension drives the bundle's language servers itself — TypeScript 7 (`tsc --lsp`, for
+TypeScript and JavaScript), gopls and rust-analyzer — and gives the model one set of tools over
+them: `lsp_definition`, `lsp_type_definition`, `lsp_implementations`, `lsp_references`,
+`lsp_hover`, `lsp_symbols`, `lsp_call_hierarchy`, `lsp_type_hierarchy`, `lsp_diagnostics`,
+`lsp_code_actions`, `lsp_workspace` and `lsp_refactor` (renames, moves, code actions, exact
+edits; reviewed once by the gate). The workspace is the git repository of the session: every
+TypeScript project, Go module and Cargo workspace in it. Before each request the servers hear
+about every file changed on disk; anything that fails is an error, never a partial answer.
+Sources: `packages/extension/src/tools/lsp/`.
 
 ## Project tree
 
-`project_tree` gives the model a project's layout in two steps. Without
-arguments it returns the whole directory tree as byte-sorted paths, each
-directory with the number of files directly in it and the first line of its
-`.dirinfo.md` (`src/ (12 files) - HTTP API and its handlers`), plus the files of
-the project root (manifests, entry points). Then `path` with `files: true` lists
-every file of a subtree the model needs. A directory listed explicitly although
-the rules above ignore it (`node_modules/x`) is listed under its own rule
-files. It honors `.ignore`, `.gitignore`
-and the repository's `info/exclude` like fd and ripgrep (`.gitignore` only
-inside git; global git excludes are not read), never lists `.git`, session
-workspaces or symlinks, and marks unreadable directories in place.
-Project-specific exclusions go into the project's `.ignore`. The `.dirinfo.md`
-files are written by people; the model only reads them.
-
-## Remote: Telegram on Fly
-
-harness also runs on a server, used through a Telegram bot: `remote/`
-(`harness-telegram`), `lib.mkRemoteImage` (`nix/remote-image.nix`) and the
-deployment template `nix flake init -t github:thearchitect/harness#remote`
-(its README walks through the setup).
-
-- **Model.** A whitelist of Telegram users (`remote.yaml`); each works under
-  a uid of their own in `/data/home/<name>`. Three independent things: a
-  *session* (a pi session file), an *agent* (a session the gateway serves,
-  with its `pi --mode rpc --session-id` process when it runs, profile
-  `server`), a *workspace* (the private chat with the bot, or a group the
-  user added it to). A workspace holds at most one agent; other agents run
-  in the background and write to the private chat only when they need the
-  user or are done.
-- **Interaction.** The semantics of the TUI: a message plans, a message
-  starting with `!` builds — without confirmations (the server profile
-  never asks; planning still never writes); writing during a run steers it;
-  `/stop` or *Stop* aborts. Every block of a run (thinking, a tool call, the
-  answer) is a message of its own, edited while it grows; the harness
-  banner closes the run and the final answer is pinned. Commands:
-  `/new [path]`, `/status` (also `/start`), `/stop`, `/diff` (the changes of
-  the agent's directory as a file, never to the model), `/detach`, `/close`,
-  `/sessions`, `/model`, `/thinking`, `/login`, `/secrets`, `/key`; `/logs`
-  for admins. Attaching an agent to a workspace shows its last five turns.
-  Only the final message of a run, files from the agent, dialogs and errors
-  make a sound.
-- **Files.** Files of a message and of the message it replies to are saved
-  to `~/tmp/<chat>-<message>/` and listed at the top of the prompt; photos
-  also go to the model as images; an album is one prompt. Voice messages
-  are transcribed with OpenAI `gpt-4o-transcribe` under the user's OpenAI
-  login, the transcript growing in one reply; the prompt says the text is
-  the transcript of the attached file. The `send_file` tool (server profile
-  only, `tool_send_file.ts`) sends a file back, pinned.
-- **Tools.** The `server` skill (server profile only) tells the model what
-  the image has (gh, glab, go, rust, zig, python with pydicom, ffmpeg,
-  ImageMagick, exiftool, dcmtk, …) and how to install more into the home
-  (mise, uv, npm, cargo, go; prebuilt binaries run through nix-ld) and to
-  wire credentials through cage. The `cage` skill is generated from `cage
-  skill` at build time.
-- **Mini App.** Status lines link to it (`startapp=w<chat>[_files|_models]`):
-  the agent of the workspace, all agents (here, move, close), the
-  workspaces, the session history (resume); the *Files* screen (browse ~,
-  new folder, download, start an agent) and the *Models* screen (pi's
-  `enabledModels` as favorites, `modelThinkingLevels` as their effort, the
-  default model). Static files without a build step
-  (Alpine.js), content-hashed and immutable; `index.html` revalidates by
-  ETag, so an open after a deploy gets the new build. Requests are signed
-  with Telegram's initData.
-- **Machine.** One Fly machine with a volume; the gateway answers the
-  webhook and exits when idle, so the machine sleeps until the next message.
-- **Telemetry.** Every event is a JSON line in a daily journal on the volume
-  (`/data/gateway/log`, 30 days by default; no message texts or secret
-  values) and on stderr; errors go to the admins (`admin: true`) in
-  Telegram, deduplicated and rate-limited; a run that died is reported at
-  the next start; `/logs` and the template's `logs.sh` read the journal.
-- **Secrets.** The image carries only cage ciphertext; the machine's identity
-  is its single Fly secret. The bot token and webhook secret stay inside the
-  gateway; each pi process gets only its user's variables (the deployment's
-  `user-<name>` env and the user's own `~/.cage`), never the gateway's.
-  An agent sees its user's secrets and `auth.json` — the boundary is between
-  users, not between a user and their agent.
+`project_tree` gives the model a project's layout in two steps: without arguments the whole
+directory tree with file counts and the first line of each directory's `.dirinfo.md`, then `path`
+with `files: true` for the files of a subtree. It honors `.ignore`, `.gitignore` and the
+repository's `info/exclude` like fd and ripgrep.
 
 ## Development
 
 ```bash
-export HARNESS_DEV_DIR=~/src/harness   # default: the current directory
-pi-dev                 # the installed bundle with harness from the checkout; /reload after edits
-nix/update.sh          # bump every pin (what CI does on a schedule)
-# Before every commit (AGENTS.md), with the changes staged: the bundle as users
-# get it, its smoke tests, unit tests and tests against its language servers.
-nix develop --command sh -c 'nix build && nix/smoke.sh result && nix/test.sh result'
+nix develop                         # harness-dev, harness-test, node, the tests' toolchains
+harness-dev                         # the bundle running this checkout (restart after edits)
+nix/check.sh [test files…]          # type check and tests from the checkout
+harness-test [unit|integration|gallery|up …]   # the test harness (docs/extending/testkit.md)
+nix develop --command nix flake check          # before every commit (AGENTS.md)
 ```
 
-Keep the checkout outside `~/.pi/agent/extensions/` (pi would load a second
-copy). No build step: pi loads `index.ts` through jiti. The extension's npm
-dependencies come from `nix/npm` and resolve through `node_modules` next to
-`index.ts`: a symlink to the bundle's, made by the bundle itself, by `pi-dev`
-in the checkout and by `nix/test.sh`. New files must be git
-tracked and listed in the extension fileset of `nix/package.nix` to reach the
-bundle; `/reload` does not pick up a changed `prompt.yaml` or skill from an
-installed bundle — rebuild and reinstall. Never edit `nix/npm/package-lock.json`
-or `nix/sources.json` by hand. Push to `master` → CI checks, builds and
-publishes the cache.
+The sources run as TypeScript on node (types stripped, no build step). npm dependencies come from
+`nix/npm` (never edit its lock by hand); the checkout's `node_modules` is a symlink to the
+bundle's. The plan of the platform and its progress: `plans/harness-platform-plan.md`.
+
+## TODO
+
+Deliberately postponed:
+
+- Native push notifications: APNs (iOS) and FCM (Android) through our push relay (`harness relay`
+  role) deployed on Fly; hubs send through it with per-device handles bound to the hub key.
+- End-to-end encrypted push payloads: the hub encrypts for the device key, the iOS Notification
+  Service Extension and the Android FCM data-message handler decrypt; the relay, Apple and Google
+  see only ciphertext.
+- Native desktop on React Native (Linux, macOS, Windows) once the desktop platforms of RN mature;
+  until then the desktop runs the web build in a native window (`harness web-app`).
+
+Waiting on upstream:
+
+- TypeScript refactorings in TypeScript 7. The native language server (`tsc --lsp`) has no
+  refactorings yet (extract function/constant/variable, move to file, infer return type). When
+  typescript-go ports them they arrive as code actions (`refactor.*`) through `lsp_code_actions` and
+  the `codeAction` operation of `lsp_refactor`; check that it handles their interactive arguments
+  (move to file needs a target file).
 
 ## License
 

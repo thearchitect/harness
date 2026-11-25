@@ -5,8 +5,8 @@
 #
 #   preamble    → the untagged opening text; a SYSTEM.md, if any, is appended after it.
 #   sections    → markdown blocks rendered as <key> after pi's <cwd>, following <tools> and <rules>;
-#                 {{WORKSPACE_TMP}} is filled per session, {{PI_README}}, {{PI_DOCS}} and
-#                 {{PI_EXAMPLES}} with the paths of the running pi.
+#                 {{WORKSPACE_TMP}} is filled per session, {{HARNESS_DOCS}}, {{HARNESS_SRC}} and
+#                 {{PI_DOCS}} with the paths of this bundle or checkout (prompt.ts documentationPaths).
 #   tool_guidelines → per tool name: the bullet in <rules> that replaces the tool's own guidelines;
 #                 rendered only while that tool is declared.
 #   guidelines  → bullets in <rules>, in this order, after the guidelines of the declared tools.
@@ -139,15 +139,14 @@ sections:
     Generated code: for a change to a source contract (a proto method, an OpenAPI operation, a schema field), first rename every symbol each generator emits for it — in every language, by that generator's naming rules — together with their consumers; then change the source, regenerate, and check with `git diff` that the regenerated files match the renamed ones (a difference means a derived name was wrong: restore the generated files from git and redo the renames). Regenerating first removes the names through which the language servers find the consumers.
 
   # Where pi's own documentation lives, for tasks about pi itself (this harness is a pi extension).
-  pi_docs: |
-    Pi documentation — read it when the task concerns pi itself: its SDK, extensions, themes, skills, prompt templates, TUI, keybindings, providers, models, packages, MCP servers or codemode.
+  harness_docs: |
+    harness documentation — read it when the task concerns harness or pi themselves: extending harness (tools, extensions, skills, themes, model references), its protocols, nodes and hubs, settings, tests.
 
-    - Main documentation: {{PI_README}}
-    - Additional docs: {{PI_DOCS}}
-    - Examples: {{PI_EXAMPLES}} (extensions, custom tools, SDK)
-    - Resolve `docs/...` under Additional docs and `examples/...` under Examples, not the current working directory.
-    - Topics: extensions (`docs/extensions.md`, `examples/extensions/`), themes (`docs/themes.md`), skills (`docs/skills.md`), prompt templates (`docs/prompt-templates.md`), TUI components (`docs/tui.md`), keybindings (`docs/keybindings.md`), SDK integrations (`docs/sdk.md`), custom providers (`docs/custom-provider.md`), models (`docs/models.md`), pi packages (`docs/packages.md`), environment variables (`docs/environment-variables.md`), MCP servers (`docs/mcp.md`), codemode scripts and non-LLM models (`docs/codemode.md`).
-    - Read pi `.md` files completely and follow their cross-references before implementing.
+    - Start at {{HARNESS_DOCS}}/index.md: it maps tasks to documents.
+    - The harness sources: {{HARNESS_SRC}} (`packages/<name>/src/`).
+    - pi's documents ({{PI_DOCS}}) describe pi as a standalone program: read them only through the links of harness's documents, and with {{HARNESS_DOCS}}/pi-mapping.md, which translates pi's paths (`~/.pi/agent` → `~/.harness`), commands (`pi …` → `harness …`) and replaced APIs.
+    - Topics: architecture (`architecture.md`), tools and extensions (`extending/tools.md`), skills (`extending/skills.md`), themes (`extending/themes.md`), model references (`extending/models.md`), tests (`extending/testkit.md`), protocols (`protocol/`), operations (`operations/`).
+    - New skills, themes and extensions for the user go to `~/.harness/…` (or the project's `.pi/…`), never into the bundle: the documents say where each kind lives and when it is picked up.
 
 tool_guidelines:
   # Replaces pi-ask-user's own guidelines: the dialog is the exception to operator_questions.

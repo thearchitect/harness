@@ -24,18 +24,23 @@
  *   detectable.
  */
 
-import {
-  getDocsPath,
-  getExamplesPath,
-  getReadmePath,
-  type NormalizedBuildSystemPromptOptions,
-} from "@earendil-works/pi-coding-agent";
-import { readFileSync } from "node:fs";
+import { getDocsPath, type NormalizedBuildSystemPromptOptions } from "@earendil-works/pi-coding-agent";
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /** prompt.yaml `sections`, rendered as <name> blocks in this order after <tools> and <rules>. */
-const SECTION_NAMES = ["mode_policies", "engineering_principles", "code_exploration", "pi_docs"] as const;
+const SECTION_NAMES = ["mode_policies", "engineering_principles", "code_exploration", "harness_docs"] as const;
+
+/** The sources' root: the checkout, or share/harness/src of the bundle. */
+export const HARNESS_SRC = fileURLToPath(new URL("../../../..", import.meta.url)).replace(/\/$/, "");
+
+/** Where the prompt's documentation paths point: harness's documents, its sources, pi's documents of this bundle. */
+export function documentationPaths(): { docs: string; src: string; piDocs: string } {
+  const bundled = join(HARNESS_SRC, "pi", "coding-agent", "docs");
+  return { docs: join(HARNESS_SRC, "docs"), src: HARNESS_SRC, piDocs: existsSync(bundled) ? bundled : getDocsPath() };
+}
 type SectionName = (typeof SECTION_NAMES)[number];
 
 type PromptConfig = {
@@ -184,11 +189,12 @@ export function assembleSystemPrompt(
   const foreignCustomPrompt = options.customPrompt?.trim() ?? "";
   // pi lists and rules only the declared tools; hidden ones reach the model through codemode.
   const declaredTools = run.activeTools.filter((name) => !options.hiddenTools.includes(name));
+  const paths = documentationPaths();
   const placeholders: Record<string, string> = {
     "{{WORKSPACE_TMP}}": run.workspaceRoot,
-    "{{PI_README}}": getReadmePath(),
-    "{{PI_DOCS}}": getDocsPath(),
-    "{{PI_EXAMPLES}}": getExamplesPath(),
+    "{{HARNESS_DOCS}}": paths.docs,
+    "{{HARNESS_SRC}}": paths.src,
+    "{{PI_DOCS}}": paths.piDocs,
   };
 
   if (foreignCustomPrompt !== "") {

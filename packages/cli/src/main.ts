@@ -98,6 +98,8 @@ async function runTui(args: string[]): Promise<void> {
   const home = harnessHome();
   ensureHome(home);
   const cwd = process.cwd();
+  // pi's theme loader finds custom themes under its agent directory: ~/.harness/themes
+  process.env.PI_CODING_AGENT_DIR = home;
   initClientTheme(SettingsManager.create(cwd, home).getTheme());
 
   const path = socketPath(home, DEFAULT_NODE);
@@ -121,6 +123,13 @@ async function runTui(args: string[]): Promise<void> {
   // the local node, then the remote hubs: each reconnects by itself after a loss
   const client = new ClientModel();
   const nodeName = await client.addEndpoint(open, { home: true });
+  // the theme of the user's UI settings (shared by the user's clients) wins over pi's own setting
+  const uiTheme = client.settings["ui.theme"];
+  if (typeof uiTheme === "string" && uiTheme !== "") {
+    initClientTheme(uiTheme);
+  } else {
+    // pi's theme setting, or its default
+  }
   for (const remote of readRemotes(home)) {
     await client
       .addEndpoint(async () => NodeConnection.open(await wsTransport(remote.url), "tui", remote.token, TUI_CAPABILITIES), { home: false })
@@ -175,6 +184,10 @@ async function main(): Promise<void> {
     case "remote":
       ensureHome(harnessHome());
       await remoteAdmin(harnessHome(), rest);
+      break;
+    case "--version":
+    case "-v":
+      process.stdout.write(`${harnessVersion()}\n`);
       break;
     case "--help":
     case "-h":
