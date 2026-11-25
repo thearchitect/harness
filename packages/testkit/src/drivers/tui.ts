@@ -9,7 +9,8 @@ import type { NodeConnection } from "#client/connection.ts";
 import type { ActionId } from "#client/keymap.ts";
 import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench, type Screen } from "#client/workbench/workbench.ts";
-import { App, initClientTheme } from "#tui/app.ts";
+import { SettingsManager } from "@earendil-works/pi-coding-agent";
+import { App } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
 import { gridHtml, screenshot } from "../capture/rasterize.ts";
 import { VirtualTerminal } from "./terminal.ts";
@@ -31,12 +32,13 @@ export class TuiDriver {
 
   /** A TUI on `connection` (the client's home node), started on a new session in `cwd`. */
   static async start(open: () => Promise<NodeConnection>, options: TuiDriverOptions): Promise<TuiDriver> {
-    initClientTheme("dark");
     const terminal = new VirtualTerminal(options.columns ?? 140, options.rows ?? 40);
     const client = new ClientModel();
     const node = await client.addEndpoint(open, { home: true });
     const workbench = new Workbench(client, { cwd: options.cwd, themes: () => ["dark", "light"] });
-    const app = new App({ client, workbench, renderers: await loadRenderers(options.cwd, []), cwd: options.cwd, onQuit: () => undefined, terminal });
+    // pi's dark theme: the virtual terminal reports no colors of its own
+    const settings = SettingsManager.inMemory({ theme: "dark" });
+    const app = new App({ client, workbench, renderers: await loadRenderers(options.cwd, []), cwd: options.cwd, settings, onQuit: () => undefined, terminal });
     if (workbench.tabs().length === 0) {
       await workbench.newTab(node, options.cwd);
     } else {

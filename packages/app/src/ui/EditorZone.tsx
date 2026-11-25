@@ -3,7 +3,7 @@
 
 import { useState } from "react";
 import { Pressable, TextInput, View, type TextInputKeyPressEvent } from "react-native";
-import type { EditorZone as Zone, Picker, Zones } from "#client/workbench/workbench.ts";
+import { pickerHints, type EditorZone as Zone, type KeyHint, type Picker, type Zones } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
 import { fontOf, useTheme } from "../theme/theme.tsx";
 import { InteractionBlock } from "./Interactions.tsx";
@@ -15,30 +15,80 @@ export type Completion = { value: string; label: string; description?: string };
 /** A key press; on web it carries the modifiers. */
 type KeyEvent = TextInputKeyPressEvent & { nativeEvent: { key: string; ctrlKey?: boolean; metaKey?: boolean; altKey?: boolean; shiftKey?: boolean } };
 
-function PickerBlock({ picker, onClose }: { picker: Picker; onClose: () => void }) {
+/** A hint line as the TUI draws it: each key dim, what it does muted. */
+export function HintLine({ hints }: { hints: KeyHint[] }) {
+  return (
+    <T lines={1}>
+      {hints.map((hint, index) => (
+        <T key={hint.key}>
+          {index > 0 ? <T color="dim"> · </T> : null}
+          <T color="dim">{hint.key}</T>
+          <T color="muted">{` ${hint.does}`}</T>
+        </T>
+      ))}
+    </T>
+  );
+}
+
+/**
+ * A list in the editor's place, as the TUI shows it: the scopes (Favorites | All) switched with Tab
+ * or a click, the filter field, ↑/↓ moving the selection, Enter choosing, Esc cancelling, the hint line.
+ */
+function PickerBlock({ picker, onClose, onScope }: { picker: Picker; onClose: () => void; onScope: () => void }) {
   const theme = useTheme();
   const [filter, setFilter] = useState("");
+  const [selected, setSelected] = useState(0);
   const words = filter.toLowerCase().split(/\s+/).filter((word) => word !== "");
   const matching = picker.items.filter((item) => words.every((word) => `${item.label} ${item.description ?? ""}`.toLowerCase().includes(word)));
   // a list that takes typed values offers the text itself first
   const typed = filter.trim();
   const items = picker.custom !== undefined && typed !== "" && !matching.some((item) => item.value === typed) ? [{ value: typed, label: typed, description: picker.custom }, ...matching] : matching;
+  const index = Math.min(selected, Math.max(0, items.length - 1));
+  const scopes = picker.scopes !== undefined && picker.scopes.length > 1 ? picker.scopes : undefined;
+  const onKeyPress = (event: KeyEvent): void => {
+    const key = event.nativeEvent.key;
+    if (key === "Escape") {
+      onClose();
+    } else if (key === "Tab" && scopes !== undefined) {
+      event.preventDefault();
+      setSelected(0);
+      onScope();
+    } else if (key === "ArrowDown" || key === "ArrowUp") {
+      event.preventDefault();
+      setSelected(items.length === 0 ? 0 : (index + (key === "ArrowDown" ? 1 : items.length - 1)) % items.length);
+    } else {
+      // typing filters
+    }
+  };
   return (
     <Frame title={picker.title} tone="accent">
+      {scopes !== undefined ? (
+        <View accessibilityRole="tablist" style={{ flexDirection: "row", gap: 4 }}>
+          <T color="muted">Scope:</T>
+          {scopes.map((scope, scopeIndex) => (
+            <Pressable key={scope.title} accessibilityRole="tab" accessibilityState={{ selected: scopeIndex === (picker.scope ?? 0) }} onPress={() => (scopeIndex === (picker.scope ?? 0) ? undefined : onScope())}>
+              <T color={scopeIndex === (picker.scope ?? 0) ? "accent" : "muted"}>{scope.title}</T>
+            </Pressable>
+          ))}
+        </View>
+      ) : null}
       <TextInput
         accessibilityLabel={`Filter ${picker.title}`}
         autoFocus
         value={filter}
-        onChangeText={setFilter}
-        onSubmitEditing={() => (items[0] !== undefined ? void picker.choose(items[0].value) : undefined)}
-        onKeyPress={(event: KeyEvent) => (event.nativeEvent.key === "Escape" ? onClose() : undefined)}
+        onChangeText={(text) => {
+          setFilter(text);
+          setSelected(0);
+        }}
+        onSubmitEditing={() => (items[index] !== undefined ? void picker.choose(items[index].value) : undefined)}
+        onKeyPress={onKeyPress}
         placeholder={picker.custom !== undefined ? `filter, or type ${picker.custom}` : "filter"}
         placeholderTextColor={theme.colors.dim}
         style={[fontOf(theme.chrome), { color: theme.colors.text, borderBottomWidth: 1, borderColor: theme.colors.borderMuted, padding: 2 }]}
       />
       <View accessibilityRole="list" style={{ maxHeight: 320, overflow: "scroll" as never }}>
-        {items.slice(0, 200).map((item) => (
-          <ListRow key={item.value} label={item.label} onPress={() => void picker.choose(item.value)}>
+        {items.slice(0, 200).map((item, itemIndex) => (
+          <ListRow key={item.value} label={item.label} selected={itemIndex === index} onPress={() => void picker.choose(item.value)}>
             <T lines={1} style={{ flexShrink: 1 }}>
               {item.label}
             </T>
@@ -50,7 +100,7 @@ function PickerBlock({ picker, onClose }: { picker: Picker; onClose: () => void 
           </ListRow>
         ))}
       </View>
-      <Button label="Close" kbd="Esc" onPress={onClose} />
+      <HintLine hints={pickerHints(picker)} />
     </Frame>
   );
 }
@@ -133,6 +183,7 @@ export function EditorZoneView(props: {
   onComplete: (completion: Completion) => void;
   onAnswer: (interactionId: string, value: unknown) => void;
   onClosePicker: () => void;
+  onPickerScope: () => void;
   placeholder: string;
   device: DeviceActions;
 }) {
@@ -154,7 +205,7 @@ export function EditorZoneView(props: {
           case "interaction":
             return <InteractionBlock request={zone.request} from={zone.from} answer={(value) => props.onAnswer(zone.request.id, value)} />;
           case "picker":
-            return <PickerBlock key={zone.picker.id} picker={zone.picker} onClose={props.onClosePicker} />;
+            return <PickerBlock key={zone.picker.id} picker={zone.picker} onClose={props.onClosePicker} onScope={props.onPickerScope} />;
           case "component":
             return (
               <Frame title="An extension's dialog" tone="warning">

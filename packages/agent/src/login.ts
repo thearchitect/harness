@@ -117,7 +117,13 @@ export async function login(session: AgentSession, interactions: Interactions, p
   } else {
     const flow = new LoginFlow(interactions, `Log in to ${known.name}`);
     try {
-      await session.modelRuntime.login(provider, authType, { signal: flow.signal, prompt: (prompt) => flow.prompt(prompt), notify: (event) => flow.notify(event) });
+      // the installation's id, as pi gives it: Sign in with ChatGPT names the device it authorizes
+      await session.modelRuntime.login(
+        provider,
+        authType,
+        { signal: flow.signal, prompt: (prompt) => flow.prompt(prompt), notify: (event) => flow.notify(event) },
+        { getDeviceId: () => session.settingsManager.getOrCreateDeviceId() },
+      );
     } finally {
       flow.end();
     }

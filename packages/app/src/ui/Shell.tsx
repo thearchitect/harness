@@ -4,15 +4,16 @@
 // strips behind buttons that show them as overlays.
 
 import * as Clipboard from "expo-clipboard";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
 import { PanResponder, Platform, Pressable, View } from "react-native";
 import type { AgentModel } from "#client/model/agent-model.ts";
-import type { Item, Screen, StatusLine, Tab, Workbench } from "#client/workbench/workbench.ts";
+import type { Item, PanelId, PanelItem, Screen, StatusLine, Tab, Workbench } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
 import { useTheme, type Token } from "../theme/theme.tsx";
 import { EditorZoneView, type Completion } from "./EditorZone.tsx";
 import { Button, GlyphMark, ListRow, T } from "./primitives.tsx";
 import { Transcript } from "./Transcript.tsx";
+import { focusList, focusMessage, useListKeys } from "./web-events";
 
 function Tabs({ screen, workbench, onMenu }: { screen: Screen; workbench: Workbench; onMenu: (menu: Menu) => void }) {
   const menuOf = (index: number, x: number, y: number): void => {
@@ -86,8 +87,10 @@ export function TabsStrip({
 }) {
   const nodes = new Set(tabs.map((tab) => tab.node));
   let lastNode: string | undefined;
+  const ref = useRef<ComponentRef<typeof View>>(null);
+  useListKeys(ref);
   return (
-    <View accessibilityRole="tablist" accessibilityLabel="sessions" style={{ paddingVertical: 4 }}>
+    <View ref={ref} accessibilityRole="tablist" accessibilityLabel="sessions" style={{ paddingVertical: 4 }}>
       <T color="muted" style={{ paddingHorizontal: 6 }}>
         sessions
       </T>
@@ -147,8 +150,10 @@ function Items({ screen, workbench, onMenu }: { screen: Screen; workbench: Workb
 
 /** The right strip: the session first, then its tasks and subagents on the same level; nested ones indented. */
 export function ItemsStrip({ items, selected, onSelect, onMenu }: { items: Item[]; selected: string | undefined; onSelect: (id: string) => void; onMenu?: (item: Item, x: number, y: number) => void }) {
+  const ref = useRef<ComponentRef<typeof View>>(null);
+  useListKeys(ref);
   return (
-    <View accessibilityRole="list" accessibilityLabel="session items" style={{ paddingVertical: 4 }}>
+    <View ref={ref} accessibilityRole="list" accessibilityLabel="session items" style={{ paddingVertical: 4 }}>
       {items.map((item: Item) => (
         <ListRow
           key={item.id}
@@ -171,25 +176,70 @@ export function ItemsStrip({ items, selected, onSelect, onMenu }: { items: Item[
   );
 }
 
-function Panel({ screen, workbench }: { screen: Screen; workbench: Workbench }) {
+/** A panel row's value on the right: a toggle's switch, a value, an action's hint. */
+function PanelValue({ item }: { item: PanelItem }) {
+  switch (item.kind) {
+    case "toggle":
+      return item.on ? <T color={item.tone}>●━━  on</T> : <T color="dim">━━○ off</T>;
+    case "value":
+      return <T color="muted">{item.value}</T>;
+    case "action":
+      return <T color="dim">{item.hint}</T>;
+    default:
+      throw new Error(`unknown panel item: ${JSON.stringify(item satisfies never)}`);
+  }
+}
+
+/**
+ * The harness panel (Ctrl+\), as the TUI draws it: the same sections and rows (Workbench.panel), the
+ * accent border on the left. The keyboard comes in on its first row: ↑/↓, Space or Enter apply, Esc
+ * closes; a click applies a row, the pointer lights it. A toggle keeps it open, an action closes it.
+ */
+function Panel({ workbench }: { workbench: Workbench }) {
   const theme = useTheme();
-  const state = screen.agent?.state;
+  const ref = useRef<ComponentRef<typeof View>>(null);
+  const close = useMemo(() => () => workbench.closeOverlay("panel"), [workbench]);
+  useListKeys(ref, close);
+  useEffect(() => {
+    focusList("harness panel");
+    return () => focusMessage();
+  }, []);
+  const apply = (id: PanelId): void => void workbench.applyPanel(id).catch((error: unknown) => workbench.notify("error", error instanceof Error ? error.message : String(error)));
   return (
-    <View accessibilityLabel="harness panel" style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: 320, backgroundColor: theme.colors.cardBg, borderLeftWidth: 1, borderColor: theme.colors.border, padding: 6, gap: 4 }}>
-      <T color="accent" bold>
+    <View
+      ref={ref}
+      accessibilityRole="menu"
+      accessibilityLabel="harness panel"
+      style={{ position: "absolute", right: 0, top: 0, bottom: 0, width: "25%" as never, minWidth: 240, backgroundColor: theme.colors.pageBg, borderLeftWidth: 1, borderColor: theme.colors.borderAccent, paddingVertical: 6 }}
+    >
+      <T color="accent" bold style={{ paddingHorizontal: 8, paddingBottom: 6 }}>
         harness
       </T>
-      {state !== undefined
-        ? workbench.panelRows(state).map((row) => (
-            <ListRow key={row.value} label={row.label} onPress={() => void workbench.choosePanel(row.value)}>
-              <T lines={1}>{row.label}</T>
-              <T color="dim" lines={1} style={{ marginLeft: 8, flexShrink: 1 }}>
-                {row.description}
-              </T>
-            </ListRow>
-          ))
-        : null}
-      <Button label="Close" kbd="Ctrl+\" onPress={() => workbench.toggleOverlay("panel")} />
+      <View style={{ flex: 1 }}>
+        {workbench.panel().map((section) => (
+          <View key={section.title} style={{ paddingBottom: 8 }}>
+            <T color="muted" style={{ paddingHorizontal: 8 }}>
+              {section.title.toUpperCase()}
+            </T>
+            {section.items.map((item) => (
+              <ListRow key={item.id} label={item.label} onPress={() => apply(item.id)}>
+                <T lines={1} style={{ flexShrink: 1 }}>
+                  {item.label}
+                </T>
+                <View style={{ marginLeft: "auto" as never, paddingLeft: 8 }}>
+                  <PanelValue item={item} />
+                </View>
+              </ListRow>
+            ))}
+          </View>
+        ))}
+      </View>
+      <T color="dim" style={{ paddingHorizontal: 8 }}>
+        ↑↓ select · space apply
+      </T>
+      <T color="dim" style={{ paddingHorizontal: 8 }}>
+        esc close
+      </T>
     </View>
   );
 }
@@ -275,10 +325,10 @@ function Main({ screen, workbench, onLoadOlder, device }: { screen: Screen; work
 
 export type Panes = { left: number; right: number };
 
-const DEFAULT_PANES: Panes = { left: 220, right: 260 };
+const DEFAULT_PANES: Panes = { left: 154, right: 182 };
 
 function clampPane(width: number): number {
-  return Math.max(140, Math.min(520, Math.round(width)));
+  return Math.max(100, Math.min(364, Math.round(width)));
 }
 
 function panesOf(setting: unknown): Panes {
@@ -363,6 +413,7 @@ export function Shell(props: {
             onComplete={props.onComplete}
             onAnswer={(id, value) => void workbench.answer(id, value)}
             onClosePicker={() => workbench.closePicker()}
+            onPickerScope={() => workbench.nextPickerScope()}
             device={props.device}
             placeholder={
               Platform.OS === "web"
@@ -388,7 +439,7 @@ export function Shell(props: {
           <Items screen={screen} workbench={workbench} onMenu={setMenu} />
         </View>
       ) : null}
-      {overlays.includes("panel") ? <Panel screen={screen} workbench={workbench} /> : null}
+      {overlays.includes("panel") ? <Panel workbench={workbench} /> : null}
       {menu !== undefined ? <MenuView menu={menu} onClose={() => setMenu(undefined)} /> : null}
     </View>
   );

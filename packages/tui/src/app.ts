@@ -4,7 +4,7 @@
 // keys map to the shared keymap's actions, which the Workbench performs. The TUI keeps no screen
 // state of its own beyond its widgets (the editor's text, scroll positions).
 
-import { getMarkdownTheme, initTheme, type Theme } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, type SettingsManager, type Theme } from "@earendil-works/pi-coding-agent";
 import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -13,6 +13,7 @@ import {
   Editor,
   HStack,
   Input,
+  isKeyRelease,
   KeybindingsManager,
   matchesKey,
   ProcessTerminal,
@@ -39,15 +40,18 @@ import { GateDialog, selectListTheme } from "#extension/presentation/tui/gate.ts
 import { QuestionsDialog } from "#extension/presentation/tui/questions.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
 import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
-import { ItemsColumn, Lines, TabsColumn } from "./columns.ts";
+import { ItemsColumn, Lines, TabsColumn, VRule, Workspace } from "./columns.ts";
 import { Footer } from "./footer.ts";
 import type { Renderers } from "./presentation.ts";
+import { HarnessPanel, PANEL_MIN_WIDTH, PANEL_WIDTH } from "./panel.ts";
+import { PickerView } from "./picker.ts";
 import { RemoteAutocompleteProvider } from "./remote-complete.ts";
-import { TranscriptView } from "./transcript.ts";
-import { getTheme } from "./theme.ts";
+import { TranscriptView, type TranscriptOptions } from "./transcript.ts";
+import { getTheme, mermaidTransformer, piKeybindings, themeController, type ThemeController } from "./pi-internals.ts";
 
-const LEFT_WIDTH = 26;
-const RIGHT_WIDTH = 30;
+// the strips: narrow, the transcript has the width
+const LEFT_WIDTH = 18;
+const RIGHT_WIDTH = 21;
 
 export type AppOptions = {
   client: ClientModel;
@@ -55,17 +59,34 @@ export type AppOptions = {
   renderers: Renderers;
   /** Where new sessions start. */
   cwd: string;
+  /** pi's settings of this user (~/.harness/settings.json): theme, output pad, images, thinking blocks. */
+  settings: SettingsManager;
   onQuit(): void;
   /** The terminal (a virtual one in tests); the process's by default. */
   terminal?: Terminal;
 };
 
-/** pi-tui's editor keys with harness submit keys: Ctrl+Enter sends, Enter starts a new line. */
-function installKeybindings(): void {
+/**
+ * pi's keybindings with harness's keys: the editor's (Ctrl+Enter sends, Enter starts a new line) and
+ * the app's, so the hints pi's components show name harness's keys. pi's defaults that harness gives
+ * other work (Ctrl+T, Alt+↑, Ctrl+G) are unbound.
+ */
+export function installKeybindings(): void {
+  const keys = (action: keyof typeof ACTIONS): string[] => [...ACTIONS[action].keys];
   setKeybindings(
-    new KeybindingsManager(TUI_KEYBINDINGS, {
-      "tui.input.submit": [...ACTIONS["editor.submit"].keys],
-      "tui.input.newLine": [...ACTIONS["editor.newline"].keys],
+    piKeybindings({
+      "tui.input.submit": keys("editor.submit"),
+      "tui.input.newLine": keys("editor.newline"),
+      "app.interrupt": keys("run.abort"),
+      "app.exit": keys("app.quit"),
+      "app.thinking.cycle": keys("thinking.cycle"),
+      "app.model.select": keys("model.select"),
+      "app.model.cycleForward": keys("model.cycle"),
+      "app.tools.expand": keys("tools.expand"),
+      "app.thinking.toggle": [],
+      "app.message.dequeue": [],
+      "app.message.followUp": [],
+      "app.editor.external": [],
     } as never),
   );
 }
@@ -160,6 +181,8 @@ export class App {
   private readonly workbench: Workbench;
   private readonly tui: TuiAltScreen;
   private readonly renderers: Renderers;
+  private readonly settings: SettingsManager;
+  private readonly theme: ThemeController;
   private readonly cwd: string;
   private readonly onQuit: () => void;
   private readonly tabsColumn: TabsColumn;
@@ -190,16 +213,56 @@ export class App {
 
   constructor(options: AppOptions) {
     installKeybindings();
+    this.settings = options.settings;
     this.client = options.client;
     this.workbench = options.workbench;
     this.renderers = options.renderers;
     this.cwd = options.cwd;
     this.onQuit = options.onQuit;
     this.tui = new TuiAltScreen(options.terminal ?? new ProcessTerminal(), true, undefined, { mouse: true });
+    // the theme as pi applies it (before any component draws): the user's UI theme or pi's setting,
+    // the system theme from the terminal's colors (asked at start), light/dark switches followed
+    this.themeApplied = this.uiTheme();
+    this.theme = themeController(this.tui, {
+      settings: () => this.settings,
+      theme: this.themeApplied,
+      onError: (message) => this.workbench.notify("error", `theme: ${message}`),
+      // as in pi: components draw in the theme of the moment, so a redraw is enough
+      onChanged: () => {
+        this.tui.invalidate();
+        this.tui.requestRender();
+      },
+    });
     const theme = (): Theme => getTheme();
-    this.tabsColumn = new TabsColumn(theme);
-    this.itemsColumn = new ItemsColumn(theme);
-    this.transcript = new TranscriptView(this.tui, theme, this.renderers, this.cwd);
+    const failed = (error: unknown): void => this.workbench.notify("error", error instanceof Error ? error.message : String(error));
+    this.tabsColumn = new TabsColumn(theme, {
+      open: (index) => {
+        this.leaveStrip();
+        void (index < this.workbench.tabs().length ? this.act(`tabs.goto.${index + 1}`) : this.act("tabs.new")).catch(failed);
+      },
+      close: (index) => {
+        if (index < this.workbench.tabs().length) {
+          void this.workbench.closeTab(index).catch(failed);
+        } else {
+          // "+ new" is not a tab
+        }
+      },
+      leave: () => this.leaveStrip(),
+    });
+    this.itemsColumn = new ItemsColumn(theme, {
+      open: (index) => {
+        const tab = this.workbench.activeTab();
+        const item = this.itemsColumn.itemAt(index);
+        this.leaveStrip();
+        if (tab !== undefined && item !== undefined) {
+          this.workbench.select(tab, item.id);
+        } else {
+          // no session, or the row went away
+        }
+      },
+      leave: () => this.leaveStrip(),
+    });
+    this.transcript = new TranscriptView(this.tui, theme, this.renderers, this.cwd, this.transcriptOptions());
     this.footer = new Footer(theme);
     this.editor = new Editor(this.tui, { borderColor: (text) => modeColor(this.editorMode(), getTheme().getColorMode(), text), selectList: selectListTheme(getTheme()) }, { paddingX: 1 });
     this.searchBox = new SearchBox(
@@ -218,14 +281,20 @@ export class App {
       { component: this.status, basis: "auto" },
       { component: this.footer, basis: "auto" },
     ]);
+    const rule = (): VRule => new VRule(theme, () => this.tui.terminal.rows);
+    const left = (viewport: { width: number }): boolean => viewport.width >= LEFT_STRIP_MIN;
+    const right = (viewport: { width: number }): boolean => viewport.width >= RIGHT_STRIP_MIN;
     this.tui.setLayoutRoot(
-      new HStack(
+      new Workspace(
         [
-          { component: new ScrollView(this.tabsColumn), basis: LEFT_WIDTH, visible: (viewport) => viewport.width >= LEFT_STRIP_MIN },
+          { component: new ScrollView(this.tabsColumn), basis: LEFT_WIDTH, visible: left },
+          { component: rule(), basis: 1, visible: left },
           { component: main, basis: 0, grow: 1 },
-          { component: new ScrollView(this.itemsColumn), basis: RIGHT_WIDTH, visible: (viewport) => viewport.width >= RIGHT_STRIP_MIN },
+          { component: rule(), basis: 1, visible: right },
+          { component: new ScrollView(this.itemsColumn), basis: RIGHT_WIDTH, visible: right },
         ],
-        { gap: 1 },
+        // the pointer over anything else: no strip row lit
+        () => [this.tabsColumn.clearHover(), this.itemsColumn.clearHover()].includes(true),
       ),
     );
     this.tui.addInputListener((data) => this.onKey(data));
@@ -234,6 +303,7 @@ export class App {
 
   async start(): Promise<void> {
     this.tui.start();
+    this.theme.applyFromSettings();
     this.tui.setFocus(this.editor);
     await this.workbench.ensureAgent(this.workbench.activeTab());
     await this.workbench.activate(this.workbench.active);
@@ -241,22 +311,21 @@ export class App {
   }
 
   stop(): void {
+    this.theme.dispose();
     this.setProgramStatus({ state: "clear" });
     this.tui.stop();
   }
 
-  /** The mode the editor's border shows: the run's while it runs, else what the text asks for. */
+  /** The mode the editor's border shows, from the text as it is now (each draw: typing `!` recolors it). */
   private editorMode(): ReturnType<typeof modeOfText>["mode"] {
-    const zone = this.screen?.zones.editor;
-    return zone?.kind === "editor" ? zone.mode : "plan";
+    return this.workbench.editorMode(this.editor.getText());
   }
 
   /** Redraws from the workbench's screen. */
   private refresh(): void {
     const theme = getTheme();
-    const variant = this.screen?.agent?.state.variant ?? "advanced";
     const previous = this.screen?.agent;
-    const screen = this.workbench.screen(this.tui.terminal.columns, { mode: modeOfText(this.editor.getText(), variant).mode });
+    const screen = this.workbench.screen(this.tui.terminal.columns, { mode: this.editorMode() });
     this.screen = screen;
     this.followTheme();
     if (screen.prefill !== undefined && screen.prefill.key !== this.prefillApplied) {
@@ -453,7 +522,7 @@ export class App {
           ? `interaction:${zone.request.id}`
           : zone.kind === "component"
             ? `component:${zone.component.componentId}`
-            : `picker:${zone.picker.id}`;
+            : `picker:${zone.picker.id}:${zone.picker.scope ?? 0}`;
     if (id === this.editorShown) {
       return;
     } else {
@@ -484,18 +553,10 @@ export class App {
           break;
         }
         case "picker": {
-          const theme = getTheme();
-          const picker = zone.picker;
-          const list = new SelectList(picker.items, Math.min(15, Math.max(1, picker.items.length)), selectListTheme(theme));
-          list.onSelect = (item) => void picker.choose(item.value);
-          list.onCancel = () => this.workbench.closePicker();
-          const frame = new Container();
-          frame.addChild(new Text(theme.fg("accent", theme.bold(` ${picker.title}`)), 0, 0));
-          frame.addChild(list);
-          frame.addChild(new Text(theme.fg("dim", " ↑/↓ · type to filter · Enter · Esc"), 0, 0));
-          this.editorComponent = list;
-          this.editorZone.addChild(frame);
-          this.tui.setFocus(list);
+          const view = new PickerView(zone.picker, getTheme, { scope: () => this.workbench.nextPickerScope(), cancel: () => this.workbench.closePicker() });
+          this.editorComponent = view;
+          this.editorZone.addChild(view);
+          this.tui.setFocus(view);
           break;
         }
         default:
@@ -572,19 +633,16 @@ export class App {
     const theme = getTheme();
     switch (kind) {
       case "panel": {
-        const state = screen.agent?.state;
-        const rows = state !== undefined ? this.workbench.panelRows(state) : [];
-        const list = new SelectList(rows, Math.max(1, rows.length), selectListTheme(theme));
-        list.onSelect = (row) => {
-          this.workbench.toggleOverlay("panel");
-          void this.workbench.choosePanel(row.value as never).catch((error: unknown) => this.workbench.notify("error", error instanceof Error ? error.message : String(error)));
-        };
-        list.onCancel = () => this.workbench.toggleOverlay("panel");
-        const frame = new Container();
-        frame.addChild(new Text(theme.fg("accent", theme.bold(" harness")), 0, 0));
-        frame.addChild(rows.length > 0 ? list : new Text(theme.fg("dim", " no session"), 0, 0));
-        const handle = this.tui.showOverlay(frame, { width: RIGHT_WIDTH + 10, anchor: "top-right" });
-        this.tui.setFocus(list);
+        const panel = new HarnessPanel({
+          tui: this.tui,
+          theme: getTheme,
+          sections: () => this.workbench.panel(),
+          apply: (id) => void this.workbench.applyPanel(id).catch((error: unknown) => this.workbench.notify("error", error instanceof Error ? error.message : String(error))),
+          close: () => this.workbench.closeOverlay("panel"),
+          closeKeys: ACTIONS["panel.toggle"].keys,
+        });
+        const handle = this.tui.showOverlay(panel, { width: PANEL_WIDTH, minWidth: PANEL_MIN_WIDTH, anchor: "top-right" });
+        this.tui.setFocus(panel);
         return handle;
       }
       case "tabs":
@@ -633,15 +691,34 @@ export class App {
 
   /** `ui.theme` of the user's settings changed (here or in another client): redraw in it. */
   private followTheme(): void {
-    const name = this.client.settings["ui.theme"];
-    if (typeof name === "string" && name !== "" && name !== this.themeApplied) {
+    const name = this.uiTheme();
+    if (name !== undefined && name !== this.themeApplied) {
       this.themeApplied = name;
-      initClientTheme(name);
+      this.theme.setThemeSetting(name);
+      // custom entries keep the colors they were made with: made again
       this.transcript.rebuild();
-      this.tui.invalidate();
     } else {
       // the same theme
     }
+  }
+
+  /** `ui.theme` of the user's settings (shared by the user's clients); undefined: pi's own setting. */
+  private uiTheme(): string | undefined {
+    const name = this.client.settings["ui.theme"];
+    return typeof name === "string" && name !== "" ? name : undefined;
+  }
+
+  /** What pi's interactive mode gives its transcript components, from pi's settings. */
+  private transcriptOptions(): TranscriptOptions {
+    const settings = (): SettingsManager => this.settings;
+    const mermaid = mermaidTransformer(settings);
+    return {
+      markdownTheme: () => ({ ...getMarkdownTheme(), codeBlockIndent: this.settings.getCodeBlockIndent() }),
+      outputPad: () => this.settings.getOutputPad(),
+      transformers: () => [mermaid, ...this.renderers.markdownTransformers],
+      tools: () => ({ showImages: this.settings.getShowImages(), imageWidthCells: this.settings.getImageWidthCells(), outputPad: this.settings.getOutputPad() }),
+      hideThinking: () => this.settings.getHideThinkingBlock(),
+    };
   }
 
   /** The editor's text (for tests and drivers). */
@@ -650,11 +727,22 @@ export class App {
   }
 
   private onKey(data: string): { consume: boolean } | undefined {
+    if (isKeyRelease(data)) {
+      // the terminal reports releases too (the kitty protocol): only presses act; pi-tui drops the
+      // releases before the focused component itself
+      return undefined;
+    } else {
+      // a press or a repeat
+    }
     // keys and the wheel scroll the transcript: at its top, the older entries come next
     setImmediate(() => (this.screen !== undefined && this.screen.zones.main.kind === "transcript" ? this.loadOlderAtTop(this.screen) : undefined));
     const action = actionOf(data);
     const input = this.screen?.input ?? "editor";
-    if (matchesKey(data, "ctrl+c" as never)) {
+    const inStrip = this.stripFocus !== undefined && (this.stripFocus === "tabs" ? this.tabsColumn : this.itemsColumn).focused;
+    const inPanel = this.overlayHandles.has("panel");
+    if ((inStrip || inPanel) && (action === undefined || action === "run.abort" || action === "editor.submit" || action === "editor.newline")) {
+      return undefined; // the strip's or the panel's own keys: arrows, Enter, Space, Delete, Esc
+    } else if (matchesKey(data, "ctrl+c" as never)) {
       if (this.editor.getText() !== "" && input === "editor") {
         this.editor.setText("");
         this.quitArmed = false;
@@ -693,6 +781,13 @@ export class App {
   async act(action: ActionId): Promise<void> {
     if (action === "app.quit") {
       this.onQuit();
+    } else if (action === "strip.tabs" || action === "strip.items") {
+      const side = action === "strip.tabs" ? "tabs" : "items";
+      if (this.stripFocus === side) {
+        this.leaveStrip();
+      } else {
+        this.enterStrip(side);
+      }
     } else {
       await this.workbench.act(action);
       if (action === "tabs.new" || action === "tabs.open" || action.startsWith("tabs.")) {
@@ -700,6 +795,42 @@ export class App {
       } else {
         // the same session
       }
+    }
+  }
+
+  /** The strip the keyboard is in (Alt+←/→), if any. */
+  private stripFocus: "tabs" | "items" | undefined;
+
+  /** The keyboard into a strip; a strip hidden on a narrow screen comes over it first. */
+  private enterStrip(side: "tabs" | "items"): void {
+    this.leaveStrip();
+    const strip = side === "tabs" ? this.tabsColumn : this.itemsColumn;
+    const hidden = this.screen !== undefined && !(side === "tabs" ? this.screen.strips.left : this.screen.strips.right);
+    if (hidden && !(this.screen?.zones.overlays.includes(side) ?? false)) {
+      this.workbench.toggleOverlay(side);
+    } else {
+      // shown already
+    }
+    this.stripFocus = side;
+    strip.enter();
+    this.tui.setFocus(strip);
+    this.tui.requestRender();
+  }
+
+  /** The keyboard back to the editor zone; an overlaid strip goes away. */
+  private leaveStrip(): void {
+    const side = this.stripFocus;
+    if (side !== undefined) {
+      this.stripFocus = undefined;
+      if (this.screen?.zones.overlays.includes(side) === true) {
+        this.workbench.toggleOverlay(side);
+      } else {
+        // the strip stays in its column
+      }
+      this.tui.setFocus(this.editorComponent ?? this.editor);
+      this.tui.requestRender();
+    } else {
+      // the keyboard is not in a strip
     }
   }
 
@@ -729,10 +860,6 @@ export class App {
   get ui(): TUI {
     return this.tui;
   }
-}
-
-export function initClientTheme(name: string | undefined): void {
-  initTheme(name, false);
 }
 
 /** The themes the TUI can draw: pi's own and the user's (`~/.harness/themes/*.json`). */

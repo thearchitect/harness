@@ -14,6 +14,60 @@ export type RowEvents = {
 
 const DRAG_TYPE = "application/x-harness-row";
 
+/**
+ * A list's keyboard: ↑/↓ move the focus between its rows, Space and Enter press the focused row,
+ * Esc hands the keyboard back to the message field.
+ */
+export function useListKeys(ref: RefObject<unknown>, onEscape: () => void = focusMessage): void {
+  useEffect(() => {
+    const node = ref.current as HTMLElement | null;
+    if (node === null || typeof node.addEventListener !== "function") {
+      return undefined;
+    } else {
+      const keydown = (event: KeyboardEvent): void => {
+        const rows = [...node.querySelectorAll<HTMLElement>("[role=button]")];
+        const index = rows.indexOf(document.activeElement as HTMLElement);
+        if (index < 0) {
+          return; // the focus is not on a row of this list
+        } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+          event.preventDefault();
+          event.stopPropagation();
+          rows[(index + (event.key === "ArrowDown" ? 1 : rows.length - 1)) % rows.length]?.focus();
+        } else if (event.key === " " || event.key === "Enter") {
+          event.preventDefault();
+          event.stopPropagation();
+          rows[index]?.click();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          onEscape();
+        } else {
+          // a key of the page
+        }
+      };
+      node.addEventListener("keydown", keydown);
+      return () => node.removeEventListener("keydown", keydown);
+    }
+  }, [ref, onEscape]);
+}
+
+/** The keyboard into a list (by its accessible name): on its selected row, else its first. */
+export function focusList(label: string): boolean {
+  const list = document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
+  const row = list?.querySelector<HTMLElement>("[role=button][aria-selected=true]") ?? list?.querySelector<HTMLElement>("[role=button]");
+  if (row !== null && row !== undefined) {
+    row.focus();
+    return true;
+  } else {
+    return false;
+  }
+}
+
+/** The keyboard back to the message field. */
+export function focusMessage(): void {
+  document.querySelector<HTMLElement>('[aria-label="Message"]')?.focus();
+}
+
 export function useRowEvents(ref: RefObject<unknown>, events: RowEvents): void {
   const { title, onContextMenu, onMiddleClick, drag } = events;
   useEffect(() => {

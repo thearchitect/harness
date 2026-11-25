@@ -19,6 +19,7 @@ import { appWebDir, serveStatic } from "#node/endpoints/static.ts";
 import { startWebApp } from "#node/webapp.ts";
 import type { Transport } from "#protocol/node.ts";
 import { parseArgs } from "node:util";
+import { sessionDirectory } from "./args.ts";
 import { NodeConnection } from "#client/connection.ts";
 import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench } from "#client/workbench/workbench.ts";
@@ -36,7 +37,7 @@ import { claudeBridge } from "./claude-bridge.ts";
 import { piCommand } from "./pi-command.ts";
 import { canExecUpdate, checkUpdates, detectInstall, execUpdate, updateHint, updateLines, type Install, type UpdateState } from "./update.ts";
 import { readRemotes } from "./remotes.ts";
-import { App, clientThemes, initClientTheme } from "#tui/app.ts";
+import { App, clientThemes } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
 
 const DEFAULT_NODE = "default";
@@ -177,13 +178,17 @@ async function runWebApp(): Promise<void> {
 }
 
 async function runTui(args: string[]): Promise<void> {
-  const { values } = parseArgs({ args, options: { continue: { type: "boolean", short: "c" }, session: { type: "string" }, model: { type: "string", short: "m" } } });
+  const { values, positionals } = parseArgs({
+    args,
+    allowPositionals: true,
+    options: { continue: { type: "boolean", short: "c" }, session: { type: "string" }, model: { type: "string", short: "m" } },
+  });
   const home = harnessHome();
   ensureHome(home);
-  const cwd = process.cwd();
+  const cwd = sessionDirectory(positionals);
   // pi's theme loader finds custom themes under its agent directory: ~/.harness/themes
   process.env.PI_CODING_AGENT_DIR = home;
-  initClientTheme(SettingsManager.create(cwd, home).getTheme());
+  const settings = SettingsManager.create(cwd, home);
 
   const local = await localNode(home);
   const embedded = local.embedded;
@@ -192,13 +197,6 @@ async function runTui(args: string[]): Promise<void> {
   // the local node, then the remote hubs: each reconnects by itself after a loss
   const client = new ClientModel();
   const nodeName = await client.addEndpoint(open, { home: true });
-  // the theme of the user's UI settings (shared by the user's clients) wins over pi's own setting
-  const uiTheme = client.settings["ui.theme"];
-  if (typeof uiTheme === "string" && uiTheme !== "") {
-    initClientTheme(uiTheme);
-  } else {
-    // pi's theme setting, or its default
-  }
   for (const remote of readRemotes(home)) {
     await client
       .addEndpoint(async () => NodeConnection.open(await wsTransport(remote.url), "tui", remote.token, TUI_CAPABILITIES), { home: false })
@@ -274,7 +272,7 @@ async function runTui(args: string[]): Promise<void> {
       // a system configuration updates the bundle
     }
   };
-  app = new App({ client, workbench, renderers, cwd, onQuit: () => void quit() });
+  app = new App({ client, workbench, renderers, cwd, settings, onQuit: () => void quit() });
   await app.start();
   await app.loadCompletions().catch(() => undefined);
   process.on("SIGTERM", () => void quit());
@@ -321,7 +319,8 @@ async function main(): Promise<void> {
     case "-h":
       process.stdout.write(
         [
-          "harness [-c] [--session <id>] [-m <model>]  the TUI (model: provider/family[:thinking] or an exact id)",
+          "harness [dir] [-c] [--session <id>] [-m <model>]   the TUI: a new session in dir (default: here);",
+          "                                            -c the latest of dir; model: provider/family[:thinking] or an id",
           "harness node [--name <name>]                a node for this user",
           "harness hub [--name <name>] [--listen h:p]  a node with the hub role",
           "harness hub user|device|node add|remove|revoke|list …",

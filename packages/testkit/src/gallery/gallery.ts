@@ -12,14 +12,17 @@ import { QuestionsDialog } from "#extension/presentation/tui/questions.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
 import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
-import { ItemsColumn, TabsColumn } from "#tui/columns.ts";
-import { getTheme } from "#tui/theme.ts";
+import { ItemsColumn, TabsColumn, type StripActions } from "#tui/columns.ts";
+import { getTheme } from "#tui/pi-internals.ts";
 import { appWebDir } from "#node/endpoints/static.ts";
 import { startWebApp } from "#node/webapp.ts";
 import { bundledBrowser, gridHtml, screenshot } from "../capture/rasterize.ts";
 import { VirtualTerminal } from "../drivers/terminal.ts";
 import { INTERACTIONS, ITEMS, TABS } from "../fixtures/fixtures.ts";
 import { reportsRoot } from "../report/report.ts";
+
+/** The strips are only drawn here. */
+const STRIP_INERT: StripActions = { open: () => undefined, leave: () => undefined };
 
 type Exhibit = { name: string; width: number; component(tui: TUI): Component };
 
@@ -50,9 +53,9 @@ export function exhibits(): Exhibit[] {
     ...Object.entries(INTERACTIONS).map(([name, request]) => ({ name: `interaction-${name}`, width: 100, component: (tui: TUI) => interaction(tui, request) })),
     {
       name: "tabs-all-glyphs",
-      width: 26,
+      width: 18,
       component: () => {
-        const column = new TabsColumn(theme);
+        const column = new TabsColumn(theme, STRIP_INERT);
         column.tabs = TABS;
         column.active = 1;
         return column;
@@ -60,14 +63,14 @@ export function exhibits(): Exhibit[] {
     },
     {
       name: "tabs-empty",
-      width: 26,
-      component: () => new TabsColumn(theme),
+      width: 18,
+      component: () => new TabsColumn(theme, STRIP_INERT),
     },
     {
       name: "items-tasks-subagents",
-      width: 30,
+      width: 21,
       component: () => {
-        const column = new ItemsColumn(theme);
+        const column = new ItemsColumn(theme, STRIP_INERT);
         column.items = ITEMS;
         column.selected = "t2";
         column.mode = "build";

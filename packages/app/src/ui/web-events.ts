@@ -10,6 +10,19 @@ export type RowEvents = {
   drag?: { index: number; onDrop: (from: number) => void };
 };
 
+/** Touch moves through lists itself; hardware keyboards come with the native builds. */
+export function useListKeys(_ref: RefObject<unknown>, _onEscape?: () => void): void {
+  // nothing to listen to
+}
+
+export function focusList(_label: string): boolean {
+  return false;
+}
+
+export function focusMessage(): void {
+  // the field takes the focus when touched
+}
+
 export function useRowEvents(_ref: RefObject<unknown>, _events: RowEvents): void {
   // nothing to listen to
 }

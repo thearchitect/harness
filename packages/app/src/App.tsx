@@ -37,6 +37,7 @@ import { Gallery } from "./ui/Gallery.tsx";
 import { Pairing } from "./ui/Pairing.tsx";
 import { T } from "./ui/primitives.tsx";
 import { Shell, type DeviceActions } from "./ui/Shell.tsx";
+import { focusList } from "./ui/web-events";
 
 /** `themeNames`: the themes the home node has (theme_get), for /settings. */
 type Connected = { client: ClientModel; workbench: Workbench; endpoint: Endpoint; themeNames: string[] };
@@ -382,11 +383,20 @@ function WorkbenchApp() {
         return;
       } else if (action === "run.abort" && screen?.input === "dialog") {
         return; // Esc belongs to the dialog
+      } else if (action === "strip.tabs" || action === "strip.items") {
+        // the keyboard into the strip; a hidden one comes over the screen first
+        const label = action === "strip.tabs" ? "sessions" : "session items";
+        const shown = action === "strip.tabs" ? screen?.strips.left : screen?.strips.right;
+        if (shown === true || screen?.zones.overlays.includes(action === "strip.tabs" ? "tabs" : "items") === true) {
+          focusList(label);
+        } else {
+          void connected.workbench.act(action).then(() => setTimeout(() => focusList(label), 0));
+        }
       } else {
         void connected.workbench.act(action);
       }
     },
-    [connected, screen?.input],
+    [connected, screen?.input, screen?.strips.left, screen?.strips.right, screen?.zones.overlays],
   );
   useEffect(() => listenKeys(act), [act]);
 

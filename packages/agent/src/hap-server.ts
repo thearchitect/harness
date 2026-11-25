@@ -3,7 +3,7 @@
 // ordered stream: a snapshot answered at some point is followed by every later event, which is
 // what makes "snapshot + tail" consistent for a client the node attaches mid-run.
 
-import type { AgentSession, AgentSessionEvent, AgentSessionRuntime, RpcCommand } from "@earendil-works/pi-coding-agent";
+import { resolveModelScopeWithDiagnostics, type AgentSession, type AgentSessionEvent, type AgentSessionRuntime, type RpcCommand } from "@earendil-works/pi-coding-agent";
 import { readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { EntriesBeforeData, HapEvent, HapRequest, SessionView, SnapshotData } from "#protocol/hap.ts";
@@ -438,13 +438,21 @@ export class HapServer {
         this.emit({ type: "harness_session", session: this.view() });
         return ok(result ?? null);
       }
-      case "get_available_models":
-        return ok({ models: session.modelRuntime.getAvailableSnapshot() });
+      case "get_available_models": {
+        // the user's favorites (pi's `enabledModels`, the models Ctrl+P cycles), as pi resolves them
+        const patterns = session.settingsManager.getEnabledModels() ?? [];
+        const { scopedModels } = patterns.length > 0 ? await resolveModelScopeWithDiagnostics(patterns, session.modelRuntime) : { scopedModels: [] };
+        const favorites = scopedModels.map((scoped) => ({ provider: scoped.model.provider, id: scoped.model.id }));
+        return ok({ models: session.modelRuntime.getAvailableSnapshot(), favorites });
+      }
       case "set_thinking_level":
         session.setThinkingLevel(command.level);
+        this.emit({ type: "harness_session", session: this.view() });
         return ok();
       case "cycle_thinking_level": {
         const level = session.cycleThinkingLevel();
+        // clients show the level in their footers
+        this.emit({ type: "harness_session", session: this.view() });
         return ok(level === undefined ? null : { level });
       }
       case "get_available_thinking_levels":

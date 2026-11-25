@@ -15,6 +15,9 @@ import {
   type EntryRenderer,
   type ExtensionAPI,
   type ExtensionFactory,
+  type MarkdownMessageType,
+  type MarkdownTransformer,
+  type MarkdownTransformerOptions,
   type MessageRenderer,
   type ToolDefinition,
   type ToolRendererResolver,
@@ -26,11 +29,16 @@ import { createJiti } from "jiti";
 import { createHarnessExtension } from "#extension/index.ts";
 import { GateCommentRow } from "#extension/presentation/tui/gate.ts";
 
+/** pi's default surfaces of a Markdown transformer. */
+const DEFAULT_MARKDOWN_SURFACES: readonly MarkdownMessageType[] = ["user", "assistant", "assistant-thinking"];
+
 export class Renderers {
   readonly tools = new Map<string, ToolRenderers | ToolDefinition>();
   readonly entries = new Map<string, EntryRenderer>();
   readonly messages = new Map<string, MessageRenderer>();
   private readonly resolvers: ToolRendererResolver[] = [];
+  /** Markdown transformers of the extensions, each on the surfaces it registered for (as pi's runner applies them). */
+  readonly markdownTransformers: MarkdownTransformer[] = [];
   readonly problems: string[] = [];
 
   tool(name: string): ToolRenderers | ToolDefinition | undefined {
@@ -52,6 +60,10 @@ export class Renderers {
       },
       registerToolRenderer: (resolver: ToolRendererResolver) => {
         this.resolvers.push(resolver);
+      },
+      registerMarkdownTransformer: (transformer: MarkdownTransformer, options?: MarkdownTransformerOptions) => {
+        const surfaces = new Set<MarkdownMessageType>(options?.messageTypes ?? DEFAULT_MARKDOWN_SURFACES);
+        this.markdownTransformers.push((markdown, context) => (surfaces.has(context.messageType) ? transformer(markdown, context) : markdown));
       },
       getSettings: () => ({}),
       getActiveTools: () => [],

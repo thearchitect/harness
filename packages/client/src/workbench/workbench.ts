@@ -6,6 +6,7 @@
 import { systemClock, type Clock } from "#protocol/clock.ts";
 import type { BridgedComponent, LoginProvider, SubagentProfileView } from "#protocol/hap.ts";
 import { familyRefs } from "#protocol/model-ref.ts";
+import { modeOfText } from "#protocol/modes.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import type { AgentInfo, AgentSummary } from "#protocol/node.ts";
 import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#protocol/state.ts";
@@ -14,8 +15,8 @@ import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
 import { agentKey, type ClientModel } from "../model/client-model.ts";
 
 /** Screen widths (columns; the app converts them to `ch`) below which a strip hides behind an overlay. */
-export const LEFT_STRIP_MIN = 80;
-export const RIGHT_STRIP_MIN = 110;
+export const LEFT_STRIP_MIN = 72;
+export const RIGHT_STRIP_MIN = 100;
 /** How long a notice stays in the status line. */
 export const NOTICE_MS = 15_000;
 /** How often an open task view refreshes its output. */
@@ -23,9 +24,34 @@ export const TASK_OUTPUT_MS = 700;
 
 export type PickerItem = { value: string; label: string; description?: string };
 
-/** A choice from a list, drawn in the editor's place. */
-/** `custom`: the typed text is a choice of its own when no item matches (a directory, a name). */
-export type Picker = { id: string; title: string; items: PickerItem[]; choose(value: string): Promise<void>; custom?: string };
+/**
+ * A choice from a list, drawn in the editor's place. `custom`: the typed text is a choice of its
+ * own when no item matches (a directory, a name). `scopes`: lists to switch between with Tab (the
+ * model's favorites and all models); `items` are the shown scope's.
+ */
+export type Picker = {
+  id: string;
+  title: string;
+  items: PickerItem[];
+  choose(value: string): Promise<void>;
+  custom?: string;
+  scopes?: { title: string; items: PickerItem[] }[];
+  scope?: number;
+};
+
+/** A key and what it does, for a list's hint line: drawn as pi draws key hints (`tab favorites/all`). */
+export type KeyHint = { key: string; does: string };
+
+/** The hint line of a picker: every key it takes, each with what it does. */
+export function pickerHints(picker: Picker): KeyHint[] {
+  return [
+    { key: "↑↓", does: "select" },
+    ...(picker.scopes !== undefined && picker.scopes.length > 1 ? [{ key: "tab", does: picker.scopes.map((scope) => scope.title.toLowerCase()).join("/") }] : []),
+    { key: "type", does: picker.custom !== undefined ? `filter or ${picker.custom}` : "filter" },
+    { key: "enter", does: "choose" },
+    { key: "esc", does: "cancel" },
+  ];
+}
 
 /** What lies over the screen: the harness panel (over the right strip) and hidden strips. */
 export type OverlayKind = "panel" | "tabs" | "items";
@@ -100,7 +126,18 @@ export type Screen = {
   prefill: { key: string; text: string } | undefined;
 };
 
-export type PanelRow = { value: "madness" | "simple" | "implementer" | "subagents" | "dependencies" | "logs" | "update"; label: string; description: string };
+export type PanelId = "madness" | "simple" | "implementer" | "subagents" | "dependencies" | "logs" | "update";
+
+/**
+ * A row of the harness panel (Ctrl+\): a toggle (on/off, its tone when on) keeps the panel open; an
+ * action (with a hint on the right) closes it, so what it shows is not under the panel.
+ */
+export type PanelItem =
+  | { kind: "toggle"; id: PanelId; label: string; tone: "success" | "error"; on: boolean }
+  | { kind: "value"; id: PanelId; label: string; value: string }
+  | { kind: "action"; id: PanelId; label: string; hint: string };
+
+export type PanelSection = { title: string; items: PanelItem[] };
 
 /** The bundle's update, as the client's process knows it (the TUI's: cli/src/update.ts). */
 export type UpdateHook = {
@@ -297,6 +334,16 @@ export class Workbench {
   /* ----- the screen ----- */
 
   /** Everything a UI draws, for a screen `width` columns wide and the editor's current text. */
+  /**
+   * The mode the editor shows for `text`: the run's while the active session runs, else what the
+   * text asks for (a leading `!` asks for BUILD). UIs call it as the text changes.
+   */
+  editorMode(text: string): RunMode {
+    const tab = this.activeTab();
+    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    return agent?.running === true ? agent.state.mode : modeOfText(text, agent?.state.variant ?? "advanced").mode;
+  }
+
   screen(width: number, editor: { mode: RunMode }): Screen {
     const tabs = this.tabs();
     const tab = tabs[Math.min(this.active, tabs.length - 1)];
@@ -734,6 +781,18 @@ export class Workbench {
 
   /* ----- pickers and overlays ----- */
 
+  /** Tab in a picker with scopes: the next scope's list. */
+  nextPickerScope(): void {
+    const picker = this.picker;
+    if (picker?.scopes !== undefined && picker.scopes.length > 1) {
+      const scope = ((picker.scope ?? 0) + 1) % picker.scopes.length;
+      this.picker = { ...picker, scope, items: picker.scopes[scope]?.items ?? [] };
+      this.client.changed();
+    } else {
+      // one list only
+    }
+  }
+
   openPicker(picker: Omit<Picker, "choose"> & { choose(value: string): Promise<void> | void }): void {
     this.picker = {
       ...picker,
@@ -753,6 +812,15 @@ export class Workbench {
   closePicker(): void {
     this.picker = undefined;
     this.client.changed();
+  }
+
+  closeOverlay(kind: OverlayKind): void {
+    if (this.overlays.includes(kind)) {
+      this.overlays = this.overlays.filter((overlay) => overlay !== kind);
+      this.client.changed();
+    } else {
+      // not open
+    }
   }
 
   toggleOverlay(kind: OverlayKind): void {
@@ -777,16 +845,62 @@ export class Workbench {
     }
   }
 
-  panelRows(state: HarnessState): PanelRow[] {
-    return [
-      { value: "madness", label: `${state.madness ? "[x]" : "[ ]"} madness`, description: "write/edit without gates" },
-      { value: "simple", label: `${state.variant === "simple" ? "[x]" : "[ ]"} simple`, description: "one mode instead of PLAN/BUILD" },
-      { value: "implementer", label: `implementer: ${state.implementer}`, description: "self or a subagent profile (builder)" },
-      { value: "subagents", label: "subagents", description: "the profiles this session may call" },
-      { value: "dependencies", label: "dependencies", description: "the bundle, Claude Code, bundled versions" },
-      { value: "logs", label: "logs", description: "the events of the node you came in through (its user, a hub's admins)" },
-      ...(this.update !== undefined ? [{ value: "update" as const, label: `update · ${this.update.hint()}`, description: this.update.canRun() ? "upgrade and restart" : "nothing to do here" }] : []),
-    ];
+  /**
+   * The harness panel: MODE (the active session's switches) and HARNESS (the bundle, the node). The
+   * same sections, rows and order in every UI. Without a session only HARNESS.
+   */
+  panel(): PanelSection[] {
+    const tab = this.activeTab();
+    const state = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id))?.state : undefined;
+    const mode: PanelSection[] =
+      state !== undefined
+        ? [
+            {
+              title: "mode",
+              items: [
+                { kind: "toggle", id: "madness", label: "madness", tone: "error", on: state.madness },
+                { kind: "toggle", id: "simple", label: "simple", tone: "success", on: state.variant === "simple" },
+                { kind: "value", id: "implementer", label: "implementer", value: state.implementer },
+              ],
+            },
+          ]
+        : [];
+    const harness: PanelSection = {
+      title: "harness",
+      items: [
+        ...(this.update !== undefined ? [{ kind: "action" as const, id: "update" as const, label: "update", hint: this.update.hint() }] : []),
+        // the report and the profiles are the session's agent's
+        ...(state !== undefined
+          ? [
+              { kind: "action" as const, id: "dependencies" as const, label: "dependencies", hint: "versions" },
+              { kind: "action" as const, id: "subagents" as const, label: "subagents", hint: "profiles" },
+            ]
+          : []),
+        { kind: "action", id: "logs", label: "logs", hint: "node events" },
+      ],
+    };
+    return [...mode, harness];
+  }
+
+  /**
+   * Applies a panel row. True when the panel stays open (a toggle or a value: the change shows in
+   * it), false when it closes first (an action: what it shows is not under the panel).
+   */
+  async applyPanel(id: PanelId): Promise<boolean> {
+    const item = this.panel()
+      .flatMap((section) => section.items)
+      .find((candidate) => candidate.id === id);
+    if (item === undefined) {
+      this.notify("warning", `${id}: not here now`);
+      return true;
+    } else if (item.kind === "action") {
+      this.closeOverlay("panel");
+      await this.choosePanel(id);
+      return false;
+    } else {
+      await this.choosePanel(id);
+      return true;
+    }
   }
 
   /** A read-only list in the editor's place (a report, the profiles). */
@@ -794,7 +908,7 @@ export class Workbench {
     this.openPicker({ id, title, items: lines.map((line, index) => ({ value: String(index), ...line })), choose: () => undefined });
   }
 
-  async choosePanel(value: PanelRow["value"]): Promise<void> {
+  async choosePanel(value: PanelId): Promise<void> {
     const tab = this.activeTab();
     const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
     if (value === "update") {
@@ -1079,13 +1193,21 @@ export class Workbench {
     } else {
       const api = this.client.connection(tab.node);
       const agentId = tab.agent.id;
-      const { models } = await api.call<{ models: { provider: string; id: string; name?: string }[] }>(agentId, { type: "get_available_models" });
+      type Listed = { provider: string; id: string; name?: string };
+      const { models, favorites } = await api.call<{ models: Listed[]; favorites?: { provider: string; id: string }[] }>(agentId, { type: "get_available_models" });
+      const item = (model: Listed): PickerItem => ({ value: `${model.provider}/${model.id}`, label: `${model.provider}/${model.id}`, ...(model.name !== undefined ? { description: model.name } : {}) });
       // references first: they follow the newest model of their family (plan 6.2)
       const refs = familyRefs(models).map(({ ref, model }) => ({ value: `ref:${ref}`, label: `${ref} → ${model.id}`, description: "the newest of the family, now and later" }));
+      const all = [...refs, ...models.map(item)];
+      // the favorites (pi's enabledModels) first, when there are any
+      const favorite = (favorites ?? []).map((wanted) => models.find((model) => model.provider === wanted.provider && model.id === wanted.id) ?? wanted).map(item);
+      const scopes = favorite.length > 0 ? [{ title: "Favorites", items: favorite }, { title: "All", items: all }] : [{ title: "All", items: all }];
       this.openPicker({
         id: "model",
         title: "Model",
-        items: [...refs, ...models.map((model) => ({ value: `${model.provider}/${model.id}`, label: `${model.provider}/${model.id}`, description: model.name }))],
+        items: scopes[0]?.items ?? [],
+        scopes,
+        scope: 0,
         choose: async (value) => {
           if (value.startsWith("ref:")) {
             await api.call(agentId, { type: "harness_set", model: value.slice("ref:".length) });

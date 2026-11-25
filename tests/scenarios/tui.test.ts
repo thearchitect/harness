@@ -96,7 +96,11 @@ export const scenario = defineScenario({
         }
         assert.equal(tui.screen().agent?.cursor, undefined);
         assert.ok((tui.screen().agent?.items.length ?? 0) > loaded);
-        await tui.waitForText((screen) => screen.includes("what is the answer?"));
+        // the rest of the way up to the session's first message
+        for (let page = 0; !tui.text().includes("what is the answer?"); page += 1) {
+          assert.ok(page < 200, "the first message never came into view");
+          await tui.press("\x1b[5~");
+        }
       },
     },
     {

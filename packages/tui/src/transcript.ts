@@ -9,14 +9,15 @@ import {
   BranchSummaryMessageComponent,
   CompactionSummaryMessageComponent,
   CustomMessageComponent,
-  getMarkdownTheme,
   parseSkillBlock,
   SkillInvocationMessageComponent,
   ToolExecutionComponent,
   UserMessageComponent,
+  type MarkdownTransformer,
   type Theme,
+  type ToolExecutionOptions,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Spacer, Text, type Component, type TUI } from "@earendil-works/pi-tui";
+import { Container, Spacer, Text, type Component, type MarkdownTheme, type TUI } from "@earendil-works/pi-tui";
 import type { AgentModel, Message, TranscriptItem } from "#client/model/agent-model.ts";
 import type { Renderers } from "./presentation.ts";
 
@@ -36,26 +37,46 @@ function userText(message: Message): string {
   }
 }
 
+/** What pi's interactive mode gives these components, read at each draw (settings may change). */
+export type TranscriptOptions = {
+  markdownTheme: () => MarkdownTheme;
+  outputPad: () => 0 | 1;
+  transformers: () => readonly MarkdownTransformer[];
+  tools: () => ToolExecutionOptions;
+  hideThinking: () => boolean;
+};
+
 export class TranscriptView extends Container {
   private readonly tui: TUI;
   private readonly theme: () => Theme;
   private readonly renderers: Renderers;
   private readonly cwd: string;
+  private readonly options: TranscriptOptions;
   private model: AgentModel | undefined;
   private rendered: TranscriptItem[] = [];
   private readonly toolComponents = new Map<string, ToolExecutionComponent>();
   private streamingComponent: AssistantMessageComponent | undefined;
   private streamingTools = new Map<string, ToolExecutionComponent>();
   expanded = false;
-  hideThinking = false;
   private readonly firstComponent = new Map<string, Component>();
 
-  constructor(tui: TUI, theme: () => Theme, renderers: Renderers, cwd: string) {
+  constructor(tui: TUI, theme: () => Theme, renderers: Renderers, cwd: string, options: TranscriptOptions) {
     super();
     this.tui = tui;
     this.theme = theme;
     this.renderers = renderers;
     this.cwd = cwd;
+    this.options = options;
+  }
+
+  /** The trailing arguments of pi's message components: markdown theme, output pad, transformers. */
+  private md(): [MarkdownTheme, number, readonly MarkdownTransformer[]] {
+    return [this.options.markdownTheme(), this.options.outputPad(), this.options.transformers()];
+  }
+
+  private assistant(message: Message): AssistantMessageComponent {
+    const [theme, pad, transformers] = this.md();
+    return new AssistantMessageComponent(message as never, this.options.hideThinking(), theme, undefined, pad, transformers);
   }
 
   show(model: AgentModel | undefined): void {
@@ -126,7 +147,7 @@ export class TranscriptView extends Container {
   private drawStreaming(model: AgentModel): void {
     const message = model.streaming;
     if (message !== undefined) {
-      this.streamingComponent = new AssistantMessageComponent(message as never, this.hideThinking, getMarkdownTheme());
+      this.streamingComponent = this.assistant(message);
       this.addChild(this.streamingComponent);
       for (const block of (message.content as ToolCall[] | undefined) ?? []) {
         if (block.type === "toolCall" && block.id !== undefined && !this.toolComponents.has(block.id)) {
@@ -160,7 +181,7 @@ export class TranscriptView extends Container {
   }
 
   private toolComponent(name: string, id: string, args: unknown): ToolExecutionComponent {
-    const component = new ToolExecutionComponent(name, id, args, { showImages: true }, this.renderers.tool(name) as never, this.tui, this.cwd);
+    const component = new ToolExecutionComponent(name, id, args, this.options.tools(), this.renderers.tool(name) as never, this.tui, this.cwd);
     component.setExpanded(this.expanded);
     return component;
   }
@@ -210,14 +231,14 @@ export class TranscriptView extends Container {
         break;
       }
       case "compaction": {
-        const component = new CompactionSummaryMessageComponent({ role: "compactionSummary", summary: item.summary, tokensBefore: item.tokensBefore ?? 0, timestamp: Date.now() } as never, getMarkdownTheme());
+        const component = new CompactionSummaryMessageComponent({ role: "compactionSummary", summary: item.summary, tokensBefore: item.tokensBefore ?? 0, timestamp: Date.now() } as never, ...this.md());
         component.setExpanded(this.expanded);
         this.addChild(new Spacer(1));
         this.addChild(component);
         break;
       }
       case "branch": {
-        const component = new BranchSummaryMessageComponent({ role: "branchSummary", summary: item.summary, fromId: "", timestamp: Date.now() } as never, getMarkdownTheme());
+        const component = new BranchSummaryMessageComponent({ role: "branchSummary", summary: item.summary, fromId: "", timestamp: Date.now() } as never, ...this.md());
         component.setExpanded(this.expanded);
         this.addChild(new Spacer(1));
         this.addChild(component);
@@ -240,17 +261,17 @@ export class TranscriptView extends Container {
           }
           const skill = parseSkillBlock(text);
           if (skill !== null && skill !== undefined) {
-            const component = new SkillInvocationMessageComponent(skill, getMarkdownTheme());
+            const component = new SkillInvocationMessageComponent(skill, ...this.md());
             component.setExpanded(this.expanded);
             this.addChild(component);
             if (skill.userMessage) {
               this.addChild(new Spacer(1));
-              this.addChild(new UserMessageComponent(skill.userMessage, getMarkdownTheme()));
+              this.addChild(new UserMessageComponent(skill.userMessage, ...this.md()));
             } else {
               // the skill alone
             }
           } else {
-            this.addChild(new UserMessageComponent(text, getMarkdownTheme()));
+            this.addChild(new UserMessageComponent(text, ...this.md()));
           }
         } else {
           // an image-only message
@@ -258,7 +279,7 @@ export class TranscriptView extends Container {
         break;
       }
       case "assistant": {
-        this.addChild(new AssistantMessageComponent(message as never, this.hideThinking, getMarkdownTheme()));
+        this.addChild(this.assistant(message));
         const failed = message.stopReason === "aborted" || message.stopReason === "error";
         for (const block of (message.content as ToolCall[] | undefined) ?? []) {
           if (block.type === "toolCall") {
@@ -290,7 +311,7 @@ export class TranscriptView extends Container {
       }
       case "custom": {
         if (message.display !== false) {
-          const component = new CustomMessageComponent(message as never, this.renderers.messages.get(String(message.customType)), getMarkdownTheme());
+          const component = new CustomMessageComponent(message as never, this.renderers.messages.get(String(message.customType)), ...this.md());
           component.setExpanded(this.expanded);
           this.addChild(component);
         } else {
@@ -299,7 +320,7 @@ export class TranscriptView extends Container {
         break;
       }
       case "bashExecution": {
-        const component = new BashExecutionComponent(String(message.command), this.tui, message.excludeFromContext === true);
+        const component = new BashExecutionComponent(String(message.command), this.tui, message.excludeFromContext === true, this.options.outputPad());
         if (typeof message.output === "string" && message.output !== "") {
           component.appendOutput(message.output);
         } else {

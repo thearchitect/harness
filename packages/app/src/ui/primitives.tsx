@@ -122,6 +122,7 @@ export function Rule() {
 export function ListRow(props: { selected?: boolean; onPress?: () => void; children: ReactNode; label: string; indent?: number; events?: RowEvents }) {
   const theme = useTheme();
   const [hover, setHover] = useState(false);
+  const [focus, setFocus] = useState(false);
   const ref = useRef<ComponentRef<typeof Pressable>>(null);
   useRowEvents(ref, props.events ?? {});
   const menu = props.events?.onContextMenu;
@@ -135,13 +136,19 @@ export function ListRow(props: { selected?: boolean; onPress?: () => void; child
       onLongPress={menu !== undefined ? (event) => menu(event.nativeEvent.pageX, event.nativeEvent.pageY) : undefined}
       onHoverIn={() => setHover(true)}
       onHoverOut={() => setHover(false)}
+      onFocus={() => setFocus(true)}
+      onBlur={() => setFocus(false)}
       style={{
         flexDirection: "row",
         alignItems: "center",
         paddingHorizontal: 6,
-        paddingLeft: 6 + (props.indent ?? 0) * 12,
+        paddingLeft: 4 + (props.indent ?? 0) * 12,
         minHeight: 22,
-        backgroundColor: props.selected === true ? theme.colors.selectedBg : hover ? theme.colors.toolPendingBg : "transparent",
+        // the keyboard's row: a mark on the left, as the TUI's panel marks it
+        borderLeftWidth: 2,
+        borderLeftColor: focus ? theme.colors.accent : "transparent",
+        outlineStyle: "none" as never,
+        backgroundColor: props.selected === true || focus ? theme.colors.selectedBg : hover ? theme.colors.toolPendingBg : "transparent",
       }}
     >
       {props.children}
