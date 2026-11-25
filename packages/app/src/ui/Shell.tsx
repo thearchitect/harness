@@ -13,14 +13,19 @@ import { Button, GlyphMark, ListRow, T } from "./primitives.tsx";
 import { Transcript } from "./Transcript.tsx";
 
 function Tabs({ screen, workbench }: { screen: Screen; workbench: Workbench }) {
-  const nodes = new Set(screen.tabs.map((tab) => tab.node));
+  return <TabsStrip tabs={screen.tabs} active={screen.active} onGoto={(index) => void workbench.act(`tabs.goto.${index + 1}`)} onNew={() => void workbench.act("tabs.new")} />;
+}
+
+/** The left strip: one row per open session, the glyph first; node headers when sessions come from several nodes. */
+export function TabsStrip({ tabs, active, onGoto, onNew }: { tabs: Tab[]; active: number; onGoto: (index: number) => void; onNew: () => void }) {
+  const nodes = new Set(tabs.map((tab) => tab.node));
   let lastNode: string | undefined;
   return (
     <View accessibilityRole="tablist" accessibilityLabel="sessions" style={{ paddingVertical: 4 }}>
       <T color="muted" style={{ paddingHorizontal: 6 }}>
         sessions
       </T>
-      {screen.tabs.map((tab: Tab, index) => {
+      {tabs.map((tab: Tab, index) => {
         const header = nodes.size > 1 && tab.node !== lastNode ? tab.node : undefined;
         lastNode = tab.node;
         return (
@@ -30,7 +35,7 @@ function Tabs({ screen, workbench }: { screen: Screen; workbench: Workbench }) {
                 {header}
               </T>
             ) : null}
-            <ListRow label={`${tab.title}${tab.unavailable !== undefined ? ` (${tab.unavailable})` : ""}`} selected={index === screen.active} onPress={() => void workbench.act(`tabs.goto.${index + 1}`)}>
+            <ListRow label={`${tab.title}${tab.unavailable !== undefined ? ` (${tab.unavailable})` : ""}`} selected={index === active} onPress={() => onGoto(index)}>
               <GlyphMark glyph={tab.glyph} />
               <T lines={1} style={{ color: MODE_COLOR_HEX[tab.mode], flexShrink: 1 }}>
                 {tab.title}
@@ -39,7 +44,7 @@ function Tabs({ screen, workbench }: { screen: Screen; workbench: Workbench }) {
           </View>
         );
       })}
-      <ListRow label="New session" onPress={() => void workbench.act("tabs.new")}>
+      <ListRow label="New session" onPress={onNew}>
         <T color="muted">+ new</T>
       </ListRow>
     </View>
@@ -48,10 +53,15 @@ function Tabs({ screen, workbench }: { screen: Screen; workbench: Workbench }) {
 
 function Items({ screen, workbench }: { screen: Screen; workbench: Workbench }) {
   const tab = screen.tab;
+  return <ItemsStrip items={screen.items} selected={screen.selected} onSelect={(id) => (tab !== undefined ? workbench.select(tab, id) : undefined)} />;
+}
+
+/** The right strip: the session first, then its tasks and subagents on the same level; nested ones indented. */
+export function ItemsStrip({ items, selected, onSelect }: { items: Item[]; selected: string | undefined; onSelect: (id: string) => void }) {
   return (
     <View accessibilityRole="list" accessibilityLabel="session items" style={{ paddingVertical: 4 }}>
-      {screen.items.map((item: Item) => (
-        <ListRow key={item.id} label={item.label} indent={item.depth} selected={item.id === screen.selected} onPress={() => (tab !== undefined ? workbench.select(tab, item.id) : undefined)}>
+      {items.map((item: Item) => (
+        <ListRow key={item.id} label={item.label} indent={item.depth} selected={item.id === selected} onPress={() => onSelect(item.id)}>
           <GlyphMark glyph={item.glyph} />
           <T lines={1} style={{ flexShrink: 1 }}>
             {item.label}

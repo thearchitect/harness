@@ -871,16 +871,19 @@ export class Workbench {
   /** A new session: on the home node in the client's directory; with several nodes, the user picks one. */
   private async newTabOnNode(): Promise<void> {
     const nodes = [...this.client.connections.keys()];
-    const home = this.client.home ?? nodes[0];
-    if (nodes.length <= 1 || home === undefined) {
-      await this.newTab(home ?? "", this.cwd);
+    // the home node, if this user runs agents on it (a hub keeps their settings but may not)
+    const home = this.client.home !== undefined && this.client.connections.has(this.client.home) ? this.client.home : nodes[0];
+    if (home === undefined) {
+      this.notify("warning", "no node to start a session on: none of yours is online");
+    } else if (nodes.length <= 1) {
+      await this.newTab(home, home === this.client.home ? this.cwd : "~");
     } else {
       this.openPicker({
         id: "new-session",
         title: "New session on",
-        items: nodes.map((node) => ({ value: node, label: node, description: node === home ? this.cwd : "~ (the node user's home)" })),
+        items: nodes.map((node) => ({ value: node, label: node, description: node === this.client.home ? this.cwd : "~ (the node user's home)" })),
         choose: async (node) => {
-          await this.newTab(node, node === home ? this.cwd : "~");
+          await this.newTab(node, node === this.client.home ? this.cwd : "~");
         },
       });
     }

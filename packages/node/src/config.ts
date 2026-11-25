@@ -10,7 +10,8 @@ export type NodeFileConfig = {
   /** Hubs this node connects out to. */
   hubs?: { url: string; key?: string; keyFile?: string }[];
   /** Roles besides the node: a hub listening for devices and nodes. */
-  hub?: { listen: string };
+  /** `url`: the address devices reach the hub at (pairing links), e.g. https://my-harness.fly.dev. */
+  hub?: { listen: string; url?: string };
 };
 
 /** `path`: an explicit file (the NixOS module's); otherwise ~/.harness/nodes/<name>.json. */

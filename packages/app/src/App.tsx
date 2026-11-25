@@ -13,9 +13,11 @@ import { modeOfText } from "#protocol/modes.ts";
 // platform modules (`*.web.ts` next to the native one) are imported without an extension: Metro picks the file
 import { forgetDevice, readEndpoint, saveDevice, type Endpoint } from "./connect/endpoint";
 import { listenKeys } from "./keyboard";
+import { addressedSession, addressSession, onAddressChange, onFilesDropped, showAttention } from "./browser";
 import { loadFonts } from "./theme/fonts";
 import { charWidth, DEFAULT_THEME, ThemeContext, zoneOf, type Colors, type Theme } from "./theme/theme.tsx";
 import type { Completion } from "./ui/EditorZone.tsx";
+import { Gallery } from "./ui/Gallery.tsx";
 import { Pairing } from "./ui/Pairing.tsx";
 import { T } from "./ui/primitives.tsx";
 import { Shell } from "./ui/Shell.tsx";
@@ -36,11 +38,9 @@ function useUserTheme(connected: Connected | undefined, version: number): Theme 
   const settings = connected?.client.settings ?? {};
   const wanted = typeof settings["ui.theme"] === "string" ? String(settings["ui.theme"]) : undefined;
   useEffect(() => {
-    const home = connected?.client.home;
-    if (connected !== undefined && home !== undefined) {
+    if (connected !== undefined) {
       void connected.client
-        .connection(home)
-        .request("theme_get", wanted !== undefined ? { name: wanted } : {})
+        .homeRequest("theme_get", wanted !== undefined ? { name: wanted } : {})
         .then((theme) => {
           setColors({ ...DEFAULT_THEME.colors, ...theme.colors } as Colors);
           setName(theme.name);
@@ -56,7 +56,26 @@ function useUserTheme(connected: Connected | undefined, version: number): Theme 
   );
 }
 
+/** The gallery route (web): `/gallery?fixture=<name>`. */
+function galleryFixture(): string | undefined {
+  const location = (globalThis as { location?: { pathname: string; search: string } }).location;
+  return location?.pathname === "/gallery" ? (new URLSearchParams(location.search).get("fixture") ?? "") : undefined;
+}
+
 export function App() {
+  const fixture = galleryFixture();
+  return fixture !== undefined ? <GalleryApp fixture={fixture} /> : <WorkbenchApp />;
+}
+
+function GalleryApp({ fixture }: { fixture: string }) {
+  const [fontsReady, setFontsReady] = useState(false);
+  useEffect(() => {
+    void loadFonts().finally(() => setFontsReady(true));
+  }, []);
+  return <ThemeContext.Provider value={DEFAULT_THEME}>{fontsReady ? <Gallery fixture={fixture} /> : <View />}</ThemeContext.Provider>;
+}
+
+function WorkbenchApp() {
   const [fontsReady, setFontsReady] = useState(false);
   const [endpoint, setEndpoint] = useState<Endpoint | undefined | null>(null);
   const [connected, setConnected] = useState<Connected | undefined>(undefined);
@@ -144,6 +163,61 @@ export function App() {
       status: (screen?.zones.status ?? []).map((line) => line.text),
     });
   }, [screen]);
+
+  // attention: the sessions that wait for the operator
+  const waiting = screen?.tabs.filter((tab) => tab.glyph === "◆").length ?? 0;
+  useEffect(() => showAttention(waiting), [waiting]);
+
+  // the address names the active session; an address (a bookmark, back/forward) opens its session
+  const activeTab = screen?.tab;
+  useEffect(() => {
+    if (activeTab !== undefined) {
+      addressSession(activeTab.node, activeTab.sessionId);
+    } else {
+      // no session to name
+    }
+  }, [activeTab?.node, activeTab?.sessionId]);
+  useEffect(() => {
+    if (connected === undefined) {
+      return;
+    } else {
+      const open = (): void => {
+        const wanted = addressedSession();
+        const index = wanted !== undefined ? connected.workbench.tabs().findIndex((tab) => tab.node === wanted.node && tab.sessionId === wanted.sessionId) : -1;
+        if (wanted === undefined) {
+          // the address names no session
+        } else if (index >= 0) {
+          void connected.workbench.act(`tabs.goto.${index + 1}`);
+        } else {
+          void connected.client
+            .sessions(wanted.node)
+            .then((sessions) => sessions.find((session) => session.id === wanted.sessionId))
+            .then((session) => (session !== undefined ? connected.workbench.openSession(wanted.node, session) : connected.workbench.notify("warning", `no session ${wanted.sessionId} on ${wanted.node}`)))
+            .catch((reason: unknown) => connected.workbench.notify("error", String(reason)));
+        }
+      };
+      open();
+      return onAddressChange(open);
+    }
+  }, [connected]);
+
+  // files dropped on the window go to the session's machine and into the message as @path
+  useEffect(() => {
+    if (connected === undefined) {
+      return;
+    } else {
+      return onFilesDropped(globalThis.document?.body, (files) => {
+        const tab = connected.workbench.activeTab();
+        if (tab === undefined) {
+          connected.workbench.notify("warning", "open a session to drop files into");
+        } else {
+          void Promise.all(files.map((file) => connected.client.connection(tab.node).request("files_upload", { name: file.name, base64: file.base64 })))
+            .then((stored) => setEditorText((text) => `${text}${text === "" || text.endsWith(" ") ? "" : " "}${stored.map((file) => `@${file.path}`).join(" ")} `))
+            .catch((reason: unknown) => connected.workbench.notify("error", `upload: ${String(reason)}`));
+        }
+      });
+    }
+  }, [connected]);
 
   // the agent's (or a branch's) text for the editor, once per key
   useEffect(() => {

@@ -8,6 +8,8 @@ const root = path.resolve(__dirname, "../..");
 const shared = {
   "#protocol/": path.join(root, "packages/protocol/src/"),
   "#client/": path.join(root, "packages/client/src/"),
+  // the gallery route draws the shared fixtures
+  "#testkit/fixtures/": path.join(root, "packages/testkit/src/fixtures/"),
 };
 
 const config = getDefaultConfig(__dirname);

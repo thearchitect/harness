@@ -190,6 +190,15 @@ A theme's colors as hex for clients that draw it themselves, with the names of t
 |---|---|---|---|
 | `name` | string |  | A theme name; the user's ui.theme, else dark, when absent |
 
+### `files_upload`
+
+A file the operator hands to a session (dropped, shared, picked), kept in the node's ~/.harness/uploads. → { path }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes | The file's name |
+| `base64` | string | yes |  |
+
 ### `settings_get`
 
 The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }

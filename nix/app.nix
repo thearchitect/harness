@@ -77,6 +77,7 @@ let
         ../packages/app
         ../packages/client/src
         ../packages/protocol/src
+        ../packages/testkit/src/fixtures
       ];
     };
     nativeBuildInputs = [ nodejs ];

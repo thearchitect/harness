@@ -3,7 +3,7 @@
 // the same tabs, glyphs and items — compared by meaning, never by pixels.
 
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WebDriver } from "#testkit/drivers/web.ts";
@@ -34,9 +34,31 @@ export const scenario = defineScenario({
         await web.type("!write the file");
         await web.submit();
         await web.waitForScreen((screen) => screen.editor === "interaction");
+        // the page's title counts the sessions waiting for the operator
+        await web.page.waitForFunction(() => document.title === "◆ 1 · harness");
         await web.page.getByRole("button", { name: "Allow", exact: true }).click();
         await web.page.getByText("written").waitFor({ timeout: 15_000 });
         assert.equal(existsSync(target), true);
+      },
+    },
+    {
+      name: "the address names the active session; a dropped file goes to the node as @path",
+      async run({ stand, clients: { web } }) {
+        const screen = await web.screen();
+        assert.match(new URL(web.page.url()).hash, new RegExp(`^#/test/`));
+        assert.ok(screen.tabs.length > 0);
+        const dropped = await web.page.evaluateHandle(() => {
+          const transfer = new DataTransfer();
+          transfer.items.add(new File(["dropped text"], "note.txt", { type: "text/plain" }));
+          return transfer;
+        });
+        await web.page.dispatchEvent("body", "drop", { dataTransfer: dropped });
+        const field = web.page.getByRole("textbox", { name: "Message" });
+        await web.page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement | null)?.value.includes("@") === true);
+        const path = /@(\S+)/.exec(await field.inputValue())?.[1] ?? "";
+        assert.ok(path.startsWith(join(stand.dataDir, "uploads")), path);
+        assert.equal(readFileSync(path, "utf8"), "dropped text");
+        await field.fill("");
       },
     },
     {

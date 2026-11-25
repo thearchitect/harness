@@ -51,6 +51,7 @@ export class ClientModel {
   readonly connections = new Map<string, NodeApi>();
   /** The node whose settings this client uses (the local node, or the hub it logged into). */
   home: string | undefined;
+  private homeConnection: NodeConnection | undefined;
   /** Nodes known through hubs, online or not. */
   readonly nodes = new Map<string, NodeInfo>();
   readonly agents = new Map<AgentKey, AgentInfo>();
@@ -82,6 +83,7 @@ export class ClientModel {
     const entry = connection.welcome?.node ?? "node";
     if (options.home) {
       this.home = entry;
+      this.homeConnection = connection;
     } else {
       // a remote node or hub besides the home one
     }
@@ -360,11 +362,19 @@ export class ClientModel {
   }
 
   async setting(key: string, value: unknown): Promise<void> {
-    if (this.home === undefined) {
+    this.settings = (await this.homeRequest("settings_set", { key, value })).settings;
+    this.changed();
+  }
+
+  /**
+   * An operation of the home endpoint itself (settings, themes): the node or hub this client came in
+   * through, which keeps the user's settings even when the user may not run agents on it.
+   */
+  homeRequest<K extends NodeOp>(op: K, args: NodeOps[K]["args"]): Promise<NodeOps[K]["result"]> {
+    if (this.homeConnection === undefined) {
       throw new Error("no home node to keep settings");
     } else {
-      this.settings = (await this.connection(this.home).request("settings_set", { key, value })).settings;
-      this.changed();
+      return this.homeConnection.request(op, args);
     }
   }
 }

@@ -208,7 +208,7 @@ export function InteractionBlock({ request, from, answer }: { request: Interacti
   })();
   return (
     <View accessibilityRole="none" accessibilityLabel={`interaction ${request.kind}`} style={{ gap: 2 }}>
-      {from !== undefined ? <T color="warning">{`subagent ${from} asks:`}</T> : null}
+      {from !== undefined && !(request.kind === "gate" && request.payload.by === from) ? <T color="warning">{`subagent ${from} asks:`}</T> : null}
       {body}
     </View>
   );

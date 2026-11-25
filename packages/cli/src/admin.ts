@@ -3,6 +3,7 @@
 
 import { parseArgs } from "node:util";
 import { HubAuth } from "#node/auth.ts";
+import { readNodeConfig } from "#node/config.ts";
 import { readRemotes, writeRemotes } from "./remotes.ts";
 
 function print(text: string): void {
@@ -27,10 +28,20 @@ async function readHidden(prompt: string): Promise<string> {
   return Buffer.concat(chunks).toString("utf8").split("\n")[0]?.trim() ?? "";
 }
 
-export function hubAdmin(home: string, args: string[]): void {
+/** The link that pairs a device: the hub's web app with the token in its fragment (never sent to a server). */
+export function pairingLink(url: string, token: string): string {
+  return `${url.replace(/^ws/, "http").replace(/\/$/, "")}/#pair=${encodeURIComponent(token)}`;
+}
+
+async function qrTerminal(text: string): Promise<string> {
+  const { toString } = await import("qrcode");
+  return toString(text, { type: "terminal", small: true });
+}
+
+export async function hubAdmin(home: string, args: string[]): Promise<void> {
   const auth = new HubAuth(home);
   const [subject, verb, ...rest] = args;
-  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { admin: { type: "boolean" }, name: { type: "string" }, users: { type: "string" } } });
+  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { admin: { type: "boolean" }, name: { type: "string" }, users: { type: "string" }, url: { type: "string" } } });
   switch (`${subject ?? ""} ${verb ?? ""}`) {
     case "user add":
       auth.addUser(positionals[0] ?? usage("harness hub user add <name> [--admin]"), values.admin === true);
@@ -47,8 +58,17 @@ export function hubAdmin(home: string, args: string[]): void {
       break;
     case "device add": {
       const user = positionals[0] ?? usage("harness hub device add <user> --name <device>");
-      const { token } = auth.addDevice(user, values.name ?? usage("harness hub device add <user> --name <device>"));
-      print(`device ${values.name} of ${user}; its token (shown once):\n${token}\non the device: harness remote add <name> <hub url>, then paste the token`);
+      const { token } = auth.addDevice(user, values.name ?? usage("harness hub device add <user> --name <device> [--url <hub address>]"));
+      const url = values.url ?? readNodeConfig(home, "hub").hub?.url;
+      print(`device ${values.name} of ${user}; its token (shown once):\n${token}\non a terminal: harness remote add <name> <hub url>, then paste the token`);
+      if (url !== undefined) {
+        // the app: this link (or its QR code) pairs the device and opens the hub
+        const link = pairingLink(url, token);
+        print(`in the app or a browser: ${link}`);
+        print(await qrTerminal(link));
+      } else {
+        print("in the app: paste the token (or give --url <hub address> for a pairing link and QR code)");
+      }
       break;
     }
     case "device revoke":

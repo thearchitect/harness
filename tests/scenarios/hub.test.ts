@@ -12,6 +12,10 @@ import { Hub } from "#node/hub.ts";
 import { listenWs } from "#node/endpoints/ws.ts";
 import { Uplink } from "#node/uplink.ts";
 import { createStand, nextRecord, type Stand } from "#testkit/stand/stand.ts";
+import { WebDriver } from "#testkit/drivers/web.ts";
+import { bundledBrowser } from "#testkit/capture/rasterize.ts";
+import { appWebDir, serveStatic } from "#node/endpoints/static.ts";
+import { pairingLink } from "#cli/admin.ts";
 
 function until(condition: () => boolean, timeoutMs = 10_000): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -85,5 +89,43 @@ describe("hub", () => {
 
     uplink.stop();
     await until(() => client.offline.has("work"));
+  });
+
+  test("the hub serves the app: a pairing link opens it as the user's device, on the user's nodes", { skip: WebDriver.available() }, async () => {
+    const hubStand = await createStand({ name: "hub" });
+    const home = await createStand({ name: "home", users: ["carol"] });
+    stands.push(hubStand, home);
+    const hub = new Hub(hubStand.node);
+    hub.auth.addUser("carol");
+    const token = hub.auth.addDevice("carol", "browser").token;
+    const key = hub.auth.addNode("home", ["carol"]).key;
+    const server = await listenWs(hubStand.node, hub, { host: "127.0.0.1", port: 0, http: serveStatic(appWebDir() ?? "") });
+    cleanups.push(() => server.close());
+    const base = `127.0.0.1:${(server.address() as AddressInfo).port}`;
+    let linked = false;
+    const uplink = new Uplink(home.node, { url: `ws://${base}`, key, onState: (state) => (linked = state === "connected") });
+    uplink.start();
+    cleanups.push(() => uplink.stop());
+    await until(() => linked);
+
+    const { chromium } = await import("playwright-core");
+    const browser = await chromium.launch({ executablePath: bundledBrowser(), args: ["--no-sandbox"] });
+    cleanups.push(() => void browser.close());
+    const page = await browser.newPage();
+    await page.goto(pairingLink(`http://${base}`, token));
+    // the token left the address for the browser's storage; the app shows carol's node
+    await page.getByRole("button", { name: "New session" }).first().waitFor({ timeout: 30_000 });
+    assert.equal(new URL(page.url()).hash, "");
+    await page.getByRole("button", { name: "New session" }).first().click();
+    await page.getByRole("textbox", { name: "Message" }).waitFor();
+    // the new session's agent runs on carol's node
+    const local = await home.connect();
+    for (let tries = 0; (await local.request("agents_list", {})).agents.length === 0; tries += 1) {
+      assert.ok(tries < 400, "no agent started on the home node");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    // the same browser comes back paired
+    await page.goto(`http://${base}/`);
+    await page.getByRole("tablist", { name: "sessions" }).waitFor({ timeout: 30_000 });
   });
 });

@@ -85,8 +85,12 @@ export const scenario = defineScenario({
         const agent = tui.screen().agent;
         assert.ok(agent?.cursor !== undefined, "older entries exist");
         const loaded = agent.items.length;
-        for (let page = 0; page < 400 && tui.screen().agent?.cursor !== undefined; page += 1) {
+        // page up; at the top each page asks for the next older entries: wait for each load
+        for (let page = 0; tui.screen().agent?.cursor !== undefined; page += 1) {
+          assert.ok(page < 2000, "the older entries never all arrived");
           await tui.press("\x1b[5~");
+          await new Promise((resolve) => setImmediate(resolve));
+          await tui.app.olderLoad;
         }
         assert.equal(tui.screen().agent?.cursor, undefined);
         assert.ok((tui.screen().agent?.items.length ?? 0) > loaded);

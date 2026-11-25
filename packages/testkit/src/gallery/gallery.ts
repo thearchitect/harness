@@ -14,7 +14,9 @@ import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { ItemsColumn, TabsColumn } from "#tui/columns.ts";
 import { getTheme } from "#tui/theme.ts";
-import { gridHtml, screenshot } from "../capture/rasterize.ts";
+import { appWebDir } from "#node/endpoints/static.ts";
+import { startWebApp } from "#node/webapp.ts";
+import { bundledBrowser, gridHtml, screenshot } from "../capture/rasterize.ts";
 import { VirtualTerminal } from "../drivers/terminal.ts";
 import { INTERACTIONS, ITEMS, TABS } from "../fixtures/fixtures.ts";
 import { reportsRoot } from "../report/report.ts";
@@ -93,7 +95,37 @@ async function draw(exhibit: Exhibit): Promise<VirtualTerminal> {
   }
 }
 
-export type GalleryResult = { dir: string; index: string; exhibits: string[]; changed?: string[] };
+export type GalleryResult = { dir: string; index: string; exhibits: string[]; changed?: string[]; web: boolean };
+
+/**
+ * The app's side: its gallery route on `harness web-app`'s server, one page per fixture, the exhibit's
+ * element captured. Undefined when this machine has no web build or browser (the TUI side still runs).
+ */
+async function webGallery(): Promise<{ shoot(name: string): Promise<Buffer>; close(): Promise<void> } | undefined> {
+  const staticDir = appWebDir();
+  const executablePath = bundledBrowser();
+  if (staticDir === undefined || executablePath === undefined) {
+    return undefined;
+  } else {
+    const app = await startWebApp({ staticDir, open: () => Promise.reject(new Error("the gallery connects to no node")) });
+    const origin = new URL(app.url).origin;
+    const { chromium } = await import("playwright-core");
+    const browser = await chromium.launch({ executablePath, args: ["--no-sandbox", "--font-render-hinting=none", "--force-color-profile=srgb"] });
+    const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, deviceScaleFactor: 1 });
+    return {
+      shoot: async (name) => {
+        await page.goto(`${origin}/gallery?fixture=${encodeURIComponent(name)}`);
+        const exhibit = page.locator('[aria-label="exhibit"]');
+        await exhibit.waitFor({ timeout: 15_000 });
+        return exhibit.screenshot();
+      },
+      close: async () => {
+        await browser.close();
+        app.close();
+      },
+    };
+  }
+}
 
 export async function runGallery(options: { filter?: string; compare?: string; dir?: string } = {}): Promise<GalleryResult> {
   initTheme("dark", false);
@@ -103,6 +135,8 @@ export async function runGallery(options: { filter?: string; compare?: string; d
   const chosen = exhibits().filter((exhibit) => options.filter === undefined || exhibit.name.includes(options.filter));
   const rows: string[] = [];
   const changed: string[] = [];
+  const web = await webGallery();
+  try {
   for (const exhibit of chosen) {
     const terminal = await draw(exhibit);
     const text = `${terminal.text().join("\n")}\n`;
@@ -123,9 +157,19 @@ export async function runGallery(options: { filter?: string; compare?: string; d
     }
     const image = png !== undefined ? `<img src="${exhibit.name}.png">` : `<pre>${text.replace(/</g, "&lt;")}</pre>`;
     const was = differs && options.compare !== undefined && existsSync(join(options.compare, `${exhibit.name}.png`)) ? `<img src="${relative(dir, join(options.compare, `${exhibit.name}.png`))}">` : "";
-    rows.push(`<tr><th>${exhibit.name}${differs ? " (changed)" : ""}</th><td>${was}</td><td>${image}</td></tr>`);
+    let webCell = "";
+    if (web !== undefined) {
+      writeFileSync(join(dir, `${exhibit.name}.web.png`), await web.shoot(exhibit.name));
+      webCell = `<img src="${exhibit.name}.web.png">`;
+    } else {
+      // no web build here: the TUI column only
+    }
+    rows.push(`<tr><th>${exhibit.name}${differs ? " (changed)" : ""}</th><td>${was}</td><td>${image}</td><td>${webCell}</td></tr>`);
+  }
+  } finally {
+    await web?.close();
   }
   const index = join(dir, "index.html");
-  writeFileSync(index, `<!doctype html><meta charset="utf-8"><title>harness gallery</title><style>body{background:#111;color:#ccc;font-family:monospace}td,th{vertical-align:top;padding:8px;text-align:left}</style><table><tr><th>fixture</th><th>before</th><th>TUI</th></tr>${rows.join("")}</table>`);
-  return { dir, index, exhibits: chosen.map((exhibit) => exhibit.name), ...(options.compare !== undefined ? { changed } : {}) };
+  writeFileSync(index, `<!doctype html><meta charset="utf-8"><title>harness gallery</title><style>body{background:#111;color:#ccc;font-family:monospace}td,th{vertical-align:top;padding:8px;text-align:left}</style><table><tr><th>fixture</th><th>before</th><th>TUI</th><th>web</th></tr>${rows.join("")}</table>`);
+  return { dir, index, exhibits: chosen.map((exhibit) => exhibit.name), ...(options.compare !== undefined ? { changed } : {}), web: web !== undefined };
 }

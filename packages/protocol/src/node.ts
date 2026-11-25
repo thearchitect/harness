@@ -70,6 +70,8 @@ export type NodeOps = {
   files_list: { args: { path: string }; result: { path: string; items: FileItem[] } };
   files_get: { args: { path: string }; result: { path: string; base64: string } };
   files_put: { args: { path: string; base64: string }; result: { path: string } };
+  /** A file the operator hands to a session (dropped, shared, picked): kept in the node's uploads, its path returned for `@path`. */
+  files_upload: { args: { name: string; base64: string }; result: { path: string } };
   settings_get: { args: Record<string, never>; result: { settings: Record<string, unknown> } };
   settings_set: { args: { key: string; value: unknown }; result: { settings: Record<string, unknown> } };
   /** A theme's colors as hex (pi's tokens plus pageBg and cardBg), for clients that draw it themselves. */
@@ -92,6 +94,7 @@ export const NODE_OPS: readonly NodeOp[] = [
   "files_list",
   "files_get",
   "files_put",
+  "files_upload",
   "settings_get",
   "settings_set",
   "theme_get",

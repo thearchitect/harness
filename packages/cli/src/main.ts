@@ -278,7 +278,7 @@ async function main(): Promise<void> {
       break;
     case "hub":
       if (rest[0] !== undefined && ["user", "device", "node"].includes(rest[0])) {
-        hubAdmin(harnessHome(), rest);
+        await hubAdmin(harnessHome(), rest);
       } else {
         await runNode(rest, true);
       }

@@ -6,7 +6,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
@@ -335,6 +335,15 @@ export class HarnessNode {
       case "files_put": {
         const { path, base64 } = args as NodeOps["files_put"]["args"];
         const full = this.userPath(path);
+        await mkdir(dirname(full), { recursive: true });
+        await writeFile(full, Buffer.from(base64, "base64"));
+        return { path: full } as NodeOps[K]["result"];
+      }
+      case "files_upload": {
+        const { name, base64 } = args as NodeOps["files_upload"]["args"];
+        // the name only: no directories from the client
+        const safe = basename(name).replace(/[^\w.@+-]/g, "_") || "file";
+        const full = join(this.config.dataDir, "uploads", `${new Date().toISOString().replace(/[:.]/g, "-")}-${safe}`);
         await mkdir(dirname(full), { recursive: true });
         await writeFile(full, Buffer.from(base64, "base64"));
         return { path: full } as NodeOps[K]["result"];

@@ -361,6 +361,9 @@ export class App {
    * Scrolled to the top of what is loaded: the older entries come next, and the view stays on the
    * line it showed (the first item it had, now further down).
    */
+  /** The load of older entries under way, if any (drivers wait for it). */
+  olderLoad: Promise<void> | undefined;
+
   private loadOlderAtTop(screen: Screen): void {
     const agent = screen.agent;
     const tab = screen.tab;
@@ -371,7 +374,7 @@ export class App {
       return; // not at the top
     } else {
       this.loadingOlder = true;
-      void this.client
+      this.olderLoad = this.client
         .loadOlder(tab.node, tab.agent.id)
         .then(() => {
           this.transcript.show(agent);
@@ -386,6 +389,7 @@ export class App {
         .catch((error: unknown) => this.workbench.notify("error", `older entries: ${error instanceof Error ? error.message : String(error)}`))
         .finally(() => {
           this.loadingOlder = false;
+          this.olderLoad = undefined;
         });
     }
   }
