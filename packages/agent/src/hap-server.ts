@@ -46,6 +46,8 @@ export class HapServer {
   private readonly tools = new Map<string, ToolInFlight>();
   private readonly status: Record<string, string> = {};
   private readonly bridge: ComponentBridge;
+  /** harness_prompt requests in their order of arrival (each one taken before the next sets its mode). */
+  private prompts: Promise<unknown> = Promise.resolve();
 
   constructor(options: HapServerOptions) {
     this.runtime = options.runtime;
@@ -259,32 +261,38 @@ export class HapServer {
       case "harness_entries_before":
         return this.entriesBefore(request.cursor, request.limit);
       case "harness_prompt": {
+        // one after another: a message's mode is taken with that message, before the next one sets its own
         const session = this.session;
-        if (request.mode !== undefined) {
-          this.controller.setNextMode(request.mode);
-        } else {
-          // no mode named: the text decides (a leading "!" asks for BUILD)
-        }
-        return new Promise((resolveResponse, reject) => {
-          let preflight = false;
-          void session
-            .prompt(request.text, {
-              images: request.images,
-              streamingBehavior: session.isStreaming ? "steer" : undefined,
-              source: "rpc",
-              preflightResult: (disposition) => {
-                preflight = true;
-                resolveResponse({ disposition });
-              },
-            })
-            .catch((error: unknown) => {
-              if (!preflight) {
-                reject(error);
+        const turn = this.prompts.then(
+          () =>
+            new Promise<{ disposition: unknown }>((resolveResponse, reject) => {
+              if (request.mode !== undefined) {
+                this.controller.setNextMode(request.mode);
               } else {
-                // the run failed after it was accepted: the stream reports it
+                // no mode named: the text decides (a leading "!" asks for BUILD)
               }
-            });
-        });
+              let preflight = false;
+              void session
+                .prompt(request.text, {
+                  images: request.images,
+                  streamingBehavior: session.isStreaming ? "steer" : undefined,
+                  source: "rpc",
+                  preflightResult: (disposition) => {
+                    preflight = true;
+                    resolveResponse({ disposition });
+                  },
+                })
+                .catch((error: unknown) => {
+                  if (!preflight) {
+                    reject(error);
+                  } else {
+                    // the run failed after it was accepted: the stream reports it
+                  }
+                });
+            }),
+        );
+        this.prompts = turn.catch(() => undefined);
+        return turn;
       }
       case "harness_set":
         this.controller.set({ variant: request.variant, madness: request.madness, implementer: request.implementer });

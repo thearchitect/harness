@@ -28,9 +28,9 @@ import { wsTransport } from "#client/ws-transport.ts";
 import { hubKey, parseListen, readNodeConfig } from "#node/config.ts";
 import { harnessHome, ensureHome } from "#node/home.ts";
 import { Hub } from "#node/hub.ts";
+import { LocalNode, quitQuestion, versionProblem } from "#node/local.ts";
 import { HarnessNode } from "#node/node.ts";
-import { inProcessTransport, unixTransport } from "#node/endpoints/transports.ts";
-import { listenUnix, socketAlive, socketPath } from "#node/endpoints/unix.ts";
+import { listenUnix, socketPath } from "#node/endpoints/unix.ts";
 import { listenWs } from "#node/endpoints/ws.ts";
 import { Uplink } from "#node/uplink.ts";
 import { hubAdmin, remoteAdmin } from "./admin.ts";
@@ -81,7 +81,15 @@ async function runNode(args: string[], asHub: boolean): Promise<void> {
   ensureHome(home);
   const name = values.name ?? (asHub ? "hub" : DEFAULT_NODE);
   const config = readNodeConfig(home, name, values.config);
-  const node = new HarnessNode({ name, dataDir: home, harnessVersion: harnessVersion(), users: config.users, ...(config.server === true ? { agentEnv: { HARNESS_SERVER: "1" } } : {}) });
+  const node = new HarnessNode({
+    name,
+    dataDir: home,
+    harnessVersion: harnessVersion(),
+    users: config.users,
+    ...(config.server === true ? { agentEnv: { HARNESS_SERVER: "1" } } : {}),
+    // node_restart: a service exits with a failure code; its supervisor (systemd, s6) starts it again
+    restart: () => stop(EXIT_RESTART),
+  });
   const path = socketPath(home, name);
   const server = await listenUnix(node, path);
   process.stderr.write(`harness node ${name}: ${path}\n`);
@@ -103,41 +111,26 @@ async function runNode(args: string[], asHub: boolean): Promise<void> {
     return uplink;
   });
 
-  const stop = async (): Promise<void> => {
+  const stop = async (code: number): Promise<void> => {
     for (const uplink of uplinks) {
       uplink.stop();
     }
     web?.close();
     server.close();
     await node.close();
-    process.exit(0);
+    process.exit(code);
   };
-  process.on("SIGTERM", () => void stop());
-  process.on("SIGINT", () => void stop());
+  process.on("SIGTERM", () => void stop(0));
+  process.on("SIGINT", () => void stop(0));
 }
 
-/**
- * This user's node on this machine: the one running under its socket (a service, another client),
- * or one inside this process, which then also listens on the socket for the user's other clients.
- */
-async function localNode(home: string): Promise<{ transport: () => Promise<Transport>; embedded: { node: HarnessNode; close(): Promise<void> } | undefined }> {
-  const path = socketPath(home, DEFAULT_NODE);
-  if (await socketAlive(path)) {
-    return { transport: () => unixTransport(path), embedded: undefined };
-  } else {
-    const node = new HarnessNode({ name: DEFAULT_NODE, dataDir: home, harnessVersion: harnessVersion() });
-    const server = await listenUnix(node, path).catch(() => undefined);
-    return {
-      transport: async () => inProcessTransport(node),
-      embedded: {
-        node,
-        close: async () => {
-          server?.close();
-          await node.close();
-        },
-      },
-    };
-  }
+/** A service's exit for node_restart: a failure, so `Restart=on-failure` starts it again. */
+const EXIT_RESTART = 75;
+
+/** Ends a client that cannot use the local node (another version runs it). */
+function refuse(problem: string): never {
+  process.stderr.write(`${problem}\n`);
+  process.exit(1);
 }
 
 /**
@@ -158,13 +151,22 @@ async function runWebApp(): Promise<void> {
     process.stderr.write("harness web-app: no browser (the bundle's, or HARNESS_BROWSER)\n");
     process.exit(1);
   } else {
-    const local = await localNode(home);
-    const app = await startWebApp({ staticDir, open: local.transport });
+    const local = new LocalNode({ home, name: DEFAULT_NODE, harnessVersion: harnessVersion() });
+    // the node this window would use: another version's is refused before the window opens
+    const probe = await NodeConnection.open(await local.transport(), "web-app", undefined, []);
+    const problem = probe.welcome !== undefined ? versionProblem(harnessVersion(), probe.welcome) : undefined;
+    probe.close();
+    if (problem !== undefined) {
+      refuse(problem);
+    } else {
+      // this version's node
+    }
+    const app = await startWebApp({ staticDir, open: () => local.transport() });
     const profile = mkdtempSync(join(tmpdir(), "harness-web-app-"));
     const window = spawn(browser, [`--app=${app.url}`, `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check", "--class=harness", "--window-size=1400,900"], { stdio: "ignore" });
     const end = async (code: number): Promise<void> => {
       app.close();
-      await local.embedded?.close();
+      await local.close();
       rmSync(profile, { recursive: true, force: true });
       process.exit(code);
     };
@@ -193,9 +195,36 @@ async function runTui(args: string[]): Promise<void> {
   const keybindingsFile = join(home, "keybindings.json");
   const keybindings = existsSync(keybindingsFile) ? (JSON.parse(readFileSync(keybindingsFile, "utf8")) as KeybindingsConfig) : {};
 
-  const local = await localNode(home);
-  const embedded = local.embedded;
-  const open = async (): Promise<NodeConnection> => NodeConnection.open(await local.transport(), "tui", undefined, TUI_CAPABILITIES);
+  // the local node: another window's or a service's under the socket, or held in this process
+  const local = new LocalNode({ home, name: DEFAULT_NODE, harnessVersion: harnessVersion() });
+  let workbench: Workbench | undefined;
+  let app: App | undefined;
+  let last: { host: string; pid: number } | undefined;
+  let interrupted = 0;
+  const open = async (): Promise<NodeConnection> => {
+    const connection = await NodeConnection.open(await local.transport(), "tui", undefined, TUI_CAPABILITIES);
+    const welcome = connection.welcome;
+    if (welcome === undefined) {
+      throw new Error("the node did not welcome this client");
+    } else {
+      local.observe(welcome.host);
+      const problem = versionProblem(harnessVersion(), welcome);
+      if (problem !== undefined) {
+        app?.stop();
+        refuse(problem);
+      } else if (last !== undefined && last.host === "client" && last.pid !== welcome.pid && workbench !== undefined) {
+        workbench.notify("info", `node ${welcome.node} moved to ${local.node !== undefined ? "this window" : "another window"}; ${interrupted} sessions were interrupted`);
+      } else {
+        // the first connection, or the same node again
+      }
+      last = { host: welcome.host, pid: welcome.pid };
+      // before the client model drops the node's agents: how many were working when it went away
+      connection.onClose(() => {
+        interrupted = [...client.agents.values()].filter((agent) => agent.node === welcome.node && agent.summary.status !== "idle").length;
+      });
+      return connection;
+    }
+  };
 
   // the local node, then the remote hubs: each reconnects by itself after a loss
   const client = new ClientModel();
@@ -219,7 +248,7 @@ async function runTui(args: string[]): Promise<void> {
   } else {
     updateState = { kind: "dev" };
   }
-  const workbench = new Workbench(client, {
+  workbench = new Workbench(client, {
     cwd,
     themes: () => clientThemes(home),
     update: {
@@ -258,27 +287,32 @@ async function runTui(args: string[]): Promise<void> {
     // the session's own model
   }
 
-  let app: App | undefined;
-  const quit = async (): Promise<void> => {
-    app?.stop();
-    client.dispose();
-    await embedded?.close();
-    process.exit(0);
+  // a window that holds the node stops it with it: asked first when agents work or other windows use it
+  const quit = async (confirmed: boolean): Promise<void> => {
+    const question = quitQuestion(local.node?.activity());
+    if (!confirmed && question !== undefined && workbench !== undefined) {
+      workbench.confirm(question, "Quit", () => quit(true));
+    } else {
+      app?.stop();
+      client.dispose();
+      await local.close();
+      process.exit(0);
+    }
   };
   upgrade = () => {
     if (install.kind === "profile") {
       const element = install.element;
       app?.stop();
       client.dispose();
-      void (embedded?.close() ?? Promise.resolve()).then(() => execUpdate(element));
+      void local.close().then(() => execUpdate(element));
     } else {
       // a system configuration updates the bundle
     }
   };
-  app = new App({ client, workbench, renderers, cwd, settings, keybindings, onQuit: () => void quit() });
+  app = new App({ client, workbench, renderers, cwd, settings, keybindings, onQuit: () => void quit(false) });
   await app.start();
   await app.loadCompletions().catch(() => undefined);
-  process.on("SIGTERM", () => void quit());
+  process.on("SIGTERM", () => void quit(true));
 }
 
 async function main(): Promise<void> {

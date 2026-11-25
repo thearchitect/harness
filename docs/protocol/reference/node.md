@@ -56,6 +56,8 @@ The answer to hello.
 | `harness` | string | yes | The node's harness version |
 | `node` | string | yes | The node's name |
 | `user` | string | yes | Who the connection is: the node's OS user or a hub user |
+| `host` | `"client"` \| `"service"` | yes | Who runs the node: a client window holding it, or a service (harness node) |
+| `pid` | integer | yes | The node's process |
 
 ### `refused`
 
@@ -216,6 +218,12 @@ The node's event log, newest last; its own user, or a hub's admins. → { lines 
 |---|---|---|---|
 | `lines` | integer |  |  |
 
+### `node_restart`
+
+Stops every agent and its processes and starts the node again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}
+
+No fields.
+
 ### `settings_get`
 
 The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }
@@ -230,6 +238,7 @@ Changes one setting; every client of the user receives a settings event. → { s
 |---|---|---|---|
 | `key` | string | yes | A setting key |
 | `value` | any | yes | Its new value; null removes it |
+| `ifRevision` | string |  | The revision (settings.ts settingRevision) of the value this change was made from: another current one answers conflict |
 
 ## Node events
 

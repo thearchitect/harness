@@ -58,6 +58,7 @@ export function inProcessTransport(node: HarnessNode): Transport {
     id: randomUUID(),
     user: userInfo().username,
     trusted: true,
+    inProcess: true,
     send(frame: NodeFrame) {
       // a copy, as a wire would make: neither side shares mutable objects with the other
       const copy = JSON.parse(JSON.stringify(frame)) as NodeFrame;

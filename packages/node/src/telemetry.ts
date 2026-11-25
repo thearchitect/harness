@@ -10,6 +10,7 @@ const ROTATE_BYTES = 10 * 1024 * 1024;
 export type TelemetryEvent =
   | { event: "node_start"; roles: string[] }
   | { event: "node_stop" }
+  | { event: "node_restart"; user: string }
   | { event: "connect"; connection: string; client: string; user: string; trusted: boolean }
   | { event: "disconnect"; connection: string }
   | { event: "refused"; connection: string; code: string }

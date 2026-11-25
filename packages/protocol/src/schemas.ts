@@ -92,8 +92,16 @@ export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
   files_upload: Obj({ name: Str("The file's name"), base64: Str() }, "A file the operator hands to a session (dropped, shared, picked), kept in the node's ~/.harness/uploads. → { path }"),
   transcribe: Obj({ base64: Str("The recording"), mime: Str("Its type, e.g. audio/webm") }, "Speech to text on the node with its user's OpenAI login (gpt-4o-transcribe). → { text }"),
   logs_tail: Obj({ lines: Opt(Type.Integer({ minimum: 1, maximum: 2000 })) }, "The node's event log, newest last; its own user, or a hub's admins. → { lines }"),
+  node_restart: Obj({}, "Stops every agent and its processes and starts the node again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}"),
   settings_get: Obj({}, "The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }"),
-  settings_set: Obj({ key: Str("A setting key"), value: Any("Its new value; null removes it") }, "Changes one setting; every client of the user receives a settings event. → { settings }"),
+  settings_set: Obj(
+    {
+      key: Str("A setting key"),
+      value: Any("Its new value; null removes it"),
+      ifRevision: Opt(Str("The revision (settings.ts settingRevision) of the value this change was made from: another current one answers conflict")),
+    },
+    "Changes one setting; every client of the user receives a settings event. → { settings }",
+  ),
 };
 
 const Image = Type.Object({ type: Type.Literal("image"), data: Str("base64"), mimeType: Str() });
@@ -147,7 +155,15 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
 
 export const NODE_FRAME_SCHEMAS = {
   welcome: Obj(
-    { k: Type.Literal("welcome"), protocol: Type.Integer(), harness: Str("The node's harness version"), node: Str("The node's name"), user: Str("Who the connection is: the node's OS user or a hub user") },
+    {
+      k: Type.Literal("welcome"),
+      protocol: Type.Integer(),
+      harness: Str("The node's harness version"),
+      node: Str("The node's name"),
+      user: Str("Who the connection is: the node's OS user or a hub user"),
+      host: Type.Union([Type.Literal("client"), Type.Literal("service")], { description: "Who runs the node: a client window holding it, or a service (harness node)" }),
+      pid: Type.Integer({ description: "The node's process" }),
+    },
     "The answer to hello.",
   ),
   refused: Obj({ k: Type.Literal("refused"), error: Any("{ code, message } (errors.ts)") }, "The connection is refused; the node closes it."),

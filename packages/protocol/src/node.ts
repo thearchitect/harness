@@ -77,10 +77,16 @@ export type NodeOps = {
   /** The node's event log, newest last: for its own user, and on a hub for the hub's admins. */
   logs_tail: { args: { lines?: number }; result: { lines: string[] } };
   settings_get: { args: Record<string, never>; result: { settings: Record<string, unknown> } };
-  settings_set: { args: { key: string; value: unknown }; result: { settings: Record<string, unknown> } };
+  /** `ifRevision`: the revision (settingRevision) of the value the change was made from; another one is a `conflict`. */
+  settings_set: { args: { key: string; value: unknown; ifRevision?: string }; result: { settings: Record<string, unknown> } };
   /** A theme's colors as hex (pi's tokens plus pageBg and cardBg), for clients that draw it themselves. */
   theme_get: { args: { name?: string }; result: ThemeColors };
+  /** Stops every agent and its processes and starts the node again: in the same process when a client holds it, by its supervisor when it is a service. */
+  node_restart: { args: Record<string, never>; result: Record<string, never> };
 };
+
+/** Who runs a node: a client process (a TUI or web-app window holds it) or a service (`harness node`). */
+export type NodeHost = "client" | "service";
 
 /** A resolved theme: `appearance`, pi's color tokens and the page colors, all hex. */
 export type ThemeColors = { name: string; appearance: "dark" | "light"; colors: Record<string, string>; names: string[] };
@@ -104,6 +110,7 @@ export const NODE_OPS: readonly NodeOp[] = [
   "settings_get",
   "settings_set",
   "theme_get",
+  "node_restart",
 ];
 
 export type NodeEvent =
@@ -145,7 +152,7 @@ export interface Transport {
 }
 
 export type NodeFrame =
-  | { k: "welcome"; protocol: number; harness: string; node: string; user: string }
+  | { k: "welcome"; protocol: number; harness: string; node: string; user: string; host: NodeHost; pid: number }
   | { k: "refused"; error: ProtocolError }
   | { k: "res"; id: string; ok: true; data: unknown }
   | { k: "res"; id: string; ok: false; error: ProtocolError }

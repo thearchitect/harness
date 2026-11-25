@@ -9,8 +9,9 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
-import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
+import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeHost, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
 import { NODE_OPS } from "#protocol/node.ts";
+import { settingRevision } from "#protocol/settings.ts";
 import { SNAPSHOT_ENTRIES } from "#protocol/hap.ts";
 import { themeColors } from "./themes.ts";
 import { transcribe } from "./transcribe.ts";
@@ -33,6 +34,8 @@ export interface Connection {
   readonly trusted: boolean;
   /** The agent on the other end, when an agent is the client (for its subagents). */
   readonly agent?: string;
+  /** A client in the node's own process (the window that holds it). */
+  readonly inProcess?: boolean;
   send(frame: NodeFrame): void;
   close(): void;
 }
@@ -69,6 +72,10 @@ export type NodeConfig = {
   maxAgents?: number;
   /** Entries of an attach's snapshot; older ones load page by page (default SNAPSHOT_ENTRIES). */
   snapshotEntries?: number;
+  /** Who runs the node (welcome's `host`): a client window holding it, or a service (default). */
+  host?: NodeHost;
+  /** node_restart: stops the agents and starts the node again (a holder in its process, a service by exiting). */
+  restart?: () => Promise<void>;
 };
 
 type Attachment = { level: AttachLevel; live: boolean };
@@ -207,7 +214,7 @@ export class HarnessNode {
         state.welcomed = true;
         state.capabilities = new Set(frame.capabilities ?? []);
         this.telemetry.log({ event: "connect", connection: connection.id, client: frame.client, user: connection.user, trusted: connection.trusted });
-        connection.send({ k: "welcome", protocol: PROTOCOL_VERSION, harness: this.config.harnessVersion, node: this.config.name, user: connection.user });
+        connection.send({ k: "welcome", protocol: PROTOCOL_VERSION, harness: this.config.harnessVersion, node: this.config.name, user: connection.user, host: this.config.host ?? "service", pid: process.pid });
       }
     } else if (frame.k !== "hello" && frame.node !== undefined && frame.node !== this.config.name) {
       if (this.hub !== undefined) {
@@ -356,8 +363,13 @@ export class HarnessNode {
       case "settings_get":
         return { settings: this.settingsOf(connection).read() } as NodeOps[K]["result"];
       case "settings_set": {
-        const { key, value } = args as NodeOps["settings_set"]["args"];
-        return { settings: this.settingsOf(connection).set(key, value) } as NodeOps[K]["result"];
+        const { key, value, ifRevision } = args as NodeOps["settings_set"]["args"];
+        const store = this.settingsOf(connection);
+        if (ifRevision !== undefined && settingRevision(store.read()[key]) !== ifRevision) {
+          throw new HarnessError("conflict", `${key} changed meanwhile: apply the change to its current value`);
+        } else {
+          return { settings: store.set(key, value) } as NodeOps[K]["result"];
+        }
       }
       case "transcribe": {
         const { base64, mime } = args as NodeOps["transcribe"]["args"];
@@ -375,6 +387,19 @@ export class HarnessNode {
         const { name } = args as NodeOps["theme_get"]["args"];
         const chosen = name ?? this.settingsOf(connection).read()["ui.theme"];
         return (await themeColors(this.config.dataDir, typeof chosen === "string" ? chosen : undefined)) as NodeOps[K]["result"];
+      }
+      case "node_restart": {
+        const restart = this.config.restart;
+        if (!connection.trusted && this.hub?.isAdmin(connection.user) !== true) {
+          throw new HarnessError("forbidden", `restarting ${this.config.name} is for its own user and a hub's admins`);
+        } else if (restart === undefined) {
+          throw new HarnessError("invalid_record", `${this.config.name} cannot restart itself`);
+        } else {
+          this.telemetry.log({ event: "node_restart", user: connection.user });
+          // after the answer: the restart closes this connection too
+          setImmediate(() => void restart());
+          return {} as NodeOps[K]["result"];
+        }
       }
       default:
         throw new HarnessError("invalid_record", `unknown operation ${String(op satisfies never)}`);
@@ -441,7 +466,26 @@ export class HarnessNode {
     }, UNLOAD_CHECK_MS);
   }
 
+  /**
+   * The agent of a session: the one serving it, the one starting for it (two clients opening the
+   * same session at once get one agent), or a new one.
+   */
   async startAgent(cwd: string, sessionFile?: string, child?: ChildStart): Promise<AgentInfo> {
+    if (sessionFile === undefined) {
+      return this.launchAgent(cwd, sessionFile, child);
+    } else {
+      const pending = this.starting.get(sessionFile);
+      if (pending !== undefined) {
+        return pending;
+      } else {
+        const start = this.launchAgent(cwd, sessionFile, child).finally(() => this.starting.delete(sessionFile));
+        this.starting.set(sessionFile, start);
+        return start;
+      }
+    }
+  }
+
+  private async launchAgent(cwd: string, sessionFile?: string, child?: ChildStart): Promise<AgentInfo> {
     const served = sessionFile !== undefined ? [...this.agents.values()].find((entry) => entry.info.sessionFile === sessionFile) : undefined;
     const max = this.config.maxAgents ?? MAX_AGENTS;
     if (served !== undefined) {
@@ -453,7 +497,7 @@ export class HarnessNode {
         throw new HarnessError("agent_failed", `${max} agents run on node ${this.config.name} and none is idle: close a session first`);
       } else {
         await oldest.link.stop();
-        return this.startAgent(cwd, sessionFile, child);
+        return this.launchAgent(cwd, sessionFile, child);
       }
     } else {
       this.counter += 1;
@@ -725,6 +769,16 @@ export class HarnessNode {
         // not through the handshake yet
       }
     }
+  }
+
+  /** Starts in progress, by session file. */
+  private readonly starting = new Map<string, Promise<AgentInfo>>();
+
+  /** What closing the node would stop: its working agents, and the clients of other processes (windows) on it. */
+  activity(): { running: number; otherClients: number } {
+    const running = [...this.agents.values()].filter((entry) => entry.summary.current.status === "running" || entry.summary.current.status === "waiting" || entry.summary.current.tasks.running > 0).length;
+    const otherClients = [...this.connections.values()].filter(({ connection, welcomed }) => welcomed && connection.inProcess !== true && connection.agent === undefined).length;
+    return { running, otherClients };
   }
 
   async close(): Promise<void> {

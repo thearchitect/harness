@@ -4,9 +4,13 @@
 
 import { SNAPSHOT_ENTRIES, type HapRecord, type SnapshotData } from "#protocol/hap.ts";
 import type { AgentInfo, AgentSummary, NodeEvent, NodeInfo, NodeOp, NodeOps, SessionListItem } from "#protocol/node.ts";
-import type { NodeConnection } from "../connection.ts";
+import { RequestError, type NodeConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
 import { systemClock, type Clock } from "#protocol/clock.ts";
+import { settingRevision } from "#protocol/settings.ts";
+
+/** How often a change of a setting is made again after another client's change came first. */
+const UPDATE_ATTEMPTS = 8;
 
 /** One node as the client reaches it: its own connection, or a hub's connection routing to it. */
 export class NodeApi {
@@ -364,6 +368,28 @@ export class ClientModel {
   async setting(key: string, value: unknown): Promise<void> {
     this.settings = (await this.homeRequest("settings_set", { key, value })).settings;
     this.changed();
+  }
+
+  /**
+   * Changes a setting from its current value: when another client changed it meanwhile (conflict),
+   * the change applies again to the value the node has now. For values clients change together
+   * (ui.tabs): no change of another client is lost.
+   */
+  async updateSetting<T>(key: string, change: (current: T | undefined) => T): Promise<void> {
+    for (let attempt = 0; ; attempt += 1) {
+      const base = this.settings[key] as T | undefined;
+      try {
+        this.settings = (await this.homeRequest("settings_set", { key, value: change(base), ifRevision: settingRevision(base) })).settings;
+        this.changed();
+        return;
+      } catch (error) {
+        if (error instanceof RequestError && error.code === "conflict" && attempt < UPDATE_ATTEMPTS) {
+          this.settings = (await this.homeRequest("settings_get", {})).settings;
+        } else {
+          throw error;
+        }
+      }
+    }
   }
 
   /**

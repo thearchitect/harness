@@ -6,6 +6,7 @@
 
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import type { Variant } from "#protocol/state.ts";
+import { withFileLock } from "./file-lock.ts";
 
 /** `model`: a model reference (plan 6.2) new sessions resolve and select; pi's own default when absent. */
 export type Defaults = { variant: Variant; madness: boolean; implementer: string; model?: string };
@@ -67,8 +68,11 @@ export function loadDefaults(path: string): { defaults: Defaults; problem?: stri
  * sees it half-written. Throws when it cannot be written.
  */
 export function saveDefault<K extends keyof Defaults>(path: string, key: K, value: Defaults[K]): void {
-  const next: Defaults = { ...loadDefaults(path).defaults, [key]: value };
-  const temp = `${path}.${process.pid}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
-  renameSync(temp, path);
+  // every agent of the user writes this file: the read and the write are one step under its lock
+  withFileLock(`${path}.lock`, () => {
+    const next: Defaults = { ...loadDefaults(path).defaults, [key]: value };
+    const temp = `${path}.${process.pid}.tmp`;
+    writeFileSync(temp, `${JSON.stringify(next, null, 2)}\n`, "utf8");
+    renameSync(temp, path);
+  });
 }

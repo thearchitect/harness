@@ -10,6 +10,8 @@ export const ERROR_CODES = [
   "session_locked",
   "invalid_record",
   "agent_failed",
+  /** A change made from a value another client changed meanwhile (settings_set ifRevision). */
+  "conflict",
   "internal",
 ] as const;
 

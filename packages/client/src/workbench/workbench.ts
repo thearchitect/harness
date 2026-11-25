@@ -241,7 +241,7 @@ export const CLIENT_COMMANDS: { name: string; description: string }[] = [
   { name: "bash", description: "Run a command yourself; the model sees it and its output" },
   { name: "bash-quiet", description: "Run a command yourself, kept out of the model's context" },
   { name: "export", description: "The session as an HTML page (optionally: where to write it)" },
-  { name: "quit", description: "Quit (agents keep running)" },
+  { name: "quit", description: "Quit (a node this window holds stops with it)" },
 ];
 
 /** A node of pi's session tree (get_tree), as far as the tree list reads it. */
@@ -277,6 +277,11 @@ function duration(ms: number): string {
 export function tabRecords(settings: Record<string, unknown>): TabRecord[] {
   const tabs = settings["ui.tabs"];
   return Array.isArray(tabs) ? (tabs.filter((tab) => typeof tab === "object" && tab !== null && typeof (tab as TabRecord).sessionId === "string") as TabRecord[]) : [];
+}
+
+/** Whether a record is a tab's: the same session on the same node. */
+function sameTab(record: { node: string; sessionId: string }, tab: { node: string; sessionId: string }): boolean {
+  return record.node === tab.node && record.sessionId === tab.sessionId;
 }
 
 export type WorkbenchOptions = {
@@ -807,6 +812,19 @@ export class Workbench {
       },
     };
     this.client.changed();
+  }
+
+  /** A question in the editor's place: `yes` runs `act`, Cancel (or Esc) leaves things as they are. */
+  confirm(title: string, yes: string, act: () => Promise<void> | void): void {
+    this.openPicker({
+      id: "confirm",
+      title,
+      items: [
+        { value: "yes", label: yes },
+        { value: "cancel", label: "Cancel" },
+      ],
+      choose: (value) => (value === "yes" ? act() : undefined),
+    });
   }
 
   closePicker(): void {
@@ -1385,23 +1403,29 @@ export class Workbench {
   async markSeen(tab: Tab): Promise<void> {
     const activity = tab.agent?.summary.lastActivity;
     if (activity !== undefined && (tab.seen ?? 0) < activity) {
-      await this.writeTabs(tabRecords(this.client.settings).map((record) => (record.sessionId === tab.sessionId && record.node === tab.node ? { ...record, seen: activity } : record)));
+      await this.updateTabs((records) => records.map((record) => (sameTab(record, tab) ? { ...record, seen: Math.max(record.seen ?? 0, activity) } : record)));
     } else {
       // nothing new
     }
   }
 
-  async writeTabs(records: TabRecord[]): Promise<void> {
-    await this.client.setting("ui.tabs", records);
+  /** Changes the tab set from its current value: another client's change at the same time is kept (ifRevision). */
+  async updateTabs(change: (records: TabRecord[]) => TabRecord[]): Promise<void> {
+    await this.client.updateSetting<unknown>("ui.tabs", (current) => change(tabRecords({ "ui.tabs": current })));
+  }
+
+  /** The index of a tab in the current set. */
+  private tabIndex(tab: { node: string; sessionId: string }): number {
+    return tabRecords(this.client.settings).findIndex((record) => sameTab(record, tab));
   }
 
   /** Starts an agent for a new session on the node and opens it as the last tab. */
   async newTab(node: string, cwd: string): Promise<Tab | undefined> {
     const { agent } = await this.client.connection(node).request("agent_start", { cwd });
     this.client.agents.set(agentKey(node, agent.id), agent);
-    const records = [...tabRecords(this.client.settings), { node, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd }];
-    await this.writeTabs(records);
-    await this.activate(records.length - 1);
+    const record: TabRecord = { node, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
+    await this.updateTabs((records) => (records.some((candidate) => sameTab(candidate, record)) ? records : [...records, record]));
+    await this.activate(this.tabIndex(record));
     return this.activeTab();
   }
 
@@ -1415,8 +1439,9 @@ export class Workbench {
     } else {
       const { agent } = await this.client.connection(node).request("agent_start", { cwd: session.cwd, sessionFile: session.path });
       this.client.agents.set(agentKey(node, agent.id), agent);
-      await this.writeTabs([...records, { node, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd }]);
-      await this.activate(records.length);
+      const record: TabRecord = { node, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
+      await this.updateTabs((current) => (current.some((candidate) => sameTab(candidate, record)) ? current : [...current, record]));
+      await this.activate(this.tabIndex(record));
     }
   }
 
@@ -1432,19 +1457,23 @@ export class Workbench {
 
   /** Closes a tab (the agent keeps running on its node). */
   async closeTab(index: number): Promise<void> {
-    const records = tabRecords(this.client.settings);
-    records.splice(index, 1);
-    await this.writeTabs(records);
-    await this.activate(Math.min(this.active, records.length - 1));
+    const closed = tabRecords(this.client.settings)[index];
+    if (closed !== undefined) {
+      await this.updateTabs((records) => records.filter((record) => !sameTab(record, closed)));
+      await this.activate(Math.min(this.active, tabRecords(this.client.settings).length - 1));
+    } else {
+      // no such tab
+    }
   }
 
   async moveTab(from: number, to: number): Promise<void> {
-    const records = tabRecords(this.client.settings);
-    const [moved] = records.splice(from, 1);
+    const moved = tabRecords(this.client.settings)[from];
     if (moved !== undefined) {
-      records.splice(to, 0, moved);
-      await this.writeTabs(records);
-      this.active = to;
+      await this.updateTabs((records) => {
+        const rest = records.filter((record) => !sameTab(record, moved));
+        return [...rest.slice(0, to), moved, ...rest.slice(to)];
+      });
+      this.active = Math.max(0, this.tabIndex(moved));
     } else {
       // no such tab
     }
