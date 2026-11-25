@@ -47,7 +47,7 @@
         {
           default = bundle;
           harness = bundle;
-          inherit (bundle.passthru) npmTools lightpanda appWeb appModules;
+          inherit (bundle.passthru) npmTools lightpanda appWeb appModules appFonts;
         }
       );
 

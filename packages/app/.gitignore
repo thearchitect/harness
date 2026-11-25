@@ -1,0 +1,7 @@
+# the fonts the native builds carry come from the Nix build (nix/app-native.sh copies them)
+/assets/fonts/
+# expo prebuild's native projects are generated, never edited
+/android/
+/ios/
+/.expo/
+/dist/

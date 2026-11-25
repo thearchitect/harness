@@ -534,6 +534,7 @@ stdenvNoCC.mkDerivation {
   # buildInputs and shells that list the bundle.
   passthru = {
     appWeb = appBuild.web;
+    appFonts = appBuild.fonts;
     appModules = appBuild.appModules;
     inherit
       app

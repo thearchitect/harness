@@ -1,0 +1,74 @@
+# The app on Android: the release build (signed with the debug key), installed on an emulator,
+# driven by Maestro against a hub running on the runner (the emulator reaches it at 10.0.2.2).
+# Started by hand: `gh workflow run native-android.yml`; screenshots and logs are artifacts.
+name: native-android
+
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: native-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: The bundle (the hub)
+        run: nix build -L .#default
+      - name: Prepare the native project
+        run: nix shell nixpkgs#nodejs --command nix/app-native.sh android
+      - name: Build the APK
+        working-directory: packages/app/android
+        run: ./gradlew --no-daemon assembleRelease -PreactNativeArchitectures=x86_64
+      - name: Install Maestro
+        run: |
+          curl -Ls "https://get.maestro.mobile.dev" | bash
+          echo "$HOME/.maestro/bin" >> "$GITHUB_PATH"
+      - name: Start a hub with a user and a pairing code
+        id: hub
+        run: |
+          set -euo pipefail
+          export HARNESS_HOME="$RUNNER_TEMP/hub-home"
+          ./result/bin/harness hub user add alice --admin
+          code="$(./result/bin/harness hub device add alice --name phone | sed -n 's/^  \([0-9A-Z-]\{17\}\)$/\1/p')"
+          test -n "$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          nohup ./result/bin/harness hub --listen 0.0.0.0:8790 > "$RUNNER_TEMP/hub.log" 2>&1 &
+          for _ in $(seq 60); do curl -fs http://127.0.0.1:8790/ >/dev/null && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/hub.log"; exit 1
+      - name: Run the flows on an emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          script: |
+            adb install packages/app/android/app/build/outputs/apk/release/app-release.apk
+            mkdir -p maestro-out && maestro test packages/app/maestro/pair-and-start.yaml -e HUB=http://10.0.2.2:8790 -e CODE=${{ steps.hub.outputs.code }} --test-output-dir maestro-out; status=$?; adb logcat -d > maestro-out/logcat.txt; exit $status
+      - name: Keep the screenshots and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: native-android
+          path: |
+            maestro-out
+            ${{ runner.temp }}/hub.log

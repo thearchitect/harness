@@ -1,0 +1,28 @@
+# The app on a device: pairs with a hub by its address and a one-time code, starts a session on
+# the hub's node and sees the editor. HUB and CODE come from the run (native-android.yml).
+appId: dev.harness.app
+---
+- launchApp:
+    clearState: true
+- extendedWaitUntil:
+    visible: "Pairing code"
+    timeout: 60000
+- tapOn: "Hub address"
+- inputText: ${HUB}
+- tapOn: "Pairing code"
+- inputText: ${CODE}
+- hideKeyboard
+- tapOn: "Pair"
+- extendedWaitUntil:
+    visible: "New session"
+    timeout: 60000
+- takeScreenshot: paired
+- tapOn: "New session"
+- extendedWaitUntil:
+    visible: "~"
+    timeout: 30000
+- tapOn: "~"
+- extendedWaitUntil:
+    visible: "Message"
+    timeout: 60000
+- takeScreenshot: session

@@ -10,6 +10,7 @@
     "platforms": ["ios", "android", "web"],
     "ios": { "bundleIdentifier": "dev.harness.app", "supportsTablet": true },
     "android": { "package": "dev.harness.app" },
-    "web": { "bundler": "metro", "output": "single", "name": "harness" }
+    "web": { "bundler": "metro", "output": "single", "name": "harness" },
+    "plugins": ["./plugins/local-cleartext.js"]
   }
 }
