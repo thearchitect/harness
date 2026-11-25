@@ -8,6 +8,7 @@ import { readdir } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import type { EntriesBeforeData, HapEvent, HapRequest, SessionView, SnapshotData } from "#protocol/hap.ts";
 import { isHapRequest } from "#protocol/hap.ts";
+import { checkHapRequest } from "#protocol/schemas.ts";
 import { PROTOCOL_VERSION } from "#protocol/version.ts";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { HarnessController } from "#extension/index.ts";
@@ -177,7 +178,13 @@ export class HapServer {
   async handle(record: Record<string, unknown>): Promise<void> {
     if (isHapRequest(record as { type?: unknown })) {
       const request = record as HapRequest;
+      const checked = checkHapRequest(request);
       try {
+        if (!checked.ok) {
+          throw new HarnessError("invalid_record", checked.error);
+        } else {
+          // a well-formed request
+        }
         const data = await this.handleHarness(request);
         this.output({ type: "harness_response", id: request.id, ok: true, data });
       } catch (error) {

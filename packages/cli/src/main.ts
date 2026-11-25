@@ -98,9 +98,9 @@ async function runTui(args: string[]): Promise<void> {
 
   const path = socketPath(home, DEFAULT_NODE);
   let embedded: { node: HarnessNode; close(): Promise<void> } | undefined;
-  let connection: NodeConnection;
+  let open: () => Promise<NodeConnection>;
   if (await socketAlive(path)) {
-    connection = await NodeConnection.open(await unixTransport(path), "tui");
+    open = async () => NodeConnection.open(await unixTransport(path), "tui");
   } else {
     const node = new HarnessNode({ name: DEFAULT_NODE, dataDir: home, harnessVersion: harnessVersion() });
     const server = await listenUnix(node, path).catch(() => undefined);
@@ -111,20 +111,16 @@ async function runTui(args: string[]): Promise<void> {
         await node.close();
       },
     };
-    connection = await NodeConnection.open(inProcessTransport(node), "tui");
+    open = () => NodeConnection.open(inProcessTransport(node), "tui");
   }
 
+  // the local node, then the remote hubs: each reconnects by itself after a loss
   const client = new ClientModel();
-  const nodeName = await client.addConnection(connection, { home: true });
-  const remotes: NodeConnection[] = [];
+  const nodeName = await client.addEndpoint(open, { home: true });
   for (const remote of readRemotes(home)) {
-    try {
-      const link = await NodeConnection.open(await wsTransport(remote.url), "tui", remote.token);
-      remotes.push(link);
-      await client.addConnection(link, { home: false });
-    } catch (error) {
-      client.offline.set(remote.name, error instanceof Error ? error.message : String(error));
-    }
+    await client
+      .addEndpoint(async () => NodeConnection.open(await wsTransport(remote.url), "tui", remote.token), { home: false })
+      .catch((error: unknown) => client.offline.set(remote.name, error instanceof Error ? error.message : String(error)));
   }
   const workbench = new Workbench(client);
   const renderers = await loadRenderers(cwd, piExtensions());
@@ -149,10 +145,7 @@ async function runTui(args: string[]): Promise<void> {
   let app: App | undefined;
   const quit = async (): Promise<void> => {
     app?.stop();
-    connection.close();
-    for (const remote of remotes) {
-      remote.close();
-    }
+    client.dispose();
     await embedded?.close();
     process.exit(0);
   };

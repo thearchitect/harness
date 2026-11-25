@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, describe, test } from "node:test";
 import type { TaskInfo } from "#protocol/state.ts";
-import { Supervisor, type Clock, type TaskEvent } from "./supervisor.ts";
+import type { Clock } from "#protocol/clock.ts";
+import { Supervisor, type TaskEvent } from "./supervisor.ts";
 
 const dir = mkdtempSync(join(tmpdir(), "supervisor-test-"));
 after(() => rmSync(dir, { recursive: true, force: true }));

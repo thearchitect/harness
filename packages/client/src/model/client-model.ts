@@ -6,6 +6,7 @@ import type { HapRecord, SnapshotData } from "#protocol/hap.ts";
 import type { AgentInfo, AgentSummary, NodeEvent, NodeInfo, NodeOp, NodeOps, SessionListItem } from "#protocol/node.ts";
 import type { NodeConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
+import { systemClock, type Clock } from "#protocol/clock.ts";
 
 /** One node as the client reaches it: its own connection, or a hub's connection routing to it. */
 export class NodeApi {
@@ -36,6 +37,9 @@ export class NodeApi {
 /** Agents followed in full besides the active one. */
 export const FULL_CACHE = 3;
 
+/** Delays between reconnection attempts; the last one repeats. */
+export const RECONNECT_MS = [500, 1000, 2000, 5000, 10_000, 30_000];
+
 export type AgentKey = string; // `${node}/${agentId}`
 
 export function agentKey(node: string, agentId: string): AgentKey {
@@ -56,6 +60,8 @@ export class ClientModel {
   settings: Record<string, unknown> = {};
   readonly offline = new Map<string, string>();
   private readonly listeners = new Set<() => void>();
+  private readonly endpoints = new Set<NodeConnection>();
+  private disposed = false;
 
   onChange(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -107,6 +113,57 @@ export class ClientModel {
     }
     this.changed();
     return entry;
+  }
+
+  /**
+   * A connection that comes back: opened now, and after a loss reopened with backoff — its nodes
+   * listed again and the agents this client followed in full re-followed (fresh snapshots).
+   */
+  async addEndpoint(open: () => Promise<NodeConnection>, options: { home: boolean; clock?: Clock }): Promise<string> {
+    const clock = options.clock ?? systemClock;
+    let attempt = 0;
+    const connect = async (): Promise<string> => {
+      const connection = await open();
+      connection.onClose(() => {
+        if (!this.disposed) {
+          schedule();
+        } else {
+          // closed on purpose
+        }
+      });
+      this.endpoints.add(connection);
+      const name = await this.addConnection(connection, options);
+      attempt = 0;
+      for (const key of [...this.recent].reverse()) {
+        const [node, agent] = splitKey(key);
+        if (this.connections.get(node)?.connection === connection && !this.full.has(key) && this.agents.has(key)) {
+          await this.follow(node, agent).catch(() => undefined);
+        } else {
+          // followed already, or another connection's, or the agent is gone
+        }
+      }
+      return name;
+    };
+    const schedule = (): void => {
+      const delay = RECONNECT_MS[Math.min(attempt, RECONNECT_MS.length - 1)] ?? 30_000;
+      attempt += 1;
+      clock.setTimeout(() => {
+        connect().catch(() => (this.disposed ? undefined : schedule()));
+      }, delay);
+    };
+    // a first attempt that fails is retried too; the caller learns why it failed
+    return await connect().catch((error: unknown) => {
+      schedule();
+      throw error;
+    });
+  }
+
+  /** Closes every endpoint for good (no reconnects). */
+  dispose(): void {
+    this.disposed = true;
+    for (const connection of this.endpoints) {
+      connection.close();
+    }
   }
 
   private async addNode(api: NodeApi): Promise<void> {

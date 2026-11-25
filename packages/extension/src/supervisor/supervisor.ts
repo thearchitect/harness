@@ -8,17 +8,10 @@ import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
 import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
+import { systemClock, type Clock } from "#protocol/clock.ts";
 import type { NotifyPolicy, TaskInfo, TaskState } from "#protocol/state.ts";
 
 export type Spawner = (command: string, options: { cwd: string; env: Record<string, string | undefined> }) => ChildProcess;
-
-export type Clock = { now(): number; setTimeout(fn: () => void, ms: number): unknown; clearTimeout(handle: unknown): void };
-
-export const systemClock: Clock = {
-  now: () => Date.now(),
-  setTimeout: (fn, ms) => setTimeout(fn, ms),
-  clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
 
 /** The shell pi's bash tool uses (bash, else sh): commands are written for it, whatever $SHELL is. */
 const shellSpawner: Spawner = (command, options) => {

@@ -15,6 +15,8 @@ import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
 import { AgentLink, type AgentRecord } from "./agent-link.ts";
 import { listSessions, SessionLocks } from "./sessions.ts";
 import { SettingsStore } from "./settings.ts";
+import { checkClientFrame } from "#protocol/schemas.ts";
+import { systemClock, type Clock } from "#protocol/clock.ts";
 import { SummaryTracker } from "./summary.ts";
 
 /** One client connection, whatever carries it. */
@@ -52,6 +54,7 @@ export type NodeConfig = {
   summaryIntervalMs?: number;
   /** Hub users allowed on this node through its hubs (the node checks again what the hub checked). */
   users?: string[];
+  clock?: Clock;
 };
 
 type Attachment = { level: AttachLevel; live: boolean };
@@ -63,7 +66,7 @@ type AgentEntry = {
   attachments: Map<Connection, Attachment>;
   /** Rewritten request id -> the connection and its own id. */
   requests: Map<string, { connection: Connection; id: unknown }>;
-  summaryTimer?: ReturnType<typeof setTimeout>;
+  summaryTimer?: unknown;
   summaryDue: boolean;
   lastSummaryAt: number;
 };
@@ -81,9 +84,11 @@ export class HarnessNode {
   readonly settings: SettingsStore;
   private counter = 0;
   hub: HubRole | undefined;
+  readonly clock: Clock;
 
   constructor(config: NodeConfig) {
     this.config = config;
+    this.clock = config.clock ?? systemClock;
     this.locks = new SessionLocks(config.dataDir);
     this.settings = new SettingsStore(config.dataDir);
     this.settings.onChange((settings) => this.settingsChanged(this.settings, settings));
@@ -133,8 +138,16 @@ export class HarnessNode {
 
   private async receive(connection: Connection, frame: ClientFrame): Promise<void> {
     const state = this.connections.get(connection.id);
+    const checked = checkClientFrame(frame);
     if (state === undefined) {
       return; // closed meanwhile
+    } else if (!checked.ok) {
+      if (!state.welcomed) {
+        connection.send({ k: "refused", error: { code: "invalid_record", message: checked.error } });
+        connection.close();
+      } else {
+        this.refuse(connection, frame, { code: "invalid_record", message: checked.error });
+      }
     } else if (!state.welcomed) {
       if (frame.k !== "hello") {
         connection.send({ k: "refused", error: { code: "invalid_record", message: "the first frame must be hello" } });
@@ -172,13 +185,15 @@ export class HarnessNode {
   }
 
   /** Answers a frame with an error: an operation's response, or the HAP response of an agent request. */
-  refuse(connection: Connection, frame: ClientFrame, error: { code: "not_found" | "forbidden" | "node_offline" | "unauthorized"; message: string }): void {
-    switch (frame.k) {
+  refuse(connection: Connection, frame: ClientFrame, error: { code: "not_found" | "forbidden" | "node_offline" | "unauthorized" | "invalid_record"; message: string }): void {
+    // the frame may be malformed: only what is there is echoed back
+    const loose = frame as { k?: unknown; id?: unknown; node?: unknown; agent?: unknown; rec?: { id?: unknown } };
+    switch (loose.k) {
       case "req":
-        connection.send({ k: "res", id: frame.id, ok: false, error });
+        connection.send({ k: "res", id: String(loose.id ?? ""), ok: false, error });
         break;
       case "hap":
-        connection.send({ k: "hap", node: frame.node ?? this.config.name, agent: frame.agent, rec: { type: "harness_response", id: String((frame.rec as { id?: unknown }).id ?? ""), ok: false, error } });
+        connection.send({ k: "hap", node: typeof loose.node === "string" ? loose.node : this.config.name, agent: String(loose.agent ?? ""), rec: { type: "harness_response", id: String(loose.rec?.id ?? ""), ok: false, error } });
         break;
       case "hello":
         connection.send({ k: "refused", error });
@@ -314,7 +329,7 @@ export class HarnessNode {
         env: { ...process.env, HARNESS_HOME: this.config.dataDir, ...this.config.agentEnv },
         logPath: join(this.config.dataDir, "log", "agents", `${id}.log`),
       });
-      const summary = new SummaryTracker(Date.now());
+      const summary = new SummaryTracker(this.clock.now());
       const hello = await new Promise<AgentRecord>((resolveHello, reject) => {
         const off = link.onRecord((record) => {
           if (record.type === "harness_hello") {
@@ -333,7 +348,7 @@ export class HarnessNode {
         await link.stop();
         throw error;
       }
-      summary.apply(hello, Date.now());
+      summary.apply(hello, this.clock.now());
       const entry: AgentEntry = {
         info: {
           id,
@@ -343,7 +358,7 @@ export class HarnessNode {
           cwd: session.cwd,
           name: session.sessionName,
           parent,
-          startedAt: Date.now(),
+          startedAt: this.clock.now(),
           summary: summary.current,
         },
         link,
@@ -359,7 +374,7 @@ export class HarnessNode {
         this.agents.delete(id);
         this.locks.release(entry.info.sessionId);
         if (entry.summaryTimer !== undefined) {
-          clearTimeout(entry.summaryTimer);
+          this.clock.clearTimeout(entry.summaryTimer);
         } else {
           // no summary pending
         }
@@ -448,7 +463,7 @@ export class HarnessNode {
           // summary level, or waiting for its snapshot
         }
       }
-      if (entry.summary.apply(record, Date.now())) {
+      if (entry.summary.apply(record, this.clock.now())) {
         this.scheduleSummary(entry);
       } else {
         // the summary did not change
@@ -459,13 +474,13 @@ export class HarnessNode {
   /** At most one summary per interval per agent; the last change always goes out. */
   private scheduleSummary(entry: AgentEntry): void {
     const interval = this.config.summaryIntervalMs ?? 250;
-    const wait = entry.lastSummaryAt + interval - Date.now();
+    const wait = entry.lastSummaryAt + interval - this.clock.now();
     if (entry.summaryTimer !== undefined) {
       entry.summaryDue = true;
     } else if (wait <= 0) {
       this.sendSummary(entry);
     } else {
-      entry.summaryTimer = setTimeout(() => {
+      entry.summaryTimer = this.clock.setTimeout(() => {
         entry.summaryTimer = undefined;
         this.sendSummary(entry);
       }, wait);
@@ -473,7 +488,7 @@ export class HarnessNode {
   }
 
   private sendSummary(entry: AgentEntry): void {
-    entry.lastSummaryAt = Date.now();
+    entry.lastSummaryAt = this.clock.now();
     entry.summaryDue = false;
     this.broadcast({ ev: "summary", agent: entry.info.id, summary: entry.summary.current });
   }

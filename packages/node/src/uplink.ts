@@ -25,7 +25,7 @@ export class Uplink {
   private readonly channels = new Map<string, { connection: Connection; receive(frame: ClientFrame): void }>();
   private attempt = 0;
   private stopped = false;
-  private timer: ReturnType<typeof setTimeout> | undefined;
+  private timer: unknown;
 
   constructor(node: HarnessNode, options: UplinkOptions) {
     this.node = node;
@@ -75,7 +75,7 @@ export class Uplink {
     if (!this.stopped) {
       const delay = BACKOFF_MS[Math.min(this.attempt, BACKOFF_MS.length - 1)] ?? 30_000;
       this.attempt += 1;
-      this.timer = setTimeout(() => this.connect(), delay);
+      this.timer = this.node.clock.setTimeout(() => this.connect(), delay);
     } else {
       // stopped on purpose
     }
@@ -136,7 +136,7 @@ export class Uplink {
   stop(): void {
     this.stopped = true;
     if (this.timer !== undefined) {
-      clearTimeout(this.timer);
+      this.node.clock.clearTimeout(this.timer);
     } else {
       // no reconnect pending
     }
