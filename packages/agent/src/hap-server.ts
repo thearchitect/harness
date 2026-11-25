@@ -13,6 +13,7 @@ import { PROTOCOL_VERSION } from "#protocol/version.ts";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { HarnessController } from "#extension/index.ts";
 import type { InteractionHub } from "./interactions.ts";
+import { login, loginProviders } from "./login.ts";
 import { ensureTheme, createUiContext } from "./ui-context.ts";
 import { ComponentBridge } from "./component-bridge.ts";
 import { getTheme } from "./theme.ts";
@@ -282,6 +283,18 @@ export class HapServer {
         } catch (error) {
           throw new HarnessError("not_found", error instanceof Error ? error.message : String(error));
         }
+      case "harness_login_providers":
+        return { providers: loginProviders(this.session) };
+      case "harness_login":
+        await login(this.session, this.hub, request.provider, request.authType);
+        return {};
+      case "harness_logout":
+        await this.session.modelRuntime.logout(request.provider);
+        return {};
+      case "harness_report":
+        return { text: await this.controller.report() };
+      case "harness_subagents":
+        return this.controller.subagentProfiles();
       case "harness_complete":
         return { items: await complete(this.session.sessionManager.getCwd(), request.prefix) };
       case "harness_component_input":

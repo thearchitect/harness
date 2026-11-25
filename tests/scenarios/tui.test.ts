@@ -64,6 +64,20 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "the panel lists the subagent profiles and the dependencies in the editor's place",
+      async run({ clients: { tui } }) {
+        await tui.workbench.choosePanel("subagents");
+        const subagents = tui.screen().zones.editor;
+        assert.ok(subagents.kind === "picker" && subagents.picker.items.some((item) => item.label.startsWith("builder · claude")) && subagents.picker.items.some((item) => item.label.startsWith("explorer · harness · plan")));
+        await tui.act("run.abort");
+        await tui.workbench.choosePanel("dependencies");
+        const report = tui.screen().zones.editor;
+        assert.ok(report.kind === "picker" && report.picker.items.some((item) => item.label.startsWith("Claude Code: ")));
+        assert.ok(report.kind === "picker" && report.picker.items.some((item) => item.label === "Subagents:"));
+        await tui.act("run.abort");
+      },
+    },
+    {
       name: "captures: text, ANSI and PNG",
       async run({ clients: { tui } }) {
         const files = await tui.capture(mkdtempSync(join(tmpdir(), "shot-")));

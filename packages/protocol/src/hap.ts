@@ -29,7 +29,21 @@ export type HapRequest =
   | { type: "harness_complete"; id: string; kind: "path" | "file"; prefix: string }
   /** Keys for a bridged component (as the terminal sends them), and the width it is drawn at. */
   | { type: "harness_component_input"; id: string; componentId: string; data: string }
-  | { type: "harness_component_resize"; id: string; componentId: string; width: number };
+  | { type: "harness_component_resize"; id: string; componentId: string; width: number }
+  /** The agent's dependencies report (bundle, Claude Code, subagent profiles, bundled versions) → { text }. */
+  | { type: "harness_report"; id: string }
+  /** The subagent profiles this session may call → { profiles, problems }. */
+  | { type: "harness_subagents"; id: string }
+  /** Providers one can log in to on the agent's machine → { providers: LoginProvider[] }. */
+  | { type: "harness_login_providers"; id: string }
+  /** Logs in on the agent's machine; its steps are interactions; answers when done → {}. */
+  | { type: "harness_login"; id: string; provider: string; authType: "oauth" | "api_key" }
+  | { type: "harness_logout"; id: string; provider: string };
+
+export type LoginProvider = { id: string; name: string; authType: "oauth" | "api_key"; configured: boolean; subscription: boolean };
+
+/** A subagent profile as clients list it. */
+export type SubagentProfileView = { name: string; description: string; engine: "harness" | "claude"; source: string; model?: string; resolved?: string; mode: string; dir: string };
 
 export type HapRequestType = HapRequest["type"];
 
@@ -47,6 +61,11 @@ export const HAP_REQUEST_TYPES: readonly HapRequestType[] = [
   "harness_complete",
   "harness_component_input",
   "harness_component_resize",
+  "harness_report",
+  "harness_subagents",
+  "harness_login_providers",
+  "harness_login",
+  "harness_logout",
 ];
 
 /** A component of an extension (ctx.ui.custom) drawn in the agent and shown by terminal clients. */

@@ -19,7 +19,10 @@ import { Interrupts } from "./core/interrupts.ts";
 import { effectiveMode, isRunMode, modeOfText, modeSelector } from "./core/modes.ts";
 import { assembleSystemPrompt, systemPromptProblem } from "./core/prompt.ts";
 import { DEFAULTS_FILE, loadDefaults, saveDefault, type Defaults } from "./core/settings.ts";
-import { bundledMcpServers, lspToolchain, readManifest } from "./deps.ts";
+import { bundledMcpServers, depsReport, lspToolchain, readManifest } from "./deps.ts";
+import { preflight } from "./subagents/engines/claude/launch.ts";
+import { resolveModelRef } from "#protocol/model-ref.ts";
+import type { SubagentProfileView } from "#protocol/hap.ts";
 import { entryRenderers, type FinishedEntryData, type ModeEntryData, type SystemPromptEntryData } from "./presentation/modes.ts";
 import { lastModelRef, MODEL_REF_ENTRY, ModelRefs } from "./models/refs.ts";
 import { ENTRY, StateStore } from "./state/store.ts";
@@ -54,6 +57,10 @@ export type HarnessController = {
   interrupt(reason: string): number;
   /** The operator's message to a live subagent of this session (C12). */
   steerSubagent(session: string, text: string): Promise<void>;
+  /** The dependencies report: the bundle, Claude Code, the subagent profiles, bundled versions. */
+  report(): Promise<string>;
+  /** The subagent profiles this session may call, with their models resolved, and those left out. */
+  subagentProfiles(): { profiles: SubagentProfileView[]; problems: string[] };
   state(): HarnessState;
   supervisor: Supervisor;
 };
@@ -154,6 +161,41 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       } else {
         await subagents.steer(session, text);
       }
+    },
+
+    async report() {
+      const bundle = readManifest();
+      const claude = await preflight(process.env.HARNESS_CLAUDE ?? "claude");
+      const { profiles, problems } = controller.subagentProfiles();
+      return [
+        "manifest" in bundle ? `harness ${bundle.manifest.harness}` : `harness (no bundle manifest: ${bundle.problem})`,
+        `Claude Code: ${claude.ok ? `${claude.version}, logged in with a Claude subscription` : claude.message}`,
+        "Subagents:",
+        ...profiles.map((profile) => `  ${profile.name} (${profile.engine}, ${profile.source})${profile.model !== undefined ? ` ${profile.model}${profile.resolved !== undefined ? ` → ${profile.resolved}` : ""}` : ""}`),
+        ...problems.map((problem) => `  ✗ ${problem}`),
+        ...("manifest" in bundle ? depsReport(bundle.manifest, []).split("\n").slice(1) : []),
+      ].join("\n");
+    },
+
+    subagentProfiles() {
+      const ctx = live?.ctx;
+      const catalog = ctx !== undefined ? ctx.modelRegistry.getAll().map((model) => ({ provider: model.provider, id: model.id })) : [];
+      return {
+        profiles: [...registry.profiles.values()].map((profile) => {
+          const resolved = profile.model !== undefined && profile.engine === "harness" ? resolveModelRef(profile.model, catalog) : undefined;
+          return {
+            name: profile.name,
+            description: profile.description,
+            engine: profile.engine,
+            source: profile.source,
+            mode: profile.mode,
+            dir: profile.dir,
+            ...(profile.model !== undefined ? { model: profile.model } : {}),
+            ...(resolved?.ok === true ? { resolved: `${resolved.model.provider}/${resolved.model.id}` } : {}),
+          };
+        }),
+        problems: registry.problems,
+      };
     },
 
     state() {

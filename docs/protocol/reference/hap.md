@@ -152,6 +152,54 @@ The width a bridged component is drawn at.
 | `componentId` | string | yes |  |
 | `width` | integer | yes |  |
 
+### `harness_report`
+
+The agent's dependencies report: the bundle, Claude Code, subagent profiles, bundled versions. → { text }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_report"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+
+### `harness_login_providers`
+
+Providers one can log in to on the agent's machine. → { providers }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_login_providers"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+
+### `harness_login`
+
+Logs in to a provider on the agent's machine; its steps reach the operator as interactions; answers when the login is done. → {}
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_login"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+| `provider` | string | yes |  |
+| `authType` | `"oauth"` \| `"api_key"` | yes |  |
+
+### `harness_logout`
+
+Removes a provider's stored login on the agent's machine. → {}
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_logout"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+| `provider` | string | yes |  |
+
+### `harness_subagents`
+
+The subagent profiles this session may call, with their resolved models, and the profiles left out. → { profiles, problems }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_subagents"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+
 ## Events
 
 ### `harness_hello`

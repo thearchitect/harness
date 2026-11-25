@@ -155,7 +155,7 @@ sections:
     - Start at {{HARNESS_DOCS}}/index.md: it maps tasks to documents.
     - The harness sources: {{HARNESS_SRC}} (`packages/<name>/src/`).
     - pi's documents ({{PI_DOCS}}) describe pi as a standalone program: read them only through the links of harness's documents, and with {{HARNESS_DOCS}}/pi-mapping.md, which translates pi's paths (`~/.pi/agent` → `~/.harness`), commands (`pi …` → `harness …`) and replaced APIs.
-    - Topics: architecture (`architecture.md`), tools and extensions (`extending/tools.md`), skills (`extending/skills.md`), themes (`extending/themes.md`), model references (`extending/models.md`), tests (`extending/testkit.md`), protocols (`protocol/`), operations (`operations/`).
+    - Topics: architecture (`architecture.md`), tools and extensions (`extending/tools.md`), skills (`extending/skills.md`), subagents (`extending/subagents.md`), themes (`extending/themes.md`), model references (`extending/models.md`), tests (`extending/testkit.md`), protocols (`protocol/`), operations (`operations/`).
     - New skills, themes and extensions for the user go to `~/.harness/…` (or the project's `.pi/…`), never into the bundle: the documents say where each kind lives and when it is picked up.
 
 tool_guidelines:

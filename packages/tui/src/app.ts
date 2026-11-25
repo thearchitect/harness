@@ -592,6 +592,18 @@ export class App {
       case "/model":
         await this.workbench.act("model.select");
         return true;
+      case "/login":
+        await this.workbench.loginPicker();
+        return true;
+      case "/logout": {
+        const provider = text.split(/\s+/)[1];
+        if (provider === undefined) {
+          this.workbench.notify("warning", "/logout <provider>");
+        } else {
+          await this.workbench.logout(provider);
+        }
+        return true;
+      }
       default:
         return false;
     }
@@ -658,6 +670,8 @@ export class App {
         { name: "new", description: "New session (Ctrl+T)" },
         { name: "open", description: "Open a session (Ctrl+O)" },
         { name: "model", description: "Choose the model (Ctrl+L)" },
+        { name: "login", description: "Log in to a provider on this session's node" },
+        { name: "logout", description: "Remove a provider's login on this session's node" },
         { name: "quit", description: "Quit (agents keep running)" },
       ];
       this.editor.setAutocompleteProvider(new CombinedAutocompleteProvider([...local, ...commands], tab.cwd));

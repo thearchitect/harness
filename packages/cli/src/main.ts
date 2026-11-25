@@ -28,6 +28,7 @@ import { Uplink } from "#node/uplink.ts";
 import { hubAdmin, remoteAdmin } from "./admin.ts";
 import { claudeBridge } from "./claude-bridge.ts";
 import { piCommand } from "./pi-command.ts";
+import { canExecUpdate, checkUpdates, detectInstall, execUpdate, updateHint, updateLines, type Install, type UpdateState } from "./update.ts";
 import { readRemotes } from "./remotes.ts";
 import { App, initClientTheme } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
@@ -137,7 +138,29 @@ async function runTui(args: string[]): Promise<void> {
       .addEndpoint(async () => NodeConnection.open(await wsTransport(remote.url), "tui", remote.token, TUI_CAPABILITIES), { home: false })
       .catch((error: unknown) => client.offline.set(remote.name, error instanceof Error ? error.message : String(error)));
   }
-  const workbench = new Workbench(client, { cwd });
+  // the bundle's update: checked in the background, upgraded from the panel
+  let updateState: UpdateState = { kind: "checking" };
+  let install: Install = { kind: "system" };
+  let upgrade: (() => void) | undefined;
+  const manifestPath = process.env.HARNESS_MANIFEST;
+  if (manifestPath !== undefined && manifestPath !== "") {
+    void Promise.all([checkUpdates(harnessVersion(), fetch), detectInstall(manifestPath)]).then(([state, found]) => {
+      updateState = state;
+      install = found;
+      client.changed();
+    });
+  } else {
+    updateState = { kind: "dev" };
+  }
+  const workbench = new Workbench(client, {
+    cwd,
+    update: {
+      hint: () => updateHint(updateState, Date.now()),
+      lines: () => updateLines(updateState, install, Date.now()),
+      canRun: () => updateState.kind === "available" && install.kind === "profile" && canExecUpdate(),
+      run: async () => upgrade?.(),
+    },
+  });
   const renderers = await loadRenderers(cwd, piExtensions());
 
   // What this start opens: the session asked for, the latest of this directory, or a new one.
@@ -163,6 +186,16 @@ async function runTui(args: string[]): Promise<void> {
     client.dispose();
     await embedded?.close();
     process.exit(0);
+  };
+  upgrade = () => {
+    if (install.kind === "profile") {
+      const element = install.element;
+      app?.stop();
+      client.dispose();
+      void (embedded?.close() ?? Promise.resolve()).then(() => execUpdate(element));
+    } else {
+      // a system configuration updates the bundle
+    }
   };
   app = new App({ client, workbench, renderers, cwd, onQuit: () => void quit() });
   await app.start();

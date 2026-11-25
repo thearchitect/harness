@@ -123,6 +123,15 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
   harness_complete: Request("harness_complete", { kind: Type.Union([Type.Literal("path"), Type.Literal("file")]), prefix: Str() }, "Completions of paths on the agent's machine."),
   harness_component_input: Request("harness_component_input", { componentId: Str(), data: Str("Keys as the terminal sends them") }, "Keys for a bridged component."),
   harness_component_resize: Request("harness_component_resize", { componentId: Str(), width: Type.Integer({ minimum: 1 }) }, "The width a bridged component is drawn at."),
+  harness_report: Request("harness_report", {}, "The agent's dependencies report: the bundle, Claude Code, subagent profiles, bundled versions. → { text }"),
+  harness_login_providers: Request("harness_login_providers", {}, "Providers one can log in to on the agent's machine. → { providers }"),
+  harness_login: Request(
+    "harness_login",
+    { provider: Str(), authType: Type.Union([Type.Literal("oauth"), Type.Literal("api_key")]) },
+    "Logs in to a provider on the agent's machine; its steps reach the operator as interactions; answers when the login is done. → {}",
+  ),
+  harness_logout: Request("harness_logout", { provider: Str() }, "Removes a provider's stored login on the agent's machine. → {}"),
+  harness_subagents: Request("harness_subagents", {}, "The subagent profiles this session may call, with their resolved models, and the profiles left out. → { profiles, problems }"),
 };
 
 /* ----- node → client ----- */

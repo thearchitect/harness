@@ -1,5 +1,5 @@
 /**
- * harness - updates of the bundle (desktop profile).
+ * harness - updates of the bundle, from the TUI (the harness panel's update row).
  *
  * - checkUpdates: what the master branch has over the installed revision -
  *   one GitHub API request (compare), made in the background at startup: the
@@ -12,8 +12,9 @@
  *   configuration (NixOS / home-manager), which only its owner can update;
  * - updateLines / updateHint: the Update section of the dependencies report and the
  *   panel row's hint;
- * - execUpdate: replaces the exiting pi process with a shell that upgrades
- *   the profile and starts pi again on the same session.
+ * - execUpdate: replaces the exiting TUI with a shell that upgrades the
+ *   profile and starts harness again (it reopens the user's tabs; nodes run
+ *   as services keep their agents, one inside the TUI stopped with it).
  */
 
 import { execFile } from "node:child_process";
@@ -222,8 +223,8 @@ function updateHow(install: Install): string {
 
 /**
  * Upgrades the profile element and runs the new bundle's host setup where it
- * has one (`harness-setup`, macOS), then starts pi again on the session; a
- * failed upgrade resumes the current version.
+ * has one (`harness-setup`, macOS), then starts harness again; a failed
+ * upgrade resumes the current version.
  */
 const UPDATE_SCRIPT = `
 echo "Updating harness…"
@@ -238,18 +239,15 @@ else
   echo "harness update failed; press Enter to resume the current version"
   read -r _ </dev/tty
 fi
-if [ -n "$2" ]; then exec pi --session "$2"; else exec pi; fi
+exec harness
 `;
 
-/**
- * Replaces this process with the update script. Called from process "exit",
- * after pi has stopped its UI and disposed the session.
- */
-export function execUpdate(element: string, sessionFile: string | undefined): void {
+/** Replaces this process with the update script; called after the TUI stopped and the embedded node closed. */
+export function execUpdate(element: string): void {
   if (process.execve === undefined) {
     throw new Error("this Node has no process.execve");
   } else {
-    process.execve("/bin/sh", ["sh", "-c", UPDATE_SCRIPT, "sh", element, sessionFile ?? ""], process.env);
+    process.execve("/bin/sh", ["sh", "-c", UPDATE_SCRIPT, "sh", element], process.env);
   }
 }
 

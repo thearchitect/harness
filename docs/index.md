@@ -14,6 +14,7 @@ the translations in [pi-mapping.md](pi-mapping.md).
 | Read a pi document correctly in harness (paths, commands, replaced APIs) | [pi-mapping.md](pi-mapping.md) |
 | Write a tool or an extension that works with every client | [extending/tools.md](extending/tools.md) |
 | Add a skill | [extending/skills.md](extending/skills.md) |
+| Add a subagent profile, understand the engines | [extending/subagents.md](extending/subagents.md) |
 | Add or change a theme | [extending/themes.md](extending/themes.md) |
 | Name a model without its version | [extending/models.md](extending/models.md) |
 | Test a change, look at the screens, drive a stand | [extending/testkit.md](extending/testkit.md) |

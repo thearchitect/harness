@@ -4,7 +4,7 @@
 // all the user's UIs; which tab is active and which item is selected are this client's own.
 
 import { systemClock, type Clock } from "#protocol/clock.ts";
-import type { BridgedComponent } from "#protocol/hap.ts";
+import type { BridgedComponent, LoginProvider, SubagentProfileView } from "#protocol/hap.ts";
 import { familyRefs } from "#protocol/model-ref.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import type { AgentInfo, AgentSummary } from "#protocol/node.ts";
@@ -97,7 +97,18 @@ export type Screen = {
   toolsExpanded: boolean;
 };
 
-export type PanelRow = { value: "madness" | "simple" | "implementer"; label: string; description: string };
+export type PanelRow = { value: "madness" | "simple" | "implementer" | "subagents" | "dependencies" | "update"; label: string; description: string };
+
+/** The bundle's update, as the client's process knows it (the TUI's: cli/src/update.ts). */
+export type UpdateHook = {
+  /** The panel row's hint: "up to date", "3 new · 2h ago", … */
+  hint(): string;
+  /** The update section of the dependencies report. */
+  lines(): string[];
+  /** Whether the row upgrades (the bundle is in the user's Nix profile and has news). */
+  canRun(): boolean;
+  run(): Promise<void>;
+};
 
 /** One row glyph, by priority: unavailable, waiting for the operator, failed (unseen), running, done (unseen), nothing. */
 export type Glyph = "⊘" | "◆" | "✗" | "●" | "✓" | " ";
@@ -181,6 +192,7 @@ export type WorkbenchOptions = {
   /** Where new sessions start (the client's working directory). */
   cwd?: string;
   clock?: Clock;
+  update?: UpdateHook;
 };
 
 export class Workbench {
@@ -192,6 +204,7 @@ export class Workbench {
   private searchState: { query: string; index: number } | undefined;
   private readonly cwd: string;
   private readonly clock: Clock;
+  private readonly update: UpdateHook | undefined;
   /** Selected item per tab (by session id); the session itself when absent. */
   private readonly selected = new Map<string, string>();
   /** Tasks seen per session: the last task end the user has looked at. */
@@ -205,6 +218,7 @@ export class Workbench {
     this.client = client;
     this.cwd = options.cwd ?? "/";
     this.clock = options.clock ?? systemClock;
+    this.update = options.update;
   }
 
   /* ----- the screen ----- */
@@ -489,14 +503,40 @@ export class Workbench {
       { value: "madness", label: `${state.madness ? "[x]" : "[ ]"} madness`, description: "write/edit without gates" },
       { value: "simple", label: `${state.variant === "simple" ? "[x]" : "[ ]"} simple`, description: "one mode instead of PLAN/BUILD" },
       { value: "implementer", label: `implementer: ${state.implementer}`, description: "self or a subagent profile (builder)" },
+      { value: "subagents", label: "subagents", description: "the profiles this session may call" },
+      { value: "dependencies", label: "dependencies", description: "the bundle, Claude Code, bundled versions" },
+      ...(this.update !== undefined ? [{ value: "update" as const, label: `update · ${this.update.hint()}`, description: this.update.canRun() ? "upgrade and restart" : "nothing to do here" }] : []),
     ];
+  }
+
+  /** A read-only list in the editor's place (a report, the profiles). */
+  private showList(id: string, title: string, lines: { label: string; description?: string }[]): void {
+    this.openPicker({ id, title, items: lines.map((line, index) => ({ value: String(index), ...line })), choose: () => undefined });
   }
 
   async choosePanel(value: PanelRow["value"]): Promise<void> {
     const tab = this.activeTab();
     const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
-    if (tab?.agent === undefined || agent === undefined) {
+    if (value === "update") {
+      if (this.update?.canRun() === true) {
+        await this.update.run();
+      } else {
+        this.notify("info", `update: ${this.update?.hint() ?? "not available here"}`);
+      }
+    } else if (tab?.agent === undefined || agent === undefined) {
       this.notify("warning", "no session");
+    } else if (value === "dependencies") {
+      const { text } = await this.client.connection(tab.node).call<{ text: string }>(tab.agent.id, { type: "harness_report" });
+      this.showList("dependencies", `Dependencies (node ${tab.node})`, [...text.split("\n"), ...(this.update?.lines() ?? [])].map((label) => ({ label })));
+    } else if (value === "subagents") {
+      const { profiles, problems } = await this.client.connection(tab.node).call<{ profiles: SubagentProfileView[]; problems: string[] }>(tab.agent.id, { type: "harness_subagents" });
+      this.showList("subagents", "Subagents", [
+        ...profiles.map((profile) => ({
+          label: `${profile.name} · ${profile.engine} · ${profile.mode}${profile.model !== undefined ? ` · ${profile.model}${profile.resolved !== undefined ? ` → ${profile.resolved}` : ""}` : ""}`,
+          description: `${profile.description} (${profile.source}: ${profile.dir})`,
+        })),
+        ...problems.map((problem) => ({ label: `✗ ${problem}` })),
+      ]);
     } else {
       const state = agent.state;
       const variant: Variant = state.variant === "simple" ? "advanced" : "simple";
@@ -621,6 +661,49 @@ export class Workbench {
   private async goto(index: number): Promise<void> {
     await this.ensureAgent(this.tabs()[index]);
     await this.activate(index);
+  }
+
+  /**
+   * Logs in to a provider on the active session's node (where its agents read auth.json): a list of
+   * providers, then the login's steps as interactions in the editor's place.
+   */
+  async loginPicker(): Promise<void> {
+    const tab = this.activeTab();
+    if (tab?.agent === undefined) {
+      this.notify("warning", "no session: logins are stored on a session's node");
+    } else {
+      const node = tab.node;
+      const agentId = tab.agent.id;
+      const api = this.client.connection(node);
+      const { providers } = await api.call<{ providers: LoginProvider[] }>(agentId, { type: "harness_login_providers" });
+      this.openPicker({
+        id: "login",
+        title: `Log in on ${node}`,
+        items: providers.map((provider) => ({
+          value: `${provider.id}\u0000${provider.authType}`,
+          label: `${provider.configured ? "✓ " : ""}${provider.name}`,
+          description: provider.authType === "oauth" ? (provider.subscription ? "subscription" : "account") : "API key",
+        })),
+        choose: (value) => {
+          const [provider, authType] = value.split("\u0000") as [string, "oauth" | "api_key"];
+          // the login runs on the node; its steps arrive as interactions
+          void api
+            .call(agentId, { type: "harness_login", provider, authType })
+            .then(() => this.notify("info", `logged in to ${provider} on ${node}`))
+            .catch((error: unknown) => this.notify("error", `login to ${provider}: ${error instanceof Error ? error.message : String(error)}`));
+        },
+      });
+    }
+  }
+
+  async logout(provider: string): Promise<void> {
+    const tab = this.activeTab();
+    if (tab?.agent === undefined) {
+      this.notify("warning", "no session: logins are stored on a session's node");
+    } else {
+      await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_logout", provider });
+      this.notify("info", `logged out of ${provider} on ${tab.node}`);
+    }
   }
 
   async openSessionPicker(): Promise<void> {
