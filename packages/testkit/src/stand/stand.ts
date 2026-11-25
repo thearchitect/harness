@@ -15,6 +15,7 @@ import type { ScriptedTurn } from "./scenario-model.ts";
 import type { Server } from "node:net";
 
 const SCENARIO_MODEL_PATH = fileURLToPath(new URL("./scenario-model.ts", import.meta.url));
+const PROBE_EXTENSION_PATH = fileURLToPath(new URL("./probe-extension.ts", import.meta.url));
 
 export type Stand = {
   root: string;
@@ -65,7 +66,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
       HARNESS_MANIFEST: options.bundle !== undefined ? join(options.bundle, "share/harness/manifest.json") : "",
       // no model catalog refresh from the network: the scripted model is the only one
       PI_OFFLINE: "1",
-      HARNESS_EXTRA_EXTENSIONS: SCENARIO_MODEL_PATH,
+      HARNESS_EXTRA_EXTENSIONS: `${SCENARIO_MODEL_PATH}:${PROBE_EXTENSION_PATH}`,
       HARNESS_TEST_SCENARIO: scenarioPath,
       HARNESS_TEST_REQUESTS: requestsPath,
     },

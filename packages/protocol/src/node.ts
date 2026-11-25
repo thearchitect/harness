@@ -98,8 +98,11 @@ export type NodeEvent =
   /** A node behind a hub refused this client's channel (a protocol version mismatch). */
   | { ev: "refused"; error: ProtocolError };
 
+/** What a client can draw besides the protocol's typed data: "component-bridge" — ANSI lines of an agent's pi-tui components (terminal clients). */
+export type ClientCapability = "component-bridge";
+
 export type ClientFrame =
-  | { k: "hello"; protocol: number; client: string; token?: string }
+  | { k: "hello"; protocol: number; client: string; token?: string; capabilities?: ClientCapability[] }
   | { k: "req"; id: string; node?: string; op: NodeOp; args: unknown }
   | { k: "hap"; node?: string; agent: string; rec: HapRecord };
 

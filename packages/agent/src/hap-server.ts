@@ -14,6 +14,7 @@ import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { HarnessController } from "#extension/index.ts";
 import type { InteractionHub } from "./interactions.ts";
 import { ensureTheme, createUiContext } from "./ui-context.ts";
+import { ComponentBridge } from "./component-bridge.ts";
 import { getTheme } from "./theme.ts";
 
 type Output = (record: object) => void;
@@ -38,6 +39,7 @@ export class HapServer {
   private partialMessage: unknown;
   private readonly tools = new Map<string, ToolInFlight>();
   private readonly status: Record<string, string> = {};
+  private readonly bridge: ComponentBridge;
 
   constructor(options: HapServerOptions) {
     this.runtime = options.runtime;
@@ -45,6 +47,7 @@ export class HapServer {
     this.hub = options.hub;
     this.harnessVersion = options.harnessVersion;
     this.output = options.output;
+    this.bridge = new ComponentBridge((event) => this.emit(event), getTheme);
   }
 
   private get session(): AgentSession {
@@ -83,7 +86,7 @@ export class HapServer {
     const session = this.session;
     this.unsubscribe = session.subscribe((event) => this.onSessionEvent(event));
     await session.bindExtensions({
-      uiContext: createUiContext(this.hub, (event) => this.emit(event), getTheme),
+      uiContext: createUiContext(this.hub, (event) => this.emit(event), getTheme, this.bridge),
       mode: "rpc",
       commandContextActions: {
         waitForIdle: () => session.waitForIdle(),
@@ -192,6 +195,8 @@ export class HapServer {
       }
     } else if (record.type === "harness_response") {
       // answers to this agent's own requests to the node (spawn): routed by the caller
+    } else if (record.type === "harness_clients") {
+      this.bridge.clients = Number(record.componentBridge ?? 0);
     } else {
       const command = record as unknown as RpcCommand;
       try {
@@ -259,6 +264,12 @@ export class HapServer {
         throw new HarnessError("not_found", `no live subagent session ${request.session}`);
       case "harness_complete":
         return { items: await complete(this.session.sessionManager.getCwd(), request.prefix) };
+      case "harness_component_input":
+        this.bridge.input(request.componentId, request.data);
+        return {};
+      case "harness_component_resize":
+        this.bridge.resize(request.componentId, request.width);
+        return {};
       default:
         throw new HarnessError("invalid_record", `unknown request ${String((request satisfies never as { type: string }).type)}`);
     }
@@ -275,6 +286,7 @@ export class HapServer {
       state: this.controller.state(),
       interactions: this.hub.open(),
       status: { ...this.status },
+      components: this.bridge.snapshot(),
     };
   }
 

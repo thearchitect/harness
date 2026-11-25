@@ -69,6 +69,8 @@ type AgentEntry = {
   summaryTimer?: unknown;
   summaryDue: boolean;
   lastSummaryAt: number;
+  /** Clients following in full that draw bridged components, as last told to the agent. */
+  componentClients: number;
 };
 
 /** The agent of this checkout or bundle: node running packages/agent/src/main.ts. */
@@ -79,7 +81,7 @@ export function defaultAgentCommand(): string[] {
 export class HarnessNode {
   readonly config: NodeConfig;
   private readonly agents = new Map<string, AgentEntry>();
-  private readonly connections = new Map<string, { connection: Connection; welcomed: boolean }>();
+  private readonly connections = new Map<string, { connection: Connection; welcomed: boolean; capabilities: Set<string> }>();
   private readonly locks: SessionLocks;
   readonly settings: SettingsStore;
   private counter = 0;
@@ -117,8 +119,19 @@ export class HarnessNode {
   /* ----- connections ----- */
 
   accept(connection: Connection): (frame: ClientFrame) => void {
-    this.connections.set(connection.id, { connection, welcomed: false });
+    this.connections.set(connection.id, { connection, welcomed: false, capabilities: new Set() });
     return (frame) => void this.receive(connection, frame);
+  }
+
+  /** Tells an agent how many clients following it in full can draw bridged components. */
+  private reportClients(entry: AgentEntry): void {
+    const count = [...entry.attachments].filter(([connection, attachment]) => attachment.level === "full" && (this.connections.get(connection.id)?.capabilities.has("component-bridge") ?? false)).length;
+    if (count !== entry.componentClients) {
+      entry.componentClients = count;
+      entry.link.send({ type: "harness_clients", componentBridge: count });
+    } else {
+      // unchanged
+    }
   }
 
   disconnect(connection: Connection): void {
@@ -126,6 +139,7 @@ export class HarnessNode {
     this.hub?.disconnect(connection);
     for (const entry of this.agents.values()) {
       entry.attachments.delete(connection);
+      this.reportClients(entry);
       for (const [key, request] of entry.requests) {
         if (request.connection === connection) {
           entry.requests.delete(key);
@@ -157,6 +171,7 @@ export class HarnessNode {
         connection.close();
       } else {
         state.welcomed = true;
+        state.capabilities = new Set(frame.capabilities ?? []);
         connection.send({ k: "welcome", protocol: PROTOCOL_VERSION, harness: this.config.harnessVersion, node: this.config.name, user: connection.user });
       }
     } else if (frame.k !== "hello" && frame.node !== undefined && frame.node !== this.config.name) {
@@ -246,7 +261,9 @@ export class HarnessNode {
       }
       case "agent_detach": {
         const { agent } = args as NodeOps["agent_detach"]["args"];
-        this.requireAgent(agent).attachments.delete(connection);
+        const entry = this.requireAgent(agent);
+        entry.attachments.delete(connection);
+        this.reportClients(entry);
         return {} as NodeOps[K]["result"];
       }
       case "agent_close": {
@@ -371,6 +388,7 @@ export class HarnessNode {
         link,
         summary,
         attachments: new Map(),
+        componentClients: 0,
         requests: new Map(),
         summaryDue: false,
         lastSummaryAt: 0,
@@ -397,10 +415,12 @@ export class HarnessNode {
     const entry = this.requireAgent(agentId);
     if (level === "summary") {
       entry.attachments.set(connection, { level, live: true });
+      this.reportClients(entry);
       return { agent: { ...entry.info, summary: entry.summary.current } };
     } else {
       // full: the snapshot answers the attach; events after it go to the connection
       entry.attachments.set(connection, { level: "full", live: false });
+      this.reportClients(entry);
       const key = `attach.${connection.id}.${id}`;
       entry.requests.set(key, { connection, id: `attach:${id}` });
       entry.link.send({ type: "harness_snapshot", id: key, limit: 200 });

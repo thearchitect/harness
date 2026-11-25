@@ -14,7 +14,7 @@ const Empty = Type.Object({});
 const Opt = <T extends TSchema>(schema: T) => Type.Optional(schema);
 
 export const FRAME_SCHEMAS = {
-  hello: Type.Object({ k: Type.Literal("hello"), protocol: Type.Integer(), client: Str, token: Opt(Str) }),
+  hello: Type.Object({ k: Type.Literal("hello"), protocol: Type.Integer(), client: Str, token: Opt(Str), capabilities: Opt(Type.Array(Str)) }),
   req: Type.Object({ k: Type.Literal("req"), id: Str, node: Opt(Str), op: Str, args: Type.Unknown() }),
   hap: Type.Object({ k: Type.Literal("hap"), node: Opt(Str), agent: Str, rec: Type.Object({ type: Str }) }),
 } as const;
@@ -52,6 +52,8 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
   harness_task_output: Request("harness_task_output", { taskId: Str, offset: Int, limit: Int }),
   harness_subagent_send: Request("harness_subagent_send", { session: Str, text: Str }),
   harness_complete: Request("harness_complete", { kind: Type.Union([Type.Literal("path"), Type.Literal("file")]), prefix: Str }),
+  harness_component_input: Request("harness_component_input", { componentId: Str, data: Str }),
+  harness_component_resize: Request("harness_component_resize", { componentId: Str, width: Type.Integer({ minimum: 1 }) }),
 };
 
 export type Checked = { ok: true } | { ok: false; error: string };

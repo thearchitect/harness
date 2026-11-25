@@ -4,7 +4,7 @@
 
 import type { ProtocolError } from "#protocol/errors.ts";
 import type { HapRecord } from "#protocol/hap.ts";
-import type { NodeEvent, NodeFrame, NodeOp, NodeOps, Transport } from "#protocol/node.ts";
+import type { ClientCapability, NodeEvent, NodeFrame, NodeOp, NodeOps, Transport } from "#protocol/node.ts";
 import { PROTOCOL_VERSION } from "#protocol/version.ts";
 
 export type { Transport };
@@ -51,11 +51,11 @@ export class NodeConnection {
   }
 
   /** Connects and exchanges hello/welcome; rejects with the node's reason when refused. */
-  static open(transport: Transport, client: string, token?: string): Promise<NodeConnection> {
+  static open(transport: Transport, client: string, token?: string, capabilities?: ClientCapability[]): Promise<NodeConnection> {
     const connection = new NodeConnection(transport);
     return new Promise((resolve, reject) => {
       connection.handshake = { resolve: () => resolve(connection), reject };
-      transport.send({ k: "hello", protocol: PROTOCOL_VERSION, client, token });
+      transport.send({ k: "hello", protocol: PROTOCOL_VERSION, client, token, ...(capabilities !== undefined ? { capabilities } : {}) });
     });
   }
 

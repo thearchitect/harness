@@ -55,7 +55,7 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
     const report = new Report(scenario.name, stand);
     const clients: Clients = {};
     for (const [name, spec] of Object.entries(scenario.clients)) {
-      const open = (): Promise<NodeConnection> => NodeConnection.open(report.record(name, inProcessTransport(stand.node)), name);
+      const open = (): Promise<NodeConnection> => NodeConnection.open(report.record(name, inProcessTransport(stand.node)), name, undefined, spec.kind === "tui" ? ["component-bridge"] : undefined);
       switch (spec.kind) {
         case "tui":
           clients[name] = await TuiDriver.start(open, { cwd: stand.project, columns: spec.columns, rows: spec.rows });

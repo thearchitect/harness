@@ -4,6 +4,7 @@
 // all the user's UIs; which tab is active and which item is selected are this client's own.
 
 import { systemClock, type Clock } from "#protocol/clock.ts";
+import type { BridgedComponent } from "#protocol/hap.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import type { AgentInfo, AgentSummary } from "#protocol/node.ts";
 import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#protocol/state.ts";
@@ -31,7 +32,12 @@ export type StatusLine = { level: "info" | "warning" | "error" | "working"; text
 
 export type MainZone = { kind: "transcript" } | { kind: "task"; taskId: string; task: TaskInfo | undefined; output: string } | { kind: "subagent"; id: string; subagent: SubagentInfo | undefined };
 
-export type EditorZone = { kind: "editor"; mode: RunMode } | { kind: "interaction"; request: InteractionRequest } | { kind: "picker"; picker: Picker };
+export type EditorZone =
+  | { kind: "editor"; mode: RunMode }
+  | { kind: "interaction"; request: InteractionRequest }
+  | { kind: "picker"; picker: Picker }
+  /** An extension's component drawn in the agent (terminal clients only; others say they cannot show it). */
+  | { kind: "component"; component: BridgedComponent };
 
 /** The zones of the main area (top to bottom) and what lies over the screen — the same in every UI. */
 export type Zones = {
@@ -41,10 +47,12 @@ export type Zones = {
   status: StatusLine[];
   footer: { node: string; agent: AgentModel | undefined };
   overlays: OverlayKind[];
+  /** An extension's overlay component drawn in the agent, over the screen. */
+  componentOverlay: BridgedComponent | undefined;
 };
 
 /** Where typed text goes now. */
-export type InputTarget = "editor" | "dialog" | "picker" | "search" | "task" | "subagent";
+export type InputTarget = "editor" | "dialog" | "picker" | "component" | "search" | "task" | "subagent";
 
 /** A search of the transcript: the query, the keys of the matching items (oldest first), the current one. */
 export type Search = { query: string; matches: string[]; index: number };
@@ -205,8 +213,16 @@ export class Workbench {
     const main = this.mainZone(selected, agent);
     this.followTask(main.kind === "task" ? main.taskId : undefined);
     const request = agent?.interactions[0];
+    const inline = agent?.components.filter((component) => !component.overlay).at(-1);
+    const componentOverlay = agent?.components.filter((component) => component.overlay).at(-1);
     const editorZone: EditorZone =
-      this.picker !== undefined ? { kind: "picker", picker: this.picker } : request !== undefined ? { kind: "interaction", request } : { kind: "editor", mode: agent?.running === true ? agent.state.mode : editor.mode };
+      this.picker !== undefined
+        ? { kind: "picker", picker: this.picker }
+        : request !== undefined
+          ? { kind: "interaction", request }
+          : inline !== undefined
+            ? { kind: "component", component: inline }
+            : { kind: "editor", mode: agent?.running === true ? agent.state.mode : editor.mode };
     const queue = agent?.session?.queue;
     return {
       strips: { left: width >= LEFT_STRIP_MIN, right: width >= RIGHT_STRIP_MIN },
@@ -227,11 +243,14 @@ export class Workbench {
         status: this.statusLines(tabs, tab, agent),
         footer: { node: tab?.node ?? "", agent },
         overlays: this.overlays.filter((overlay) => (overlay === "tabs" ? width < LEFT_STRIP_MIN : overlay === "items" ? width < RIGHT_STRIP_MIN : true)),
+        componentOverlay,
       },
       input:
         editorZone.kind === "picker"
           ? "picker"
-          : editorZone.kind === "interaction"
+          : componentOverlay !== undefined || editorZone.kind === "component"
+            ? "component"
+            : editorZone.kind === "interaction"
             ? "dialog"
             : this.searchState !== undefined
               ? "search"
@@ -602,6 +621,27 @@ export class Workbench {
   }
 
   /** Answers the active session's interaction. */
+  /** Keys for, and the width of, a bridged component of the active session. */
+  async componentInput(componentId: string, data: string): Promise<void> {
+    await this.componentCall({ type: "harness_component_input", componentId, data });
+  }
+
+  async componentResize(componentId: string, width: number): Promise<void> {
+    await this.componentCall({ type: "harness_component_resize", componentId, width });
+  }
+
+  private async componentCall(record: { type: string; [key: string]: unknown }): Promise<void> {
+    const tab = this.activeTab();
+    if (tab?.agent !== undefined) {
+      await this.client
+        .connection(tab.node)
+        .call(tab.agent.id, record)
+        .catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
+    } else {
+      // the session is gone with its component
+    }
+  }
+
   async answer(interactionId: string, value: unknown): Promise<void> {
     const tab = this.activeTab();
     if (tab?.agent !== undefined) {

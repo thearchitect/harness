@@ -2,12 +2,13 @@
 // packages (select / confirm / input / editor) become `pi-dialog` interactions every client can
 // answer; notifications, statuses, string widgets and the title become harness_ui records. What
 // belongs to a client — the editor, working indicators, themes, raw terminal input — does nothing
-// here. Component UIs (custom(), component widgets, footer, header) have no client to draw them
-// yet: custom() resolves undefined, as in pi's RPC mode.
+// here. Components (custom(), component widgets) go through the component bridge to terminal
+// clients; footers and headers belong to the client and are not drawn.
 
 import { initTheme, type ExtensionUIContext, type Theme } from "@earendil-works/pi-coding-agent";
 import type { HapEvent } from "#protocol/hap.ts";
 import type { InteractionHub } from "./interactions.ts";
+import type { ComponentBridge } from "./component-bridge.ts";
 
 let themeReady = false;
 
@@ -21,7 +22,8 @@ export function ensureTheme(): void {
   }
 }
 
-export function createUiContext(hub: InteractionHub, emit: (event: HapEvent) => void, theme: () => Theme): ExtensionUIContext {
+export function createUiContext(hub: InteractionHub, emit: (event: HapEvent) => void, theme: () => Theme, bridge: ComponentBridge): ExtensionUIContext {
+  const widgets = new Map<string, () => void>();
   const dialog = async (payload: Parameters<InteractionHub["ask"]>[1], signal: AbortSignal | undefined) => hub.ask("pi-dialog", payload as never, { signal });
 
   const context = {
@@ -55,10 +57,13 @@ export function createUiContext(hub: InteractionHub, emit: (event: HapEvent) => 
     setWorkingIndicator() {},
     setHiddenThinkingLabel() {},
     setWidget(key: string, content: unknown) {
+      widgets.get(key)?.();
+      widgets.delete(key);
       if (content === undefined || Array.isArray(content)) {
         emit({ type: "harness_ui", method: "widget", key, lines: content as string[] | undefined });
       } else {
-        // a component widget needs a terminal client of its own (the component bridge)
+        // a component widget: drawn here into lines
+        widgets.set(key, bridge.widget(content as never, (lines) => emit({ type: "harness_ui", method: "widget", key, lines })));
       }
     },
     setFooter() {},
@@ -66,8 +71,8 @@ export function createUiContext(hub: InteractionHub, emit: (event: HapEvent) => 
     setTitle(title: string) {
       emit({ type: "harness_ui", method: "title", title });
     },
-    async custom() {
-      return undefined;
+    async custom(factory: never, options?: { overlay?: boolean }) {
+      return bridge.custom(factory, options);
     },
     pasteToEditor(text: string) {
       emit({ type: "harness_ui", method: "editor_text", text });

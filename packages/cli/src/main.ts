@@ -32,6 +32,9 @@ import { loadRenderers } from "#tui/presentation.ts";
 
 const DEFAULT_NODE = "default";
 
+/** A terminal draws extensions' components (the component bridge). */
+const TUI_CAPABILITIES = ["component-bridge" as const];
+
 function harnessVersion(): string {
   const path = process.env.HARNESS_MANIFEST;
   if (path === undefined || path === "") {
@@ -100,7 +103,7 @@ async function runTui(args: string[]): Promise<void> {
   let embedded: { node: HarnessNode; close(): Promise<void> } | undefined;
   let open: () => Promise<NodeConnection>;
   if (await socketAlive(path)) {
-    open = async () => NodeConnection.open(await unixTransport(path), "tui");
+    open = async () => NodeConnection.open(await unixTransport(path), "tui", undefined, TUI_CAPABILITIES);
   } else {
     const node = new HarnessNode({ name: DEFAULT_NODE, dataDir: home, harnessVersion: harnessVersion() });
     const server = await listenUnix(node, path).catch(() => undefined);
@@ -111,7 +114,7 @@ async function runTui(args: string[]): Promise<void> {
         await node.close();
       },
     };
-    open = () => NodeConnection.open(inProcessTransport(node), "tui");
+    open = () => NodeConnection.open(inProcessTransport(node), "tui", undefined, TUI_CAPABILITIES);
   }
 
   // the local node, then the remote hubs: each reconnects by itself after a loss
@@ -119,7 +122,7 @@ async function runTui(args: string[]): Promise<void> {
   const nodeName = await client.addEndpoint(open, { home: true });
   for (const remote of readRemotes(home)) {
     await client
-      .addEndpoint(async () => NodeConnection.open(await wsTransport(remote.url), "tui", remote.token), { home: false })
+      .addEndpoint(async () => NodeConnection.open(await wsTransport(remote.url), "tui", remote.token, TUI_CAPABILITIES), { home: false })
       .catch((error: unknown) => client.offline.set(remote.name, error instanceof Error ? error.message : String(error)));
   }
   const workbench = new Workbench(client, { cwd });

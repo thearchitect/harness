@@ -3,7 +3,7 @@
 // HarnessState, the open interactions, statuses, notices. Pure data and a reducer; listeners learn
 // that something changed and redraw.
 
-import type { HapRecord, SessionView, SnapshotData } from "#protocol/hap.ts";
+import type { BridgedComponent, HapRecord, SessionView, SnapshotData } from "#protocol/hap.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { initialHarnessState, type HarnessState } from "#protocol/state.ts";
 
@@ -53,6 +53,8 @@ export class AgentModel {
   interactions: InteractionRequest[] = [];
   status: Record<string, string> = {};
   widgets: Record<string, string[]> = {};
+  /** Components of extensions drawn in the agent (the component bridge), oldest first. */
+  components: BridgedComponent[] = [];
   notices: Notice[] = [];
   /** Text an extension asked to put into the editor. */
   editorText: string | undefined;
@@ -87,6 +89,7 @@ export class AgentModel {
     this.state = snapshot.state;
     this.interactions = snapshot.interactions;
     this.status = snapshot.status;
+    this.components = snapshot.components ?? [];
     this.streaming = snapshot.partial?.message as Message | undefined;
     this.tools.clear();
     for (const tool of snapshot.partial?.tools ?? []) {
@@ -179,6 +182,15 @@ export class AgentModel {
         break;
       case "harness_ui":
         this.applyUi(r);
+        break;
+      case "harness_component_open":
+        this.components = [...this.components, { componentId: String(r.componentId), overlay: r.overlay === true, lines: [] }];
+        break;
+      case "harness_component_render":
+        this.components = this.components.map((component) => (component.componentId === r.componentId ? { ...component, lines: r.lines as string[] } : component));
+        break;
+      case "harness_component_close":
+        this.components = this.components.filter((component) => component.componentId !== r.componentId);
         break;
       case "agent_settled":
         this.streaming = undefined;

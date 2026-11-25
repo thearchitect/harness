@@ -19,6 +19,7 @@ import {
   setKeybindings,
   Text,
   TUI_KEYBINDINGS,
+  truncateToWidth,
   TuiAltScreen,
   VStack,
   type Component,
@@ -120,6 +121,37 @@ class SearchBox extends Input {
   }
 }
 
+/** A component of an extension drawn in the agent: its latest lines, keys and width go back to it. */
+class BridgedView implements Component {
+  focused = false;
+  private width = 0;
+  private readonly lines: () => readonly string[];
+  private readonly input: (data: string) => void;
+  private readonly resize: (width: number) => void;
+
+  constructor(lines: () => readonly string[], input: (data: string) => void, resize: (width: number) => void) {
+    this.lines = lines;
+    this.input = input;
+    this.resize = resize;
+  }
+
+  invalidate(): void {}
+
+  render(width: number): string[] {
+    if (width !== this.width) {
+      this.width = width;
+      this.resize(width);
+    } else {
+      // drawn at this width already
+    }
+    return this.lines().map((line) => truncateToWidth(line, width));
+  }
+
+  handleInput(data: string): void {
+    this.input(data);
+  }
+}
+
 export class App {
   private readonly client: ClientModel;
   private readonly workbench: Workbench;
@@ -145,6 +177,7 @@ export class App {
   private editorComponent: Component | undefined;
   private readonly overlayHandles = new Map<OverlayKind, OverlayHandle>();
   private searchShownAt: string | undefined;
+  private componentOverlay: { id: string; handle: OverlayHandle } | undefined;
   private screen: Screen | undefined;
   private quitArmed = false;
   private programStatus = "";
@@ -345,7 +378,14 @@ export class App {
 
   /** The editor, or the interaction or picker in its place. */
   private drawEditorZone(zone: EditorZone): void {
-    const id = zone.kind === "editor" ? "editor" : zone.kind === "interaction" ? `interaction:${zone.request.id}` : `picker:${zone.picker.id}`;
+    const id =
+      zone.kind === "editor"
+        ? "editor"
+        : zone.kind === "interaction"
+          ? `interaction:${zone.request.id}`
+          : zone.kind === "component"
+            ? `component:${zone.component.componentId}`
+            : `picker:${zone.picker.id}`;
     if (id === this.editorShown) {
       return;
     } else {
@@ -362,6 +402,13 @@ export class App {
           this.editorZone.addChild(this.editorComponent);
           this.tui.setFocus(this.editorComponent);
           break;
+        case "component": {
+          const componentId = zone.component.componentId;
+          this.editorComponent = this.bridgedView(componentId);
+          this.editorZone.addChild(this.editorComponent);
+          this.tui.setFocus(this.editorComponent);
+          break;
+        }
         case "picker": {
           const theme = getTheme();
           const picker = zone.picker;
@@ -404,8 +451,30 @@ export class App {
     }
   }
 
+  private bridgedView(componentId: string): BridgedView {
+    return new BridgedView(
+      () => this.screen?.agent?.components.find((component) => component.componentId === componentId)?.lines ?? [],
+      (data) => void this.workbench.componentInput(componentId, data),
+      (width) => void this.workbench.componentResize(componentId, width),
+    );
+  }
+
   /** Overlays: the harness panel and the hidden strips, over the right or left edge. */
   private drawOverlays(screen: Screen): void {
+    const component = screen.zones.componentOverlay;
+    if (component?.componentId !== this.componentOverlay?.id) {
+      this.componentOverlay?.handle.hide();
+      this.componentOverlay = undefined;
+      if (component !== undefined) {
+        const view = this.bridgedView(component.componentId);
+        this.componentOverlay = { id: component.componentId, handle: this.tui.showOverlay(view, { width: "80%", anchor: "center" }) };
+        this.tui.setFocus(view);
+      } else {
+        this.tui.setFocus(this.editorComponent ?? this.editor);
+      }
+    } else {
+      // the same component overlay, or none
+    }
     const wanted = new Set(screen.zones.overlays);
     for (const [kind, handle] of this.overlayHandles) {
       if (!wanted.has(kind)) {
@@ -533,6 +602,8 @@ export class App {
       return { consume: true };
     } else if (action === undefined || action === "editor.submit" || action === "editor.newline") {
       return undefined;
+    } else if (input === "component") {
+      return undefined; // every key belongs to the extension's component
     } else if (action === "run.abort") {
       if (input === "dialog" || input === "picker") {
         return undefined; // Esc belongs to the dialog or the list

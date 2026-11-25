@@ -25,7 +25,10 @@ export type HapRequest =
   | { type: "harness_task_input"; id: string; taskId: string; data: string }
   | { type: "harness_task_output"; id: string; taskId: string; offset: number; limit: number }
   | { type: "harness_subagent_send"; id: string; session: string; text: string }
-  | { type: "harness_complete"; id: string; kind: "path" | "file"; prefix: string };
+  | { type: "harness_complete"; id: string; kind: "path" | "file"; prefix: string }
+  /** Keys for a bridged component (as the terminal sends them), and the width it is drawn at. */
+  | { type: "harness_component_input"; id: string; componentId: string; data: string }
+  | { type: "harness_component_resize"; id: string; componentId: string; width: number };
 
 export type HapRequestType = HapRequest["type"];
 
@@ -41,7 +44,12 @@ export const HAP_REQUEST_TYPES: readonly HapRequestType[] = [
   "harness_task_output",
   "harness_subagent_send",
   "harness_complete",
+  "harness_component_input",
+  "harness_component_resize",
 ];
+
+/** A component of an extension (ctx.ui.custom) drawn in the agent and shown by terminal clients. */
+export type BridgedComponent = { componentId: string; overlay: boolean; lines: string[] };
 
 export function isHapRequest(record: { type?: unknown }): record is HapRequest {
   return typeof record.type === "string" && (HAP_REQUEST_TYPES as readonly string[]).includes(record.type);
@@ -77,6 +85,8 @@ export type SnapshotData = {
   state: HarnessState;
   interactions: InteractionRequest[];
   status: Record<string, string>;
+  /** Open bridged components, for clients that can draw them. */
+  components?: BridgedComponent[];
 };
 
 export type EntriesBeforeData = { entries: unknown[]; cursor?: string };
@@ -94,9 +104,15 @@ export type HapEvent =
   | { type: "harness_ui"; method: "status"; key: string; text?: string }
   | { type: "harness_ui"; method: "widget"; key: string; lines?: string[] }
   | { type: "harness_ui"; method: "editor_text"; text: string }
-  | { type: "harness_ui"; method: "title"; title: string };
+  | { type: "harness_ui"; method: "title"; title: string }
+  | { type: "harness_component_open"; componentId: string; overlay: boolean }
+  | { type: "harness_component_render"; componentId: string; lines: string[] }
+  | { type: "harness_component_close"; componentId: string };
+
+/** What the node tells its agent about the clients attached in full (node → agent). */
+export type NodeToAgentRecord = { type: "harness_clients"; componentBridge: number };
 
 /** Requests the agent makes to its node (answered with a harness_response on the agent's stdin). */
 export type AgentToNodeRequest = { type: "harness_spawn_child"; id: string; profile: string; brief: string; cwd: string };
 
-export type HapRecord = HapRequest | HapEvent | AgentToNodeRequest | PiRecord;
+export type HapRecord = HapRequest | HapEvent | AgentToNodeRequest | NodeToAgentRecord | PiRecord;
