@@ -17,6 +17,7 @@ import type { Server } from "node:net";
 
 const SCENARIO_MODEL_PATH = fileURLToPath(new URL("./scenario-model.ts", import.meta.url));
 const PROBE_EXTENSION_PATH = fileURLToPath(new URL("./probe-extension.ts", import.meta.url));
+const FAKE_CLAUDE_PATH = fileURLToPath(new URL("../fakes/claude.ts", import.meta.url));
 
 export type Stand = {
   root: string;
@@ -27,7 +28,13 @@ export type Stand = {
   script(turns: ScriptedTurn[]): void;
   /** Models of the scenario provider besides `scripted`, for agents started from now on. */
   models(ids: string[]): void;
-  /** The requests the model received, in order. */
+  /** The fake Claude Code's runs (one per message it gets) and how it presents itself (testkit/fakes/claude.ts). */
+  claude(runs: unknown[][], state?: { version?: string; auth?: "ok" | "out"; keySource?: string }): void;
+  /** Each start of the fake Claude Code: its argv and environment. */
+  claudeStarts(): { argv: string[]; env: Record<string, string> }[];
+  /** The MCP tools harness offered the fake Claude Code (its last tools/list). */
+  claudeTools(): string[];
+  /** The requests the model received, in order: { agent: "main" | <profile>, context }. */
   requests(): unknown[];
   connect(via?: "inproc" | "unix"): Promise<NodeConnection>;
   down(): Promise<void>;
@@ -61,6 +68,12 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
   const requestsPath = join(root, "requests.jsonl");
   const modelsPath = join(root, "models.json");
   writeFileSync(scenarioPath, "[]");
+  // a fake Claude Code for the claude engine: its runs are scripted with stand.claude()
+  const claudeScript = join(root, "claude.json");
+  const claudeLog = join(root, "claude.log");
+  const claudeCommand = join(root, "claude");
+  writeFileSync(claudeScript, "[]");
+  writeFileSync(claudeCommand, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_CLAUDE_PATH)} "$@"\n`, { mode: 0o755 });
 
   const node = new HarnessNode({
     name: options.name ?? "test",
@@ -77,6 +90,11 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
       HARNESS_TEST_SCENARIO: scenarioPath,
       HARNESS_TEST_REQUESTS: requestsPath,
       HARNESS_TEST_MODELS: modelsPath,
+      HARNESS_CLAUDE: claudeCommand,
+      HARNESS_FAKE_CLAUDE_SCRIPT: claudeScript,
+      HARNESS_FAKE_CLAUDE_LOG: claudeLog,
+      // must never reach Claude: harness runs it on the user's subscription only
+      ANTHROPIC_API_KEY: "sk-must-not-pass",
     },
     summaryIntervalMs: 20,
     users: options.users,
@@ -93,6 +111,21 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     node,
     models(ids) {
       writeFileSync(modelsPath, JSON.stringify(ids));
+    },
+    claude(runs, state = {}) {
+      writeFileSync(claudeScript, JSON.stringify(runs));
+      writeFileSync(`${claudeScript}.state`, JSON.stringify(state));
+    },
+    claudeStarts() {
+      return existsSync(claudeLog)
+        ? readFileSync(claudeLog, "utf8")
+            .split("\n")
+            .filter((line) => line !== "")
+            .map((line) => JSON.parse(line) as { argv: string[]; env: Record<string, string> })
+        : [];
+    },
+    claudeTools() {
+      return existsSync(`${claudeLog}.tools`) ? (JSON.parse(readFileSync(`${claudeLog}.tools`, "utf8")) as string[]) : [];
     },
     script(turns) {
       // the model plays turns in order across scripts: each script adds the next ones

@@ -7,6 +7,7 @@ import { createWriteStream, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { Duplex } from "node:stream";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
+import type { SubagentLaunch } from "#protocol/state.ts";
 
 export type AgentRecord = { type?: unknown; id?: unknown; [key: string]: unknown };
 
@@ -16,6 +17,8 @@ export type AgentLaunch = {
   cwd: string;
   sessionFile?: string;
   parentSession?: string;
+  /** The child's subagent launch (passed as --subagent JSON). */
+  subagent?: SubagentLaunch;
   env: Record<string, string | undefined>;
   logPath: string;
 };
@@ -40,6 +43,7 @@ export class AgentLink {
         launch.cwd,
         ...(launch.sessionFile !== undefined ? ["--session-file", launch.sessionFile] : []),
         ...(launch.parentSession !== undefined ? ["--parent-session", launch.parentSession] : []),
+        ...(launch.subagent !== undefined ? ["--subagent", JSON.stringify(launch.subagent)] : []),
       ];
       this.process = spawn(executable, args, { cwd: launch.cwd, env: launch.env, stdio: ["ignore", "pipe", "pipe", "pipe"] });
       this.process.stdout?.pipe(log, { end: false });

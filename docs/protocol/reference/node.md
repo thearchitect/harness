@@ -129,7 +129,8 @@ Starts an agent (or returns the one serving the session already). → { agent }
 |---|---|---|---|
 | `cwd` | string | yes | The session's directory; ~ is the node user's home |
 | `sessionFile` | string |  | Open this stored session; a new one when absent |
-| `parent` | string |  | The parent agent of a subagent |
+| `subagent` | { profile, role, mode, model, tools, subagents, madness, depth } |  | How the child runs as a subagent; only an agent's own connection may start one |
+| `background` | boolean |  | A subagent that outlives its parent |
 
 ### `agent_attach`
 

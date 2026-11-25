@@ -15,7 +15,7 @@ const ALLOWED: Record<Package, readonly Package[]> = {
   protocol: [],
   client: ["protocol"],
   extension: ["protocol"],
-  agent: ["protocol", "extension"],
+  agent: ["protocol", "client", "extension"],
   node: ["protocol"],
   tui: ["protocol", "client", "extension"],
   cli: ["protocol", "client", "node", "tui"],

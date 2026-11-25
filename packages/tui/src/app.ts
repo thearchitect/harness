@@ -310,13 +310,24 @@ export class App {
         break;
       }
       case "subagent": {
-        this.swapMain(this.taskOutput);
-        const theme = getTheme();
-        const subagent = main.subagent;
-        this.taskOutput.lines = [
-          theme.bold(` ${subagent?.profile ?? "subagent"} ${main.id}`),
-          theme.fg("dim", ` ${subagent?.state ?? ""} · ${subagent?.engine ?? ""} · Alt+↑ back`),
-        ];
+        if (main.agent !== undefined) {
+          // a harness subagent: its own session, steered from the editor
+          this.swapMain(this.transcript);
+          this.transcript.show(main.agent);
+        } else {
+          // a claude subagent (or one whose agent is gone): its steps and latest text
+          this.swapMain(this.taskOutput);
+          const theme = getTheme();
+          const subagent = main.subagent;
+          this.taskOutput.lines = [
+            theme.bold(` ${subagent?.profile ?? "subagent"} ${main.id}`),
+            theme.fg("dim", ` ${subagent?.state ?? ""} · ${subagent?.engine ?? ""}${subagent?.model !== undefined ? ` · ${subagent.model}` : ""} · the editor steers it while it runs · Alt+↑ back`),
+            "",
+            ...(subagent?.steps ?? []).map((step) => theme.fg("muted", ` › ${step}`)),
+            "",
+            ...(subagent?.text ?? "").split("\n"),
+          ];
+        }
         break;
       }
       default:
@@ -397,11 +408,17 @@ export class App {
           this.editorZone.addChild(this.editor);
           this.tui.setFocus(this.editor);
           break;
-        case "interaction":
+        case "interaction": {
           this.editorComponent = this.interactionView(zone.request);
+          if (zone.from !== undefined) {
+            this.editorZone.addChild(new Text(getTheme().fg("warning", ` subagent ${zone.from} asks:`), 0, 0));
+          } else {
+            // the session itself asks
+          }
           this.editorZone.addChild(this.editorComponent);
           this.tui.setFocus(this.editorComponent);
           break;
+        }
         case "component": {
           const componentId = zone.component.componentId;
           this.editorComponent = this.bridgedView(componentId);
@@ -594,7 +611,7 @@ export class App {
         this.workbench.notify("info", "Ctrl+C again to quit (agents keep running on their node)");
       }
       return { consume: true };
-    } else if (action === "editor.submit" && input === "editor") {
+    } else if (action === "editor.submit" && (input === "editor" || input === "subagent" || input === "task")) {
       // the app submits: pi-tui's editor takes Alt+Enter for a new line
       const text = this.editor.getExpandedText();
       this.editor.setText("");

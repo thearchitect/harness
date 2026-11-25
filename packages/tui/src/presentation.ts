@@ -107,9 +107,12 @@ export async function loadRenderers(cwd: string, extensionPaths: readonly string
     interactions: { ask: async () => undefined },
     publishState: () => {},
     dataDir: "/nonexistent",
-    spawnChild: async () => {
-      throw new Error("presentation only");
+    children: {
+      start: async () => {
+        throw new Error("presentation only");
+      },
     },
+    subagent: undefined,
   });
   await renderers.load(inert.factory, "harness");
   await renderers.load(createCodemodeExtension(), "codemode");

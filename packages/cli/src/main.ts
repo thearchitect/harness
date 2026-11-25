@@ -26,6 +26,8 @@ import { listenUnix, socketAlive, socketPath } from "#node/endpoints/unix.ts";
 import { listenWs } from "#node/endpoints/ws.ts";
 import { Uplink } from "#node/uplink.ts";
 import { hubAdmin, remoteAdmin } from "./admin.ts";
+import { claudeBridge } from "./claude-bridge.ts";
+import { piCommand } from "./pi-command.ts";
 import { readRemotes } from "./remotes.ts";
 import { App, initClientTheme } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
@@ -185,6 +187,19 @@ async function main(): Promise<void> {
       ensureHome(harnessHome());
       await remoteAdmin(harnessHome(), rest);
       break;
+    case "claude-bridge":
+      await claudeBridge(rest[0]);
+      break;
+    case "auth":
+    case "config":
+    case "mcp":
+    case "install":
+    case "remove":
+    case "uninstall":
+    case "list":
+    case "update":
+      process.exitCode = piCommand(harnessHome(), [command, ...rest]);
+      break;
     case "--version":
     case "-v":
       process.stdout.write(`${harnessVersion()}\n`);
@@ -198,6 +213,8 @@ async function main(): Promise<void> {
           "harness hub [--name <name>] [--listen h:p]  a node with the hub role",
           "harness hub user|device|node add|remove|revoke|list …",
           "harness remote add|remove|list              hubs this client connects to",
+          "harness auth|config|mcp|install|remove|list|update …   pi's commands on ~/.harness",
+          "harness claude-bridge mcp|hook              run by Claude Code for harness (subagents)",
           "",
         ].join("\n"),
       );

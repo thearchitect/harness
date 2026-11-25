@@ -5,12 +5,13 @@
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
 import { NODE_OPS } from "#protocol/node.ts";
+import { MAX_SUBAGENT_DEPTH, type SubagentLaunch } from "#protocol/state.ts";
 import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
 import { AgentLink, type AgentRecord } from "./agent-link.ts";
 import { listSessions, SessionLocks } from "./sessions.ts";
@@ -27,6 +28,8 @@ export interface Connection {
   readonly user: string;
   /** The node's own user through a local endpoint (unix socket, in-process): no access check. */
   readonly trusted: boolean;
+  /** The agent on the other end, when an agent is the client (for its subagents). */
+  readonly agent?: string;
   send(frame: NodeFrame): void;
   close(): void;
 }
@@ -64,6 +67,9 @@ export type NodeConfig = {
 
 type Attachment = { level: AttachLevel; live: boolean };
 
+/** A subagent's start: its parent, its launch (with the depth the node set), whether it outlives the parent. */
+type ChildStart = { parent: AgentEntry; launch: SubagentLaunch; background: boolean };
+
 type AgentEntry = {
   info: AgentInfo;
   link: AgentLink;
@@ -93,6 +99,9 @@ export function defaultAgentCommand(): string[] {
 export class HarnessNode {
   readonly config: NodeConfig;
   private readonly agents = new Map<string, AgentEntry>();
+  /** Each agent's own client connection to the node (for its subagents), by agent id. */
+  private readonly agentConnections = new Map<string, Connection>();
+  private readonly agentReceivers = new Map<string, (frame: ClientFrame) => void>();
   private readonly connections = new Map<string, { connection: Connection; welcomed: boolean; capabilities: Set<string> }>();
   private readonly locks: SessionLocks;
   readonly settings: SettingsStore;
@@ -271,9 +280,22 @@ export class HarnessNode {
       case "agents_list":
         return { agents: this.agentList() } as NodeOps[K]["result"];
       case "agent_start": {
-        const { cwd, sessionFile, parent } = args as NodeOps["agent_start"]["args"];
-        // a client on another machine may not know this node's paths: "~" is the node user's home
-        return { agent: await this.startAgent(this.expandHome(cwd), sessionFile, parent) } as NodeOps[K]["result"];
+        const { cwd, sessionFile, subagent, background } = args as NodeOps["agent_start"]["args"];
+        const parent = connection.agent !== undefined ? this.agents.get(connection.agent) : undefined;
+        if (subagent === undefined) {
+          // a client on another machine may not know this node's paths: "~" is the node user's home
+          return { agent: await this.startAgent(this.expandHome(cwd), sessionFile) } as NodeOps[K]["result"];
+        } else if (parent === undefined) {
+          throw new HarnessError("forbidden", "only an agent starts subagents");
+        } else {
+          const depth = (parent.info.subagent?.depth ?? 0) + 1;
+          if (depth > MAX_SUBAGENT_DEPTH) {
+            throw new HarnessError("forbidden", `a subagent of depth ${depth - 1} cannot start subagents`);
+          } else {
+            const child = { parent, launch: { ...subagent, depth }, background: background === true };
+            return { agent: await this.startAgent(this.expandHome(cwd), sessionFile, child) } as NodeOps[K]["result"];
+          }
+        }
       }
       case "agent_attach": {
         const { agent, level } = args as NodeOps["agent_attach"]["args"];
@@ -386,7 +408,7 @@ export class HarnessNode {
     }, UNLOAD_CHECK_MS);
   }
 
-  async startAgent(cwd: string, sessionFile?: string, parent?: string): Promise<AgentInfo> {
+  async startAgent(cwd: string, sessionFile?: string, child?: ChildStart): Promise<AgentInfo> {
     const served = sessionFile !== undefined ? [...this.agents.values()].find((entry) => entry.info.sessionFile === sessionFile) : undefined;
     const max = this.config.maxAgents ?? MAX_AGENTS;
     if (served !== undefined) {
@@ -398,7 +420,7 @@ export class HarnessNode {
         throw new HarnessError("agent_failed", `${max} agents run on node ${this.config.name} and none is idle: close a session first`);
       } else {
         await oldest.link.stop();
-        return this.startAgent(cwd, sessionFile, parent);
+        return this.startAgent(cwd, sessionFile, child);
       }
     } else {
       this.counter += 1;
@@ -407,14 +429,27 @@ export class HarnessNode {
         command: this.config.agentCommand ?? defaultAgentCommand(),
         cwd,
         sessionFile,
+        parentSession: child?.parent.info.sessionFile,
+        subagent: child?.launch,
         env: { ...process.env, HARNESS_HOME: this.config.dataDir, ...this.config.agentEnv },
         logPath: join(this.config.dataDir, "log", "agents", `${id}.log`),
       });
       const summary = new SummaryTracker(this.clock.now());
+      // records after hello and before the agent is registered are kept and replayed then
+      const early: AgentRecord[] = [];
+      let helloSeen = false;
+      const offEarly = link.onRecord((record) => {
+        if (helloSeen) {
+          early.push(record);
+        } else {
+          // hello itself is read below; nothing comes before it
+        }
+      });
       const hello = await new Promise<AgentRecord>((resolveHello, reject) => {
         const off = link.onRecord((record) => {
           if (record.type === "harness_hello") {
             off();
+            helloSeen = true;
             resolveHello(record);
           } else {
             // records before hello: none are expected
@@ -438,7 +473,8 @@ export class HarnessNode {
           sessionFile: session.sessionFile,
           cwd: session.cwd,
           name: session.sessionName,
-          parent,
+          parent: child?.parent.info.id,
+          subagent: child !== undefined ? { profile: child.launch.profile, background: child.background, depth: child.launch.depth } : undefined,
           startedAt: this.clock.now(),
           summary: summary.current,
         },
@@ -463,10 +499,23 @@ export class HarnessNode {
         lastSummaryAt: 0,
       };
       this.agents.set(id, entry);
+      offEarly();
       link.onRecord((record) => this.fromAgent(entry, record));
+      for (const record of early.splice(0)) {
+        this.fromAgent(entry, record);
+      }
       link.onExit((code, error) => {
         this.agents.delete(id);
         this.locks.release(entry.info.sessionId);
+        this.agentConnections.get(id)?.close();
+        // a closed parent takes its subagents with it, except background ones: they finish and report
+        for (const other of [...this.agents.values()]) {
+          if (other.info.parent === id && other.info.subagent?.background !== true) {
+            void other.link.stop();
+          } else {
+            // not its child, or a background one
+          }
+        }
         if (entry.summaryTimer !== undefined) {
           this.clock.clearTimeout(entry.summaryTimer);
         } else {
@@ -520,7 +569,50 @@ export class HarnessNode {
     }
   }
 
+  /** An agent's own client connection to this node (for its subagents), made on its first frame. */
+  private agentConnection(entry: AgentEntry): (frame: ClientFrame) => void {
+    const existing = this.agentReceivers.get(entry.info.id);
+    if (existing !== undefined) {
+      return existing;
+    } else {
+      let open = true;
+      const connection: Connection = {
+        id: `agent.${entry.info.id}`,
+        user: userInfo().username,
+        trusted: true,
+        agent: entry.info.id,
+        send: (frame) => {
+          if (open) {
+            entry.link.send({ type: "harness_node", frame });
+          } else {
+            // the agent is gone
+          }
+        },
+        close: () => {
+          if (open) {
+            open = false;
+            this.agentReceivers.delete(entry.info.id);
+            this.agentConnections.delete(entry.info.id);
+            this.disconnect(connection);
+          } else {
+            // closed already
+          }
+        },
+      };
+      const receive = this.accept(connection);
+      this.agentReceivers.set(entry.info.id, receive);
+      this.agentConnections.set(entry.info.id, connection);
+      return receive;
+    }
+  }
+
   private fromAgent(entry: AgentEntry, record: AgentRecord): void {
+    if (record.type === "harness_node") {
+      this.agentConnection(entry)(record.frame as ClientFrame);
+      return;
+    } else {
+      // a record of the agent's own stream
+    }
     const isResponse = record.type === "harness_response" || record.type === "response";
     const routed = isResponse && typeof record.id === "string" ? entry.requests.get(record.id) : undefined;
     if (routed !== undefined && typeof record.id === "string") {

@@ -1,7 +1,7 @@
 // harness-agent: one pi session in its own process, driven over HAP on fd 3 (a socket pair the node
 // opens; stdout and stderr stay free for diagnostics, so no stray print can corrupt the stream).
 //
-//   harness-agent --cwd <dir> [--session-file <path>] [--parent-session <path>]
+//   harness-agent --cwd <dir> [--session-file <path>] [--parent-session <path>] [--subagent <json>]
 //
 // Exits on EOF of the stream or SIGTERM, after disposing the runtime.
 
@@ -9,7 +9,8 @@ import { Socket } from "node:net";
 import { parseArgs } from "node:util";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
 import type { HapEvent } from "#protocol/hap.ts";
-import type { HarnessState } from "#protocol/state.ts";
+import type { HarnessState, SubagentLaunch } from "#protocol/state.ts";
+import { NodeChildren } from "./children.ts";
 import { createHarnessExtension } from "#extension/index.ts";
 import { HapServer } from "./hap-server.ts";
 import { InteractionHub } from "./interactions.ts";
@@ -22,6 +23,7 @@ async function main(): Promise<void> {
       cwd: { type: "string" },
       "session-file": { type: "string" },
       "parent-session": { type: "string" },
+      subagent: { type: "string" },
       stdio: { type: "boolean" },
     },
   });
@@ -54,13 +56,13 @@ async function main(): Promise<void> {
   };
 
   const hub = new InteractionHub(emit);
+  const children = new NodeChildren((frame) => write({ type: "harness_node", frame }));
   const { factory, controller } = createHarnessExtension({
     interactions: hub,
     publishState: (state: HarnessState) => emit({ type: "harness_state", state }),
     dataDir: home,
-    spawnChild: async () => {
-      throw new Error("child agents are not available yet");
-    },
+    children,
+    subagent: values.subagent !== undefined ? (JSON.parse(values.subagent) as SubagentLaunch) : undefined,
   });
 
   const layout = bundleLayout();
@@ -77,11 +79,12 @@ async function main(): Promise<void> {
     process.stderr.write(`[harness-agent] ${diagnostic.type}: ${diagnostic.message}\n`);
   }
 
-  server = new HapServer({ runtime, controller, hub, harnessVersion: layout.version, output: write });
+  server = new HapServer({ runtime, controller, hub, harnessVersion: layout.version, output: write, onNodeFrame: (frame) => children.receive(frame) });
   await server.start();
   for (const event of pending.splice(0)) {
     server.emit(event);
   }
+  children.ready();
 
   let stopping = false;
   const shutdown = async (code: number): Promise<void> => {

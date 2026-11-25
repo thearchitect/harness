@@ -110,10 +110,13 @@ export type HapEvent =
   | { type: "harness_component_render"; componentId: string; lines: string[] }
   | { type: "harness_component_close"; componentId: string };
 
-/** What the node tells its agent about the clients attached in full (node → agent). */
-export type NodeToAgentRecord = { type: "harness_clients"; componentBridge: number };
+/**
+ * Node → agent: the clients attached in full; and the node's frames for the agent's own connection
+ * to its node (an agent is a client of its node for its subagents).
+ */
+export type NodeToAgentRecord = { type: "harness_clients"; componentBridge: number } | { type: "harness_node"; frame: unknown };
 
-/** Requests the agent makes to its node (answered with a harness_response on the agent's stdin). */
-export type AgentToNodeRequest = { type: "harness_spawn_child"; id: string; profile: string; brief: string; cwd: string };
+/** Agent → node: a frame of the agent's own client connection to its node (node.ts ClientFrame). */
+export type AgentToNodeRecord = { type: "harness_node"; frame: unknown };
 
-export type HapRecord = HapRequest | HapEvent | AgentToNodeRequest | NodeToAgentRecord | PiRecord;
+export type HapRecord = HapRequest | HapEvent | AgentToNodeRecord | NodeToAgentRecord | PiRecord;

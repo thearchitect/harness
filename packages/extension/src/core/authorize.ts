@@ -25,6 +25,8 @@ export type AuthorizeDeps = {
   madness(): boolean;
   /** Steers the operator's comment to the running model (a gate comment reaches it twice: here and in the tool result). */
   steer(comment: string): void;
+  /** Who asks, when this agent is a subagent (the gate shows "subagent <profile>"). */
+  by?: string;
 };
 
 /** The session workspace of ctx's session. */
@@ -99,7 +101,7 @@ export function createAuthorizer(deps: AuthorizeDeps): Authorize {
       case "ask": {
         const answer = await deps.interactions.ask(
           "gate",
-          { kind: gateKind(request.tool), title: GATE_TITLE, by: request.by, paths: reviewed, detail: clipDetail(request.lines) },
+          { kind: gateKind(request.tool), title: GATE_TITLE, by: request.by ?? deps.by, paths: reviewed, detail: clipDetail(request.lines) },
           { signal: ctx.signal, toolCallId: request.toolCallId },
         );
         if (answer === undefined || answer.action === "stop") {

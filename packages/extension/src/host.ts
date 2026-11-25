@@ -1,10 +1,10 @@
 // What the harness extension needs from the process that runs it (harness-agent, or a test).
 // The extension never talks to clients, nodes or transports: it asks the operator through
-// `interactions`, publishes its state through `publishState`, and spawns subagents through
-// `spawnChild`; the host turns these into HAP records.
+// `interactions`, publishes its state through `publishState`, and starts subagents' agents through
+// `children`; the host turns these into HAP records and node requests.
 
 import type { InteractionKind, InteractionMap } from "#protocol/interactions.ts";
-import type { HarnessState } from "#protocol/state.ts";
+import type { HarnessState, SubagentLaunch } from "#protocol/state.ts";
 
 export type AskOptions = {
   /** Closes the interaction (reason "cancelled") when aborted; the ask then resolves undefined. */
@@ -21,9 +21,38 @@ export interface Interactions {
   ask<K extends InteractionKind>(kind: K, payload: InteractionMap[K]["payload"], options?: AskOptions): Promise<InteractionMap[K]["answer"] | undefined>;
 }
 
-export type ChildSpawn = { profile: string; brief: string; cwd: string };
+/** A child agent's record (pi's events and harness's records, as HAP carries them). */
+export type ChildRecord = { type: string; [key: string]: unknown };
 
-export type ChildHandle = { agentId: string; sessionId: string };
+export type ChildLaunch = {
+  cwd: string;
+  /** Continue this stored session of the subagent; a new session when absent. */
+  sessionFile?: string;
+  /** Outlives the parent's agent (finishes and reports later). */
+  background: boolean;
+  subagent: Omit<SubagentLaunch, "depth">;
+};
+
+/** A subagent's agent on the node, followed by its parent. */
+export interface ChildAgent {
+  readonly agentId: string;
+  readonly sessionId: string;
+  readonly sessionFile: string | undefined;
+  /** Whether a run of the child was on when it was followed (a continued background subagent). */
+  readonly running: boolean;
+  /** Every record of the child from now on. */
+  onRecord(listener: (record: ChildRecord) => void): () => void;
+  /** A HAP request or pi command for the child; resolves with its answer. */
+  call<T = unknown>(record: { type: string; [key: string]: unknown }): Promise<T>;
+  /** Stops following the child; it keeps running. */
+  detach(): Promise<void>;
+  /** Stops the child's agent (its session stays). */
+  close(): Promise<void>;
+}
+
+export interface ChildAgents {
+  start(launch: ChildLaunch): Promise<ChildAgent>;
+}
 
 export interface ExtensionHost {
   readonly interactions: Interactions;
@@ -31,6 +60,8 @@ export interface ExtensionHost {
   publishState(state: HarnessState): void;
   /** The user's data directory (`~/.harness`). */
   readonly dataDir: string;
-  /** Asks the node for a child agent (a `harness` subagent). */
-  spawnChild(spawn: ChildSpawn): Promise<ChildHandle>;
+  /** Agents of subagents (engine `harness`), started through the node. */
+  readonly children: ChildAgents;
+  /** This agent's own launch when it runs as a subagent. */
+  readonly subagent: SubagentLaunch | undefined;
 }

@@ -27,6 +27,8 @@ export type HapServerOptions = {
   hub: InteractionHub;
   harnessVersion: string;
   output: Output;
+  /** A frame of the agent's own client connection to its node. */
+  onNodeFrame(frame: unknown): void;
 };
 
 export class HapServer {
@@ -34,6 +36,7 @@ export class HapServer {
   private readonly controller: HarnessController;
   private readonly hub: InteractionHub;
   private readonly harnessVersion: string;
+  private readonly onNodeFrame: (frame: unknown) => void;
   private readonly output: Output;
   private unsubscribe: (() => void) | undefined;
   private partialMessage: unknown;
@@ -46,6 +49,7 @@ export class HapServer {
     this.controller = options.controller;
     this.hub = options.hub;
     this.harnessVersion = options.harnessVersion;
+    this.onNodeFrame = options.onNodeFrame;
     this.output = options.output;
     this.bridge = new ComponentBridge((event) => this.emit(event), getTheme);
   }
@@ -199,8 +203,8 @@ export class HapServer {
       } catch (error) {
         this.output({ type: "harness_response", id: request.id, ok: false, error: toProtocolError(error) });
       }
-    } else if (record.type === "harness_response") {
-      // answers to this agent's own requests to the node (spawn): routed by the caller
+    } else if (record.type === "harness_node") {
+      this.onNodeFrame(record.frame);
     } else if (record.type === "harness_clients") {
       this.bridge.clients = Number(record.componentBridge ?? 0);
     } else {
@@ -272,7 +276,12 @@ export class HapServer {
       case "harness_task_output":
         return this.controller.supervisor.output(request.taskId, { offset: request.offset });
       case "harness_subagent_send":
-        throw new HarnessError("not_found", `no live subagent session ${request.session}`);
+        try {
+          await this.controller.steerSubagent(request.session, request.text);
+          return {};
+        } catch (error) {
+          throw new HarnessError("not_found", error instanceof Error ? error.message : String(error));
+        }
       case "harness_complete":
         return { items: await complete(this.session.sessionManager.getCwd(), request.prefix) };
       case "harness_component_input":

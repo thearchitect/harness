@@ -31,11 +31,16 @@ export type OverlayKind = "panel" | "tabs" | "items";
 
 export type StatusLine = { level: "info" | "warning" | "error" | "working"; text: string };
 
-export type MainZone = { kind: "transcript" } | { kind: "task"; taskId: string; task: TaskInfo | undefined; output: string } | { kind: "subagent"; id: string; subagent: SubagentInfo | undefined };
+/** A subagent: its row in the session's state, and for a `harness` subagent its own agent's transcript. */
+export type MainZone =
+  | { kind: "transcript" }
+  | { kind: "task"; taskId: string; task: TaskInfo | undefined; output: string }
+  | { kind: "subagent"; id: string; subagent: SubagentInfo | undefined; agent: AgentModel | undefined };
 
 export type EditorZone =
   | { kind: "editor"; mode: RunMode }
-  | { kind: "interaction"; request: InteractionRequest }
+  /** `from`: the subagent that asks (an interaction of a subagent of this session). */
+  | { kind: "interaction"; request: InteractionRequest; from?: string }
   | { kind: "picker"; picker: Picker }
   /** An extension's component drawn in the agent (terminal clients only; others say they cannot show it). */
   | { kind: "component"; component: BridgedComponent };
@@ -211,16 +216,17 @@ export class Workbench {
     const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
     const items = tab !== undefined ? this.items(tab, agent?.state) : [];
     const selected = tab !== undefined ? this.selectedItem(tab) : "session";
-    const main = this.mainZone(selected, agent);
+    const main = this.mainZone(selected, agent, tab);
     this.followTask(main.kind === "task" ? main.taskId : undefined);
-    const request = agent?.interactions[0];
+    const asking = tab?.agent !== undefined ? this.asking(tab.node, tab.agent.id, agent) : undefined;
+    const request = asking?.request;
     const inline = agent?.components.filter((component) => !component.overlay).at(-1);
     const componentOverlay = agent?.components.filter((component) => component.overlay).at(-1);
     const editorZone: EditorZone =
       this.picker !== undefined
         ? { kind: "picker", picker: this.picker }
         : request !== undefined
-          ? { kind: "interaction", request }
+          ? { kind: "interaction", request, ...(asking?.from !== undefined ? { from: asking.from } : {}) }
           : inline !== undefined
             ? { kind: "component", component: inline }
             : { kind: "editor", mode: agent?.running === true ? agent.state.mode : editor.mode };
@@ -264,17 +270,57 @@ export class Workbench {
     };
   }
 
-  private mainZone(selected: string, agent: AgentModel | undefined): MainZone {
-    if (selected === "session" || agent === undefined) {
+  private mainZone(selected: string, agent: AgentModel | undefined, tab: Tab | undefined): MainZone {
+    if (selected === "session" || agent === undefined || tab === undefined) {
       return { kind: "transcript" };
     } else {
       const task = agent.state.tasks.find((candidate) => candidate.id === selected);
       const subagent = agent.state.subagents.find((candidate) => candidate.session === selected);
-      if (subagent !== undefined) {
-        return { kind: "subagent", id: selected, subagent };
+      const childId = subagent?.agentId ?? (selected.startsWith("agent:") ? selected.slice("agent:".length) : undefined);
+      if (subagent !== undefined || childId !== undefined) {
+        const child = childId !== undefined ? this.client.agents.get(agentKey(tab.node, childId)) : undefined;
+        if (child !== undefined && !this.client.full.has(agentKey(tab.node, child.id))) {
+          void this.client.follow(tab.node, child.id).catch(() => undefined);
+        } else {
+          // followed already, or its agent is gone
+        }
+        return { kind: "subagent", id: selected, subagent, agent: child !== undefined ? this.client.full.get(agentKey(tab.node, child.id)) : undefined };
       } else {
         return { kind: "task", taskId: selected, task, output: this.taskOutputs.get(selected) ?? "" };
       }
+    }
+  }
+
+  /** The agents of a session's subagents on its node, subagents of subagents included. */
+  private descendants(node: string, agentId: string): AgentInfo[] {
+    const children = [...this.client.agents.values()].filter((candidate) => candidate.node === node && candidate.parent === agentId);
+    return children.flatMap((child) => [child, ...this.descendants(node, child.id)]);
+  }
+
+  /**
+   * The interaction the session waits on: its own first, then its subagents' (followed in full while
+   * they ask, so their requests are known).
+   */
+  private asking(node: string, agentId: string, agent: AgentModel | undefined): { request: InteractionRequest; from?: string } | undefined {
+    const own = agent?.interactions[0];
+    if (own !== undefined) {
+      return { request: own };
+    } else {
+      for (const child of this.descendants(node, agentId)) {
+        const key = agentKey(node, child.id);
+        if (child.summary.waiting > 0 && !this.client.full.has(key)) {
+          void this.client.follow(node, child.id).catch(() => undefined);
+        } else {
+          // not asking, or followed already
+        }
+        const request = this.client.full.get(key)?.interactions[0];
+        if (request !== undefined) {
+          return { request, from: child.subagent?.profile ?? "subagent" };
+        } else {
+          // this one does not ask
+        }
+      }
+      return undefined;
     }
   }
 
@@ -651,8 +697,12 @@ export class Workbench {
   async answer(interactionId: string, value: unknown): Promise<void> {
     const tab = this.activeTab();
     if (tab?.agent !== undefined) {
+      // the session's own interaction, or one of its subagents'
+      const owner = [tab.agent, ...this.descendants(tab.node, tab.agent.id)].find((candidate) =>
+        this.client.full.get(agentKey(tab.node, candidate.id))?.interactions.some((request) => request.id === interactionId),
+      );
       try {
-        await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_interaction_response", interactionId, answer: value });
+        await this.client.connection(tab.node).call((owner ?? tab.agent).id, { type: "harness_interaction_response", interactionId, answer: value });
       } catch (error) {
         this.notify("error", `answer not delivered: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -667,8 +717,23 @@ export class Workbench {
     if (tab?.agent === undefined) {
       this.notify("warning", "no session here: Ctrl+T starts one, Ctrl+O opens one");
     } else {
+      const selected = this.selectedItem(tab);
+      const agent = this.client.full.get(agentKey(tab.node, tab.agent.id));
+      const subagent = agent?.state.subagents.find((candidate) => candidate.session === selected);
+      const task = agent?.state.tasks.find((candidate) => candidate.id === selected);
+      const nested = selected.startsWith("agent:") ? this.client.agents.get(agentKey(tab.node, selected.slice("agent:".length))) : undefined;
+      const api = this.client.connection(tab.node);
       try {
-        await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_prompt", text, mode });
+        if (subagent !== undefined) {
+          // the operator's steering of a live subagent (C12), through the session that runs it
+          await api.call(tab.agent.id, { type: "harness_subagent_send", session: subagent.session, text });
+        } else if (nested?.parent !== undefined) {
+          await api.call(nested.parent, { type: "harness_subagent_send", session: nested.sessionId, text });
+        } else if (task !== undefined) {
+          await api.call(tab.agent.id, { type: "harness_task_input", taskId: task.id, data: `${text}\n` });
+        } else {
+          await api.call(tab.agent.id, { type: "harness_prompt", text, mode });
+        }
       } catch (error) {
         this.notify("error", error instanceof Error ? error.message : String(error));
       }
@@ -679,10 +744,12 @@ export class Workbench {
     return tabRecords(this.client.settings).map((record) => {
       const agent = [...this.client.agents.values()].find((candidate) => candidate.node === record.node && candidate.sessionId === record.sessionId);
       const unavailable = this.client.offline.has(record.node) ? `node ${record.node} is offline` : this.client.connections.has(record.node) ? undefined : `node ${record.node} is not connected`;
+      // a subagent that waits for the operator makes its session wait too
+      const childWaits = agent !== undefined && unavailable === undefined && this.descendants(record.node, agent.id).some((child) => child.summary.waiting > 0);
       return {
         ...record,
         agent,
-        glyph: glyphOf(agent?.summary, record.seen, unavailable),
+        glyph: childWaits ? "◆" : glyphOf(agent?.summary, record.seen, unavailable),
         title: agent?.summary.title !== undefined && agent.summary.title !== "" ? agent.summary.title : agent?.name ?? record.cwd.split("/").pop() ?? record.sessionId.slice(0, 8),
         mode: agent?.summary.mode ?? "plan",
         unavailable,
@@ -708,14 +775,31 @@ export class Workbench {
       glyph: taskGlyph(task, seen),
       depth: 0,
     }));
-    const subagents: Item[] = (state?.subagents ?? []).map((subagent) => ({
-      kind: "subagent",
-      id: subagent.session,
-      label: `${subagent.profile} ${subagent.session.slice(0, 4)}`,
-      detail: subagent.state,
-      glyph: subagentGlyph(subagent),
-      depth: subagent.parent !== undefined ? 1 : 0,
-    }));
+    // a harness subagent's own agent tells its state live, and its own subagents follow it indented
+    const subagents: Item[] = (state?.subagents ?? []).flatMap((subagent) => {
+      const child = subagent.agentId !== undefined ? this.client.agents.get(agentKey(tab.node, subagent.agentId)) : undefined;
+      const live = child !== undefined && (subagent.state === "running" || subagent.state === "waiting");
+      const row: Item = {
+        kind: "subagent",
+        id: subagent.session,
+        label: `${subagent.profile} ${subagent.session.slice(0, 4)}`,
+        detail: subagent.costUsd !== undefined && subagent.costUsd > 0 ? `${subagent.state} $${subagent.costUsd.toFixed(2)}` : subagent.state,
+        glyph: live && child.summary.waiting > 0 ? "◆" : subagentGlyph(subagent),
+        depth: 0,
+      };
+      const nested: Item[] =
+        child !== undefined
+          ? this.descendants(tab.node, child.id).map((grandchild) => ({
+              kind: "subagent" as const,
+              id: `agent:${grandchild.id}`,
+              label: `${grandchild.subagent?.profile ?? "subagent"} ${grandchild.sessionId.slice(0, 4)}`,
+              detail: grandchild.summary.status,
+              glyph: glyphOf(grandchild.summary, undefined, undefined),
+              depth: 1,
+            }))
+          : [];
+      return [row, ...nested];
+    });
     return [session, ...tasks, ...subagents];
   }
 

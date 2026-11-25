@@ -6,7 +6,7 @@
 
 import { getShellConfig } from "@earendil-works/pi-coding-agent";
 import { spawn as nodeSpawn, type ChildProcess } from "node:child_process";
-import { createWriteStream, mkdirSync, type WriteStream } from "node:fs";
+import { createWriteStream, existsSync, mkdirSync, readFileSync, type WriteStream } from "node:fs";
 import { dirname } from "node:path";
 import { systemClock, type Clock } from "#protocol/clock.ts";
 import type { NotifyPolicy, TaskInfo, TaskState } from "#protocol/state.ts";
@@ -70,8 +70,12 @@ export type StartOptions = {
 
 export type SupervisorDeps = { publish(tasks: TaskInfo[]): void; spawner?: Spawner; clock?: Clock };
 
+/** Where a mirrored task lives: another program runs it (a Claude Code session's background commands). */
+export type MirroredSource = { stop(id: string): void; outputFile(id: string): string | undefined };
+
 export class Supervisor {
   private readonly tasks = new Map<string, Task>();
+  private readonly mirrored = new Map<string, { info: TaskInfo; source: MirroredSource }>();
   private readonly listeners = new Set<(event: TaskEvent) => void>();
   private readonly publish: (tasks: TaskInfo[]) => void;
   private readonly spawner: Spawner;
@@ -90,11 +94,26 @@ export class Supervisor {
   }
 
   list(): TaskInfo[] {
-    return [...this.tasks.values()].map((task) => task.info);
+    return [...[...this.tasks.values()].map((task) => task.info), ...[...this.mirrored.values()].map((task) => task.info)];
   }
 
   get(id: string): TaskInfo | undefined {
-    return this.tasks.get(id)?.info;
+    return this.tasks.get(id)?.info ?? this.mirrored.get(id)?.info;
+  }
+
+  /**
+   * A task of another program, as that program reports it (source `claude`): listed with the
+   * session's own tasks, stopped through its source, its end notifies like an own task's.
+   */
+  mirror(info: TaskInfo, source: MirroredSource): void {
+    const previous = this.mirrored.get(info.id)?.info;
+    this.mirrored.set(info.id, { info, source });
+    if (info.endedAt !== undefined && previous?.endedAt === undefined) {
+      this.emit({ kind: "exit", task: info });
+    } else {
+      // started, or a change before its end
+    }
+    this.changed();
   }
 
   logPath(id: string): string | undefined {
@@ -209,6 +228,18 @@ export class Supervisor {
 
   /** The output kept in memory: from a character offset (of the whole stream), or the last lines, optionally filtered. */
   output(id: string, query: { offset?: number; tailLines?: number; grep?: RegExp }): { text: string; offset: number; next: number; dropped: boolean } {
+    const mirrored = this.mirrored.get(id);
+    if (mirrored !== undefined) {
+      const file = mirrored.source.outputFile(id);
+      const text = file !== undefined && existsSync(file) ? readFileSync(file, "utf8") : "";
+      const from = Math.min(query.offset ?? 0, text.length);
+      const lines = text.slice(from).split("\n");
+      const selected = query.grep !== undefined ? lines.filter((line) => query.grep?.test(line)) : lines;
+      const shown = query.offset === undefined && query.tailLines !== undefined ? selected.slice(-query.tailLines) : selected;
+      return { text: shown.join("\n"), offset: from, next: text.length, dropped: false };
+    } else {
+      // an own task
+    }
     const task = this.require(id);
     const next = task.tailStart + task.tail.length;
     if (query.offset !== undefined) {
@@ -225,6 +256,11 @@ export class Supervisor {
 
   /** Waits for the first of: exit, a line matching the pattern, the timeout, the signal. */
   wait(id: string, condition: WaitCondition, signal?: AbortSignal): Promise<WaitOutcome> {
+    if (this.mirrored.has(id)) {
+      throw new Error(`${id} is a Claude Code task: its end notifies you; task_output reads its output`);
+    } else {
+      // an own task
+    }
     const task = this.require(id);
     if (task.info.endedAt !== undefined && condition.exit) {
       return Promise.resolve({ kind: "exit", task: task.info });
@@ -271,6 +307,11 @@ export class Supervisor {
   }
 
   input(id: string, text: string): void {
+    if (this.mirrored.has(id)) {
+      throw new Error(`${id} is a Claude Code task: it takes no input from here`);
+    } else {
+      // an own task
+    }
     const task = this.require(id);
     if (task.info.endedAt !== undefined || task.process.stdin === null || task.process.stdin.destroyed) {
       throw new Error(`task ${id} has ended: it takes no input`);
@@ -281,6 +322,13 @@ export class Supervisor {
 
   /** Stops the task's process group: the signal, then SIGKILL after the grace period. */
   stop(id: string, signal: NodeJS.Signals = "SIGTERM"): TaskInfo {
+    const mirrored = this.mirrored.get(id);
+    if (mirrored !== undefined) {
+      mirrored.source.stop(id);
+      return mirrored.info;
+    } else {
+      // an own task
+    }
     const task = this.require(id);
     if (task.info.endedAt !== undefined) {
       return task.info;

@@ -5,7 +5,7 @@
 
 import type { ProtocolError } from "./errors.ts";
 import type { HapRecord, SnapshotData } from "./hap.ts";
-import type { RunMode } from "./state.ts";
+import type { RunMode, SubagentLaunch } from "./state.ts";
 
 /** How much of an agent a client follows: the whole stream, or its summary only. */
 export type AttachLevel = "full" | "summary";
@@ -34,6 +34,8 @@ export type AgentInfo = {
   name?: string;
   /** Agent id of the parent of a subagent. */
   parent?: string;
+  /** A subagent's profile; `background` ones outlive their parent. */
+  subagent?: { profile: string; background: boolean; depth: number };
   startedAt: number;
   summary: AgentSummary;
 };
@@ -59,7 +61,8 @@ export type NodeOps = {
   nodes_list: { args: Record<string, never>; result: { nodes: NodeInfo[] } };
   sessions_list: { args: { cwd?: string }; result: { sessions: SessionListItem[] } };
   agents_list: { args: Record<string, never>; result: { agents: AgentInfo[] } };
-  agent_start: { args: { cwd: string; sessionFile?: string; parent?: string }; result: { agent: AgentInfo } };
+  /** `subagent`: started by an agent for its subagent (the node sets the parent and the depth). */
+  agent_start: { args: { cwd: string; sessionFile?: string; subagent?: SubagentLaunch; background?: boolean }; result: { agent: AgentInfo } };
   /** At the full level the answer carries the snapshot; the stream continues after it. */
   agent_attach: { args: { agent: string; level: AttachLevel }; result: { agent: AgentInfo; snapshot?: SnapshotData } };
   agent_detach: { args: { agent: string }; result: Record<string, never> };

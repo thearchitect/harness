@@ -33,9 +33,37 @@ export type TaskInfo = {
 
 export type NotifyPolicy = "wake" | "queue" | "none";
 
+export function isNotifyPolicy(value: unknown): value is NotifyPolicy {
+  return value === "wake" || value === "queue" || value === "none";
+}
+
 export type SubagentEngine = "harness" | "claude";
 
 export type SubagentState = "running" | "waiting" | "done" | "stopped" | "failed";
+
+/**
+ * How a child agent runs as a subagent: the parent resolves its profile into this, the node passes
+ * it to the child (`agent_start { subagent }`) and sets `depth` from the chain of parents.
+ */
+export type SubagentLaunch = {
+  profile: string;
+  /** The profile's role: an extra system prompt section of the child. */
+  role: string;
+  /** The mode of every run of the child; undefined: each prompt names its mode (the parent's). */
+  mode?: RunMode;
+  /** A model reference (model-ref.ts) the child selects. */
+  model?: string;
+  /** Tool names and masks (`*`); `ctx_*` are denied always. */
+  tools: { allow?: string[]; deny?: string[] };
+  /** Profiles the child may call itself (the `subagent` tool only when non-empty and depth < 2). */
+  subagents: string[];
+  madness: boolean;
+  /** 1 for a subagent of a session, 2 for a subagent's subagent; set by the node. */
+  depth: number;
+};
+
+/** Subagents of subagents at most: a child of depth MAX_SUBAGENT_DEPTH cannot call subagents. */
+export const MAX_SUBAGENT_DEPTH = 2;
 
 export type SubagentInfo = {
   /** Session id of the subagent: a pi session (harness) or a Claude Code session. */
@@ -51,7 +79,12 @@ export type SubagentInfo = {
   startedAt: number;
   endedAt?: number;
   costUsd?: number;
+  /** The latest steps (at most SUBAGENT_STEPS_SHOWN) and the latest text: what a client shows of a `claude` subagent. */
+  steps?: string[];
+  text?: string;
 };
+
+export const SUBAGENT_STEPS_SHOWN = 50;
 
 export type HarnessState = {
   variant: Variant;

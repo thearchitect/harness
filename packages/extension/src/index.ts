@@ -12,7 +12,7 @@
 import type { BeforeAgentStartEventResult, ExtensionAPI, ExtensionContext, ExtensionFactory, InputEventResult, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { HarnessState, RunMode, Variant } from "#protocol/state.ts";
+import { MAX_SUBAGENT_DEPTH, type HarnessState, type RunMode, type SubagentLaunch, type Variant } from "#protocol/state.ts";
 import type { ExtensionHost } from "./host.ts";
 import { createAuthorizer, isScratchPath, scratchWorkspaceRoot, type Authorize } from "./core/authorize.ts";
 import { Interrupts } from "./core/interrupts.ts";
@@ -23,6 +23,11 @@ import { bundledMcpServers, lspToolchain, readManifest } from "./deps.ts";
 import { entryRenderers, type FinishedEntryData, type ModeEntryData, type SystemPromptEntryData } from "./presentation/modes.ts";
 import { lastModelRef, MODEL_REF_ENTRY, ModelRefs } from "./models/refs.ts";
 import { ENTRY, StateStore } from "./state/store.ts";
+import { declareTools, isToolAllowed, roleSection } from "./subagents/child.ts";
+import { claudeEngine } from "./subagents/engines/claude/engine.ts";
+import { harnessEngine } from "./subagents/engines/harness.ts";
+import { loadRegistry, type Registry } from "./subagents/registry.ts";
+import { Subagents } from "./subagents/tool.ts";
 import { Supervisor } from "./supervisor/supervisor.ts";
 import { registerTaskTools } from "./supervisor/tools.ts";
 import { registerAskSecret } from "./tools/ask_secret.ts";
@@ -47,6 +52,8 @@ export type HarnessController = {
   setModelRef(ref: string): Promise<{ resolved: string }>;
   /** "/-": stops the long calls in flight and steers the reason; returns how many calls stopped. */
   interrupt(reason: string): number;
+  /** The operator's message to a live subagent of this session (C12). */
+  steerSubagent(session: string, text: string): Promise<void>;
   state(): HarnessState;
   supervisor: Supervisor;
 };
@@ -61,6 +68,13 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
   let live: Live | undefined;
   let nextMode: RunMode | undefined;
   let modelRefs: ModelRefs | undefined;
+  let subagents: Subagents | undefined;
+  let registry: Registry = { profiles: new Map(), problems: [] };
+  const launch = host.subagent;
+  const engines = {
+    harness: harnessEngine(host.children),
+    claude: claudeEngine({ interactions: host.interactions, dataDir: host.dataDir, mirror: (task, source) => supervisor.mirror(task, source) }),
+  };
 
   function rememberModel(ref: string): void {
     try {
@@ -134,6 +148,14 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       return stopped;
     },
 
+    async steerSubagent(session, text) {
+      if (subagents === undefined) {
+        throw new Error("no session yet");
+      } else {
+        await subagents.steer(session, text);
+      }
+    },
+
     state() {
       return store.current;
     },
@@ -151,6 +173,30 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       mode: () => store.current.mode,
       madness: () => store.current.madness,
       steer,
+      ...(launch !== undefined ? { by: launch.profile } : {}),
+    });
+    const own = new Subagents(pi, {
+      registry: () => registry,
+      engines,
+      interrupts,
+      mode: () => store.current.mode,
+      madness: () => store.current.madness,
+      rows: () => store.current.subagents,
+      publish: (rows) => store.update({ subagents: rows }),
+      ...(launch !== undefined ? { callable: launch.depth < MAX_SUBAGENT_DEPTH ? launch.subagents : [] } : {}),
+    });
+    subagents = own;
+    const loadProfiles = (ctx: ExtensionContext): void => {
+      registry = loadRegistry({ cwd: ctx.cwd, dataDir: host.dataDir, projectTrusted: ctx.isProjectTrusted() });
+      for (const problem of registry.problems) {
+        ctx.ui.notify(`subagent profile not loaded: ${problem}`, "warning");
+      }
+    };
+    // briefing skills of the profiles this agent may call
+    pi.on("resources_discover", (_event, ctx) => {
+      loadProfiles(ctx);
+      const callable = launch !== undefined ? (launch.depth < MAX_SUBAGENT_DEPTH ? launch.subagents : []) : [...registry.profiles.keys()];
+      return { skillPaths: callable.map((name) => registry.profiles.get(name)?.skillPath).filter((path): path is string => path !== undefined) };
     });
     // toolCallId -> the operator's comment on an approved change: opens the tool's result
     const gateComments = new Map<string, string>();
@@ -180,9 +226,12 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       promptProblemReported = false;
       gateComments.clear();
       interrupts.clear();
-      store.reset(restoreState(pi, ctx, defaultsPath, store.current));
-      // the session's model reference resolves again; a new session takes the default reference
-      const defaultRef = loadDefaults(defaultsPath).defaults.model;
+      store.reset(launch !== undefined ? restoreChildState(store.current, launch) : restoreState(pi, ctx, defaultsPath, store.current));
+      loadProfiles(ctx);
+      own.register();
+      void own.restore(ctx);
+      // the session's model reference resolves again; a new session takes the default reference (a subagent: its profile's)
+      const defaultRef = launch !== undefined ? launch.model : loadDefaults(defaultsPath).defaults.model;
       const fresh = !ctx.sessionManager.getBranch().some((entry) => entry.type === "message");
       if (fresh && defaultRef !== undefined && lastModelRef(ctx) === undefined) {
         void refs.apply(ctx, defaultRef).then((outcome) => {
@@ -202,11 +251,12 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
     });
 
     pi.on("session_tree", (_event, ctx) => {
-      store.reset(restoreState(pi, ctx, defaultsPath, store.current));
+      store.reset(launch !== undefined ? restoreChildState(store.current, launch) : restoreState(pi, ctx, defaultsPath, store.current));
     });
 
     pi.on("session_shutdown", () => {
       live = undefined;
+      void own.stopAll();
     });
 
     pi.on("input", (event): InputEventResult => {
@@ -215,7 +265,8 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
         return { action: "continue" };
       } else {
         const marked = modeOfText(event.text, store.current.variant);
-        const requested = nextMode !== undefined ? effectiveMode(nextMode, store.current.variant) : marked.mode;
+        // a subagent's profile may fix the mode of all its runs
+        const requested = launch?.mode ?? (nextMode !== undefined ? effectiveMode(nextMode, store.current.variant) : marked.mode);
         nextMode = undefined;
         // Steering and follow-up messages continue the run in its mode.
         if (event.streamingBehavior === undefined) {
@@ -232,7 +283,17 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       cycleStart = Date.now();
       baselineCost = totalSessionCost(ctx.sessionManager.getEntries());
       const workspaceRoot = await scratchWorkspaceRoot(ctx);
+      if (launch !== undefined) {
+        declareTools(pi, launch);
+      } else {
+        // a session's own agent declares every tool
+      }
       const { foreignCustomPrompt } = assembleSystemPrompt(event.systemPromptOptions, { activeTools: pi.getActiveTools(), workspaceRoot });
+      if (launch !== undefined) {
+        event.systemPromptOptions.sections.subagent_role = roleSection(launch);
+      } else {
+        // no role
+      }
       if (foreignCustomPrompt) {
         ctx.ui.notify("[harness] SYSTEM.md (or another extension's customPrompt) appended after the harness preamble.", "info");
       } else {
@@ -291,7 +352,9 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
     });
 
     pi.on("tool_call", async (event, ctx) => {
-      if (event.toolName === "write" || event.toolName === "edit") {
+      if (launch !== undefined && !isToolAllowed(launch, event.toolName)) {
+        return { block: true, reason: `${event.toolName} is not among the tools of the subagent ${launch.profile}` };
+      } else if (event.toolName === "write" || event.toolName === "edit") {
         const path = (event.input as { path?: unknown }).path;
         if (typeof path !== "string" || path === "") {
           return { block: true, reason: `${event.toolName} blocked: File path is required` };
@@ -394,6 +457,11 @@ function registerExtensionParts(pi: ExtensionAPI, host: ExtensionHost, interrupt
   pi.on("resources_discover", () => ({
     skillPaths: [...skills, ...("manifest" in bundle ? Object.values(bundle.manifest.skills) : [])],
   }));
+}
+
+/** A subagent's state: its launch decides madness; it never reads or writes the user's defaults. */
+function restoreChildState(previous: HarnessState, launch: SubagentLaunch): HarnessState {
+  return { ...previous, variant: "advanced", madness: launch.madness, implementer: "self", mode: launch.mode ?? previous.mode };
 }
 
 /** The session's state as its entries hold it; a new session takes the saved defaults and records them. */

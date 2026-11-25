@@ -51,6 +51,8 @@ export const FRAME_SCHEMAS = {
   ),
 } as const;
 
+const Mode = Type.Union([Type.Literal("plan"), Type.Literal("build"), Type.Literal("simple")], { description: "The run's mode" });
+
 const Level = Type.Union([Type.Literal("full"), Type.Literal("summary")], { description: "full: snapshot and live stream; summary: summaries only" });
 
 export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
@@ -61,7 +63,22 @@ export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
     {
       cwd: Str("The session's directory; ~ is the node user's home"),
       sessionFile: Opt(Str("Open this stored session; a new one when absent")),
-      parent: Opt(Str("The parent agent of a subagent")),
+      subagent: Opt(
+        Obj(
+          {
+            profile: Str(),
+            role: Str("An extra system prompt section of the child"),
+            mode: Opt(Mode),
+            model: Opt(Str("A model reference")),
+            tools: Type.Object({ allow: Opt(Type.Array(Str())), deny: Opt(Type.Array(Str())) }),
+            subagents: Type.Array(Str(), { description: "Profiles the child may call" }),
+            madness: Type.Boolean(),
+            depth: Type.Integer({ description: "Set by the node from the chain of parents" }),
+          },
+          "How the child runs as a subagent; only an agent's own connection may start one",
+        ),
+      ),
+      background: Opt(Type.Boolean({ description: "A subagent that outlives its parent" })),
     },
     "Starts an agent (or returns the one serving the session already). → { agent }",
   ),
@@ -75,7 +92,6 @@ export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
   settings_set: Obj({ key: Str("A setting key"), value: Any("Its new value; null removes it") }, "Changes one setting; every client of the user receives a settings event. → { settings }"),
 };
 
-const Mode = Type.Union([Type.Literal("plan"), Type.Literal("build"), Type.Literal("simple")], { description: "The run's mode" });
 const Image = Type.Object({ type: Type.Literal("image"), data: Str("base64"), mimeType: Str() });
 const Request = <P extends Record<string, TSchema>>(type: HapRequestType, properties: P, description: string) =>
   Type.Object({ type: Type.Literal(type), id: Str("Chosen by the client; harness_response carries it back"), ...properties }, { description });

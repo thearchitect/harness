@@ -49,6 +49,9 @@ type PromptConfig = {
   /** Per tool name: the rule that replaces the tool's own promptGuidelines. */
   toolGuidelines: Record<string, string>;
   guidelines: string[];
+  /** Guidelines by name (the `claude` block names the ones it takes). */
+  namedGuidelines: Record<string, string>;
+  claude: { preamble: string; sections: SectionName[]; guidelines: string[] };
 };
 
 /**
@@ -117,18 +120,47 @@ function loadPromptConfig(): PromptConfig {
   } else {
     const top = raw as Record<string, unknown>;
     const sections = textMap(top.sections, "sections");
+    const guidelines = textMap(top.guidelines, "guidelines");
+    const claude = (typeof top.claude === "object" && top.claude !== null ? top.claude : fail("claude must be a mapping")) as Record<string, unknown>;
+    const names = (value: unknown, key: string, known: readonly string[]): string[] =>
+      Array.isArray(value) && value.every((name) => typeof name === "string" && known.includes(name)) ? (value as string[]) : fail(`${key} must list names of ${known.join(", ")}`);
     return {
       preamble: text(top.preamble, "preamble"),
       sections: Object.fromEntries(
         SECTION_NAMES.map((name) => [name, text(sections[name], `sections.${name}`)]),
       ) as Record<SectionName, string>,
       toolGuidelines: textMap(top.tool_guidelines, "tool_guidelines"),
-      guidelines: Object.values(textMap(top.guidelines, "guidelines")),
+      guidelines: Object.values(guidelines),
+      namedGuidelines: guidelines,
+      claude: {
+        preamble: text(claude.preamble, "claude.preamble"),
+        sections: names(claude.sections, "claude.sections", SECTION_NAMES) as SectionName[],
+        guidelines: names(claude.guidelines, "claude.guidelines", Object.keys(guidelines)),
+      },
     };
   }
 }
 
 const PROMPT = loadPromptConfig();
+
+/**
+ * The prompt appended to Claude Code's own (engine `claude`): harness's preamble for Claude, the
+ * profile's role, the `claude` block's sections and guidelines, and the rules of the harness tools
+ * Claude gets (by their MCP names).
+ */
+export function claudeSystemPrompt(workspaceRoot: string, role: string, tools: { name: string; guidelines: string[] }[]): string {
+  const fill = (text: string): string => text.replaceAll("{{WORKSPACE_TMP}}", workspaceRoot);
+  const toolRules = tools.flatMap((tool) => {
+    const rules = PROMPT.toolGuidelines[tool.name] !== undefined ? [PROMPT.toolGuidelines[tool.name] ?? ""] : tool.guidelines;
+    return rules.map((rule) => `- ${tool.name} (mcp__harness__${tool.name}): ${rule.trim()}`);
+  });
+  return [
+    fill(PROMPT.claude.preamble),
+    `<role>\n${role}\n</role>`,
+    ...PROMPT.claude.sections.map((name) => `<${name}>\n${fill(PROMPT.sections[name])}\n</${name}>`),
+    `<rules>\n${[...PROMPT.claude.guidelines.map((name) => `- ${(PROMPT.namedGuidelines[name] ?? "").trim()}`), ...toolRules].join("\n")}\n</rules>`,
+  ].join("\n\n");
+}
 
 /** pi's <tools> format: one `- name: snippet` line per declared tool that has a snippet. */
 function renderTools(declaredTools: string[], toolSnippets: Record<string, string>): string {
