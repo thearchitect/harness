@@ -19,7 +19,7 @@ fonts="$(nix build --no-link --print-out-paths "$ROOT#appFonts")"
 # Gradle builds the native libraries inside node_modules (<package>/android/build): a writable copy
 rm -rf "$APP/node_modules"
 # (the store's modes kept: hermesc and the other tools stay executable)
-cp -r --preserve=mode "$modules/node_modules" "$APP/node_modules"
+cp -R "$modules/node_modules" "$APP/node_modules"
 chmod -R u+w "$APP/node_modules"
 mkdir -p "$APP/assets/fonts"
 cp -f "$fonts"/*.ttf "$APP/assets/fonts/"
