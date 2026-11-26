@@ -48,6 +48,7 @@ import type { Renderers } from "./presentation.ts";
 import { HarnessPanel, PANEL_MIN_WIDTH, PANEL_WIDTH } from "./panel.ts";
 import { hintLine, PickerView } from "./picker.ts";
 import { LoginView } from "./login.ts";
+import { MainScroll, MainSlot } from "./main-area.ts";
 import { LoginCallback } from "./login-callback.ts";
 import { RemoteAutocompleteProvider } from "./remote-complete.ts";
 import { AskUserView } from "./ask-user.ts";
@@ -59,6 +60,9 @@ import { copyToClipboard, getTheme, mermaidTransformer, openBrowser, piKeybindin
 const LEFT_WIDTH = 18;
 /** A tab's scroll comes back within this many frames of its transcript being drawn. */
 const SCROLL_TRIES = 20;
+/** Drawing ahead in the background: slices this long, this far apart (keys and frames come between). */
+const AHEAD_SLICE_MS = 8;
+const AHEAD_PAUSE_MS = 16;
 const SCROLL_RETRY_MS = 20;
 
 export type AppOptions = {
@@ -224,19 +228,19 @@ export class App {
   private readonly strip: SideStrip;
   private newSessionView: NewSessionView | undefined;
   private readonly transcript: TranscriptView;
-  private readonly transcriptScroll: ScrollView;
+  private readonly transcriptScroll: MainScroll;
   private loadingOlder = false;
   private prefillApplied: string | undefined;
   private urlOpened: string | undefined;
   private readonly openUrl: (url: string) => void;
   private readonly loginCallback: LoginCallback;
+  private aheadTimer: NodeJS.Timeout | undefined;
   private readonly copyText: (text: string) => Promise<void>;
   private themeApplied: string | undefined;
   private readonly taskOutput = new Lines();
   /** A subagent's heading over its transcript (the same transcript view as a session's). */
   private readonly subagentHeading = new Lines();
-  private readonly subagentView = new Container();
-  private readonly mainArea = new Container();
+  private readonly mainArea = new MainSlot();
   private readonly aboveEditor = new Container();
   private readonly aboveLines = new Lines();
   private readonly searchBox: SearchBox;
@@ -306,14 +310,22 @@ export class App {
       (query) => this.workbench.setSearch(query),
       () => this.workbench.stepSearch(-1),
     );
-    this.mainArea.addChild(this.transcript);
-    this.subagentView.addChild(this.subagentHeading);
-    this.subagentView.addChild(this.transcript);
+    this.mainArea.show(this.transcript);
     this.aboveEditor.addChild(this.aboveLines);
     this.editorZone.addChild(this.editor);
 
-    this.transcriptScroll = new ScrollView(this.mainArea, { follow: "end", primary: true });
+    this.transcriptScroll = new MainScroll(this.mainArea, () => {
+      // near the top, the older entries come next
+      this.tui.requestRender();
+      setImmediate(() => (this.screen !== undefined && this.screen.zones.main.kind === "transcript" ? this.loadOlderAtTop(this.screen) : undefined));
+    });
+    // the transcript draws what is in sight: the scroll view tells it where that is
+    this.transcript.attach(
+      () => ({ top: this.transcriptScroll.scrollTop, height: this.transcriptScroll.viewportHeight || this.tui.terminal.rows, followingEnd: this.transcriptScroll.isFollowingEnd }),
+      (lines) => this.transcriptScroll.keepPlace(lines),
+    );
     const main = new VStack([
+      { component: this.subagentHeading, basis: "auto" },
       { component: this.transcriptScroll, basis: 0, grow: 1, minSize: 3 },
       { component: this.aboveEditor, basis: "auto" },
       { component: this.editorZone, basis: "auto", shrink: 1, minSize: 3 },
@@ -399,7 +411,7 @@ export class App {
     } else if (this.transcriptScroll.isFollowingEnd) {
       this.workbench.updateView(shown, { scroll: "follow" });
     } else {
-      const at = this.transcript.itemAt(this.transcriptScroll.scrollTop, this.transcriptScroll.getContentWidth(this.tui.terminal.columns));
+      const at = this.transcript.itemAt(this.transcriptScroll.scrollTop);
       this.workbench.updateView(shown, { scroll: at ?? "follow" });
     }
   }
@@ -414,9 +426,11 @@ export class App {
     } else if (anchor === "follow") {
       this.pendingScroll = undefined;
       this.transcriptScroll.scrollToEnd();
+    } else if (this.transcript.width === 0) {
+      // not drawn yet: its places are known after the first frame
+      setTimeout(() => this.refresh(), SCROLL_RETRY_MS).unref();
     } else {
-      const width = this.transcriptScroll.getContentWidth(this.tui.terminal.columns);
-      const line = this.transcript.lineOf(anchor.key, width);
+      const line = this.transcript.lineOf(anchor.key);
       if (line !== undefined) {
         this.pendingScroll = undefined;
         this.scrollToLine(line + anchor.offset, 0);
@@ -445,11 +459,10 @@ export class App {
       return; // nothing to show, or shown
     } else {
       const item = agent.items.find((candidate) => candidate.kind === "message" && JSON.stringify(candidate.message.content ?? "").includes(`"id":${JSON.stringify(focus)}`));
-      const line = item !== undefined ? this.transcript.lineOf(item.key, this.transcriptScroll.getContentWidth(this.tui.terminal.columns)) : undefined;
+      const line = item !== undefined ? this.transcript.lineOf(item.key) : undefined;
       if (line !== undefined) {
         this.focused = key;
-        // under the heading line
-        this.scrollToLine(line + 1, 0);
+        this.scrollToLine(line, 0);
       } else {
         // its transcript is still loading: the next screen tries again
       }
@@ -532,10 +545,36 @@ export class App {
     this.drawOverlays(screen);
     this.updateProgramStatus(screen);
     this.tui.requestRender();
+    this.drawAhead();
+  }
+
+  /** The background's drawing: transcripts' blocks not drawn yet, a slice between frames until none is left. */
+  private drawAhead(): void {
+    if (this.aheadTimer === undefined) {
+      this.aheadTimer = setTimeout(() => {
+        this.aheadTimer = undefined;
+        const before = this.transcript.blockDraws;
+        const more = this.transcript.renderAhead(AHEAD_SLICE_MS);
+        if (this.transcript.blockDraws !== before) {
+          this.tui.requestRender(); // what was drawn shows (heights changed)
+        } else {
+          // nothing was left to draw
+        }
+        if (more) {
+          this.drawAhead();
+        } else {
+          // all drawn until something changes
+        }
+      }, AHEAD_PAUSE_MS);
+      this.aheadTimer.unref();
+    } else {
+      // a slice is due already
+    }
   }
 
   private drawMain(screen: Screen): void {
     const main = screen.zones.main;
+    this.subagentHeading.lines = []; // a subagent's view sets its own
     switch (main.kind) {
       case "transcript": {
         this.swapMain(this.transcript);
@@ -571,12 +610,13 @@ export class App {
         // its transcript (a harness subagent's session, a claude subagent's stream), steered from the editor
         this.subagentHeading.lines = [getTheme().fg("dim", ` ${subagentHeading(main)} · Alt+↑ back`)];
         if (main.agent !== undefined) {
-          this.swapMain(this.subagentView);
+          this.swapMain(this.transcript);
           this.transcript.show(main.agent);
           this.focusCall(main.agent, main.focus);
         } else {
           // its agent is gone: the heading alone
-          this.swapMain(this.subagentHeading);
+          this.swapMain(this.taskOutput);
+          this.taskOutput.lines = [];
         }
         break;
       }
@@ -597,12 +637,7 @@ export class App {
   }
 
   private swapMain(component: Component): void {
-    if (this.mainArea.children[0] !== component) {
-      this.mainArea.clear();
-      this.mainArea.addChild(component);
-    } else {
-      // shown already
-    }
+    this.mainArea.show(component);
   }
 
   /**
@@ -612,10 +647,20 @@ export class App {
   /** The load of older entries under way, if any (drivers wait for it). */
   olderLoad: Promise<void> | undefined;
 
+  /** Transcript blocks drawn so far (tests check that a frame's work does not grow with the session). */
+  get blockDraws(): number {
+    return this.transcript.blockDraws;
+  }
+
+  /** Whether the background drew every transcript block it has (nothing is due). */
+  get drawnAhead(): boolean {
+    return this.aheadTimer === undefined;
+  }
+
   /** Whether the whole transcript fits on the screen (then its top is on the screen too). */
   private transcriptFits(): boolean {
     const height = this.transcriptScroll.viewportHeight;
-    return height > 0 && this.transcript.render(this.transcriptScroll.getContentWidth(this.tui.terminal.columns)).length <= height;
+    return height > 0 && this.transcript.height <= height;
   }
 
   private loadOlderAtTop(screen: Screen): void {
@@ -624,15 +669,15 @@ export class App {
     const first = agent?.items[0]?.key;
     if (this.loadingOlder || agent === undefined || tab?.agent === undefined || agent.cursor === undefined || first === undefined) {
       return; // loading, nothing older, or nothing shown
-    } else if (this.transcriptScroll.scrollTop > 0 || (this.transcriptScroll.isFollowingEnd && !this.transcriptFits())) {
-      return; // not at the top (a transcript shorter than the screen is at its top while it follows the end)
+    } else if (this.transcriptScroll.scrollTop >= 2 * this.transcriptScroll.viewportHeight || (this.transcriptScroll.isFollowingEnd && !this.transcriptFits())) {
+      return; // two screens or more from the top (a transcript shorter than the screen is at its top while it follows the end)
     } else {
       this.loadingOlder = true;
       this.olderLoad = this.client
         .loadOlder(tab.node, tab.agent.id)
         .then(() => {
           this.transcript.show(agent);
-          const line = this.transcript.lineOf(first, this.transcriptScroll.getContentWidth(this.tui.terminal.columns));
+          const line = this.transcript.lineOf(first);
           if (line !== undefined) {
             this.transcriptScroll.scrollTo(line, { disableFollow: true });
           } else {
@@ -654,7 +699,7 @@ export class App {
     const key = search?.matches[search.index];
     if (key !== undefined && key !== this.searchShownAt) {
       this.searchShownAt = key;
-      const line = this.transcript.lineOf(key, this.transcriptScroll.getContentWidth(this.tui.terminal.columns));
+      const line = this.transcript.lineOf(key);
       if (line !== undefined) {
         this.transcriptScroll.scrollTo(line, { disableFollow: true });
       } else {
@@ -926,6 +971,10 @@ export class App {
       transformers: () => [mermaid, ...this.renderers.markdownTransformers],
       tools: () => ({ showImages: this.settings.getShowImages(), imageWidthCells: this.settings.getImageWidthCells(), outputPad: this.settings.getOutputPad() }),
       hideThinking: () => this.settings.getHideThinkingBlock(),
+      cacheBlocks: () => {
+        const limit = this.client.settings["ui.transcript.cacheBlocks"];
+        return typeof limit === "number" && limit > 0 ? limit : undefined;
+      },
     };
   }
 

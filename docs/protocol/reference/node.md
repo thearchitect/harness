@@ -117,6 +117,16 @@ Sessions stored on the node, newest first, with the agent serving each. → { se
 |---|---|---|---|
 | `cwd` | string |  | Only sessions of this directory |
 
+### `session_read`
+
+A stored session's entries without its agent, as harness_snapshot and harness_entries_before give them: the current branch, oldest first. → { entries, cursor?, mtime }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `file` | string | yes | A session file from sessions_list |
+| `cursor` | string |  | From an earlier answer: the entries before it |
+| `limit` | integer |  | How many entries (200 by default) |
+
 ### `agents_list`
 
 The agents running on the node with their summaries. → { agents }

@@ -43,6 +43,8 @@ the node user's `ui-settings.json`. Clients read them with `settings_get` and ch
 | `ui.font.chat`, `ui.font.chrome` | The app's fonts of its two zones: `{ family, size }`, family `jetbrains-mono`, `iosevka-term`, `terminus` or `system` ([app.md](app.md)). |
 | `ui.web.panes` | The app's strip width: `{ left }` in pixels. |
 | `ui.web.notifications` | The app's notifications when a session waits (default off). |
+| `ui.prefetch` | What clients load ahead in the background, whole, so a session opens at once: `all` (default: the window's tabs, then every stored session of the nodes' lists, newest first), `tabs` (the window's tabs only), `off`. |
+| `ui.transcript.cacheBlocks` | How many transcript blocks (entries) keep their drawn components in the TUI; past it the least recently drawn ones let them go and are made again when seen. Default: no limit. |
 
 ## Defaults of new sessions
 

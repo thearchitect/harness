@@ -17,6 +17,7 @@ import { login, loginProviders } from "./login.ts";
 import { ensureTheme, createUiContext } from "./ui-context.ts";
 import { ComponentBridge } from "./component-bridge.ts";
 import { getTheme } from "./theme.ts";
+import { branchPage } from "#protocol/entries.ts";
 
 /** Entries of a claude subagent's transcript a snapshot or a page carries. */
 const CLAUDE_PAGE = 200;
@@ -383,11 +384,10 @@ export class HapServer {
   }
 
   private snapshot(limit: number): SnapshotData {
-    const branch = this.session.sessionManager.getBranch();
-    const from = Math.max(0, branch.length - limit);
+    const page = branchPage(this.session.sessionManager.getBranch(), undefined, limit) ?? { entries: [] };
     return {
-      entries: branch.slice(from),
-      cursor: from > 0 ? branch[from]?.id : undefined,
+      entries: page.entries,
+      cursor: page.cursor,
       partial: this.partialMessage !== undefined || this.tools.size > 0 ? { message: this.partialMessage, tools: [...this.tools.values()] } : undefined,
       session: this.view(),
       state: this.controller.state(),
@@ -398,13 +398,11 @@ export class HapServer {
   }
 
   private entriesBefore(cursor: string, limit: number): EntriesBeforeData {
-    const branch = this.session.sessionManager.getBranch();
-    const end = branch.findIndex((entry) => entry.id === cursor);
-    if (end === -1) {
+    const page = branchPage(this.session.sessionManager.getBranch(), cursor, limit);
+    if (page === undefined) {
       throw new HarnessError("not_found", `entry ${cursor} is not on the current branch`);
     } else {
-      const from = Math.max(0, end - limit);
-      return { entries: branch.slice(from, end), cursor: from > 0 ? branch[from]?.id : undefined };
+      return page;
     }
   }
 

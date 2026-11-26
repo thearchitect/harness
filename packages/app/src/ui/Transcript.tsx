@@ -3,7 +3,7 @@
 // summaries; the answer in flight at the end. A virtualized list: older entries load at the top, the
 // view follows new ones until the user scrolls up, then "Jump to latest" brings it back.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import * as Clipboard from "expo-clipboard";
 import { FlatList, Image, Modal, Pressable, useWindowDimensions, View, type NativeScrollEvent, type NativeSyntheticEvent } from "react-native";
 import type { AgentModel, Message, ToolRun, TranscriptItem } from "#client/model/agent-model.ts";
@@ -60,8 +60,12 @@ function drawn(item: TranscriptItem): boolean {
   }
 }
 
-/** The transcript as rows: each tool call with its result, tool results not on their own. */
-function rowsOf(agent: AgentModel): Row[] {
+/**
+ * The transcript as rows: each tool call with its result, tool results not on their own. A row
+ * keeps its object while what it shows is the same (`known`, by key): its view is memoized on it,
+ * so a new entry or a piece of the stream draws its own row alone.
+ */
+function rowsOf(agent: AgentModel, known: Map<string, Row>): Row[] {
   const results = new Map<string, Message>();
   for (const item of agent.items) {
     if (item.kind === "message" && item.message.role === "toolResult") {
@@ -71,25 +75,44 @@ function rowsOf(agent: AgentModel): Row[] {
     }
   }
   const rows: Row[] = [];
+  const same = (row: Row): Row => {
+    const old = known.get(row.key);
+    const kept =
+      old !== undefined &&
+      ((old.kind === "item" && row.kind === "item" && old.item === row.item) ||
+        (old.kind === "tool" && row.kind === "tool" && old.call === row.call && old.result === row.result && old.live === row.live && row.live === undefined));
+    const result = kept ? old : row;
+    known.set(row.key, result);
+    return result;
+  };
   for (const item of agent.items) {
     if (!drawn(item)) {
       continue; // tool results are drawn in their call's row; other entries are not drawn
     } else if (item.kind === "message" && item.message.role === "assistant") {
-      rows.push({ kind: "item", key: item.key, item });
+      rows.push(same({ kind: "item", key: item.key, item }));
       for (const call of blocksOf(item.message.content).filter((block) => block.type === "toolCall")) {
-        rows.push({ kind: "tool", key: `${item.key}:${call.id}`, call, result: results.get(String(call.id)), live: agent.tools.get(String(call.id)) });
+        rows.push(same({ kind: "tool", key: `${item.key}:${call.id}`, call, result: results.get(String(call.id)), live: agent.tools.get(String(call.id)) }));
       }
     } else {
-      rows.push({ kind: "item", key: item.key, item });
+      rows.push(same({ kind: "item", key: item.key, item }));
     }
-  }
-  if (agent.streaming !== undefined) {
-    rows.push({ kind: "streaming", key: "streaming", message: agent.streaming });
-  } else {
-    // nothing in flight
   }
   return rows;
 }
+
+/** One row's view, drawn again only when its row (or the expansion) changes. */
+const RowView = memo(function RowView({ row, expanded, onDownload }: { row: Row; expanded: boolean; onDownload: (path: string, name: string) => void }) {
+  switch (row.kind) {
+    case "tool":
+      return <ToolRow call={row.call} result={row.result} live={row.live} expanded={expanded} onDownload={onDownload} />;
+    case "streaming":
+      return <Assistant message={row.message} />;
+    case "item":
+      return <ItemView item={row.item} />;
+    default:
+      throw new Error(`unknown row: ${JSON.stringify(row satisfies never)}`);
+  }
+});
 
 /** What send_file's result offers (extension/tools/send_file.ts). */
 type SentFile = { path: string; name: string; size: number; comment: string };
@@ -455,7 +478,9 @@ export function Transcript({
 }) {
   const list = useRef<FlatList<Row>>(null);
   const [following, setFollowing] = useState(anchor === undefined || anchor === "follow");
-  const rows = useMemo(() => rowsOf(agent), [agent, agent.items, agent.streaming, agent.tools.size]);
+  const known = useRef(new Map<string, Row>());
+  const settled = useMemo(() => rowsOf(agent, known.current), [agent, agent.items, agent.tools.size, agent.running]);
+  const rows = useMemo<Row[]>(() => (agent.streaming !== undefined ? [...settled, { kind: "streaming", key: "streaming", message: agent.streaming }] : settled), [settled, agent.streaming]);
   const top = useRef<string | undefined>(undefined);
   const restoring = useRef(anchor !== undefined && anchor !== "follow" ? anchor.key : undefined);
   const onViewable = useRef(({ viewableItems }: { viewableItems: { key: string }[] }) => {
@@ -495,15 +520,7 @@ export function Transcript({
         accessibilityLabel="transcript"
         data={rows}
         keyExtractor={(row) => row.key}
-        renderItem={({ item: row }) =>
-          row.kind === "tool" ? (
-            <ToolRow call={row.call} result={row.result} live={row.live} expanded={expanded} onDownload={onDownload} />
-          ) : row.kind === "streaming" ? (
-            <Assistant message={row.message} />
-          ) : (
-            <ItemView item={row.item} />
-          )
-        }
+        renderItem={({ item: row }) => <RowView row={row} expanded={expanded} onDownload={onDownload} />}
         contentContainerStyle={{ gap: 8, padding: 8 }}
         onScroll={onScroll}
         scrollEventThrottle={64}
@@ -511,6 +528,7 @@ export function Transcript({
         onScrollToIndexFailed={({ index }) => setTimeout(() => list.current?.scrollToIndex({ index, animated: false, viewPosition: 0 }), 50)}
         onContentSizeChange={() => (following ? list.current?.scrollToEnd({ animated: false }) : undefined)}
         onStartReached={agent.cursor !== undefined ? onLoadOlder : undefined}
+        onStartReachedThreshold={2}
         maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
       />
       {!following ? (

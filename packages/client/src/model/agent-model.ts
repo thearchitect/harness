@@ -42,7 +42,8 @@ function itemOfEntry(entry: Entry): TranscriptItem | undefined {
 }
 
 export class AgentModel {
-  readonly agentId: string;
+  /** The agent's id; empty for a stored session read without its agent (adopt names it). */
+  agentId: string;
   items: TranscriptItem[] = [];
   /** Cursor for older entries (harness_entries_before); undefined at the beginning. */
   cursor: string | undefined;
@@ -83,10 +84,29 @@ export class AgentModel {
     return this.session?.activity === "running";
   }
 
-  /** Replaces everything with a snapshot (attach, or a resync after compaction). */
+  /** A stored session read before its agent started becomes the agent's model. */
+  adopt(agentId: string): void {
+    this.agentId = agentId;
+  }
+
+  /**
+   * The newest entries of the branch (a snapshot's, a page read from the file). The items loaded
+   * before them stay when the branch still has them (the entries before an entry of a branch are its
+   * ancestors), and items already known keep their objects: nothing of them is drawn again.
+   */
+  loadNewest(entries: unknown[], cursor: string | undefined): void {
+    const fresh = (entries as Entry[]).map(itemOfEntry).filter((item): item is TranscriptItem => item !== undefined);
+    const known = new Map(this.items.map((item) => [item.key, item]));
+    const first = fresh[0]?.key;
+    const at = first !== undefined ? this.items.findIndex((item) => item.key === first) : -1;
+    this.items = [...(at > 0 ? this.items.slice(0, at) : []), ...fresh.map((item) => known.get(item.key) ?? item)];
+    this.cursor = at > 0 ? this.cursor : cursor;
+    this.changed();
+  }
+
+  /** Replaces everything with a snapshot (attach, or a resync after compaction); older items still on the branch stay. */
   loadSnapshot(snapshot: SnapshotData): void {
-    this.items = (snapshot.entries as Entry[]).map(itemOfEntry).filter((item): item is TranscriptItem => item !== undefined);
-    this.cursor = snapshot.cursor;
+    this.loadNewest(snapshot.entries, snapshot.cursor);
     this.session = snapshot.session;
     this.state = snapshot.state;
     this.interactions = snapshot.interactions;

@@ -62,6 +62,12 @@ export type NodeInfo = { name: string; online: boolean; roles: string[] };
 export type NodeOps = {
   nodes_list: { args: Record<string, never>; result: { nodes: NodeInfo[] } };
   sessions_list: { args: { cwd?: string }; result: { sessions: SessionListItem[] } };
+  /**
+   * A stored session's entries without its agent, as harness_snapshot and harness_entries_before
+   * give them (the current branch, the newest `limit` before `cursor`); `mtime` tells whether the
+   * file changed since.
+   */
+  session_read: { args: { file: string; cursor?: string; limit?: number }; result: { entries: unknown[]; cursor?: string; mtime: number } };
   agents_list: { args: Record<string, never>; result: { agents: AgentInfo[] } };
   /** `subagent`: started by an agent for its subagent (the node sets the parent and the depth). */
   agent_start: { args: { cwd: string; sessionFile?: string; subagent?: SubagentLaunch; background?: boolean }; result: { agent: AgentInfo } };
@@ -103,6 +109,7 @@ export type NodeOp = keyof NodeOps;
 export const NODE_OPS: readonly NodeOp[] = [
   "nodes_list",
   "sessions_list",
+  "session_read",
   "agents_list",
   "agent_start",
   "agent_attach",

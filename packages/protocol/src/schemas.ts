@@ -58,6 +58,10 @@ const Level = Type.Union([Type.Literal("full"), Type.Literal("summary")], { desc
 export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
   nodes_list: Obj({}, "The nodes this connection reaches: the node itself (if the user may use it) and, through a hub, the user's nodes with presence. → { nodes }"),
   sessions_list: Obj({ cwd: Opt(Str("Only sessions of this directory")) }, "Sessions stored on the node, newest first, with the agent serving each. → { sessions }"),
+  session_read: Obj(
+    { file: Str("A session file from sessions_list"), cursor: Opt(Str("From an earlier answer: the entries before it")), limit: Opt(Int("How many entries (200 by default)")) },
+    "A stored session's entries without its agent, as harness_snapshot and harness_entries_before give them: the current branch, oldest first. → { entries, cursor?, mtime }",
+  ),
   agents_list: Obj({}, "The agents running on the node with their summaries. → { agents }"),
   agent_start: Obj(
     {

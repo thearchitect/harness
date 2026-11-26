@@ -3,7 +3,8 @@
 // ~/.harness/locks/<session id>.lock holds the owning node's pid; a dead pid frees it.
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { branchPage } from "#protocol/entries.ts";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { HarnessError } from "#protocol/errors.ts";
@@ -46,6 +47,41 @@ export async function listSessions(dataDir: string, cwd?: string): Promise<Omit<
       firstMessage: session.firstMessage,
     }))
     .sort((a, b) => b.modified - a.modified);
+}
+
+/** The branches of session files read last, by path (a client reads one page after another). */
+const READ = new Map<string, { mtime: number; branch: { id: string }[] }>();
+const READ_KEPT = 16;
+
+/**
+ * A stored session's entries without its agent (session_read): the page of its current branch that
+ * harness_snapshot and harness_entries_before would give. Only files under the sessions directory.
+ */
+export function readSession(dataDir: string, file: string, cursor: string | undefined, limit: number): { entries: unknown[]; cursor?: string; mtime: number } {
+  const path = resolve(file);
+  if (!path.startsWith(`${resolve(sessionsDir(dataDir))}/`) || !path.endsWith(".jsonl")) {
+    throw new HarnessError("forbidden", `${file} is not a session file of this node`);
+  } else {
+    let mtime: number;
+    try {
+      mtime = statSync(path).mtimeMs;
+    } catch {
+      throw new HarnessError("not_found", `no session file ${file}`);
+    }
+    const known = READ.get(path);
+    const branch = known !== undefined && known.mtime === mtime ? known.branch : SessionManager.open(path).getBranch();
+    READ.delete(path);
+    READ.set(path, { mtime, branch });
+    for (const old of [...READ.keys()].slice(0, Math.max(0, READ.size - READ_KEPT))) {
+      READ.delete(old);
+    }
+    const page = branchPage(branch, cursor, limit);
+    if (page === undefined) {
+      throw new HarnessError("not_found", `entry ${cursor} is not on the current branch of ${file}`);
+    } else {
+      return { ...page, mtime };
+    }
+  }
 }
 
 function alive(pid: number): boolean {

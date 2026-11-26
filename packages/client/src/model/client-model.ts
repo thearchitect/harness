@@ -38,9 +38,6 @@ export class NodeApi {
   }
 }
 
-/** Agents followed in full besides the active one. */
-export const FULL_CACHE = 3;
-
 /** Delays between reconnection attempts; the last one repeats. */
 export const RECONNECT_MS = [500, 1000, 2000, 5000, 10_000, 30_000];
 
@@ -48,6 +45,11 @@ export type AgentKey = string; // `${node}/${agentId}`
 
 export function agentKey(node: string, agentId: string): AgentKey {
   return `${node}/${agentId}`;
+}
+
+/** A stored session's key in `stored`. */
+export function storedKey(node: string, file: string): string {
+  return `${node}\u0000${file}`;
 }
 
 export class ClientModel {
@@ -293,13 +295,8 @@ export class ClientModel {
   /** Follows an agent in full (snapshot + stream); the least recently used beyond the cache drop to summaries. */
   async follow(node: string, agentId: string): Promise<AgentModel> {
     const key = agentKey(node, agentId);
+    // every agent followed stays followed (the window's tabs, live) until unfollowed
     this.recent = [key, ...this.recent.filter((candidate) => candidate !== key)];
-    for (const stale of this.recent.slice(FULL_CACHE + 1)) {
-      const [staleNode, staleAgent] = splitKey(stale);
-      this.full.delete(stale);
-      void this.connections.get(staleNode)?.request("agent_attach", { agent: staleAgent, level: "summary" }).catch(() => undefined);
-    }
-    this.recent = this.recent.slice(0, FULL_CACHE + 1);
     const existing = this.full.get(key);
     const loading = this.loading.get(key);
     if (loading !== undefined) {
@@ -307,7 +304,16 @@ export class ClientModel {
     } else if (existing !== undefined) {
       return existing;
     } else {
-      const model = new AgentModel(agentId);
+      // what was read from its file goes on as the agent's: the same items, nothing drawn again
+      const file = this.agents.get(key)?.sessionFile;
+      const stored = file !== undefined ? this.stored.get(storedKey(node, file)) : undefined;
+      const model = stored?.model ?? new AgentModel(agentId);
+      if (stored !== undefined && file !== undefined) {
+        model.adopt(agentId);
+        this.stored.delete(storedKey(node, file));
+      } else {
+        // nothing read before
+      }
       this.full.set(key, model);
       const load = (async (): Promise<AgentModel> => {
         const { snapshot } = await this.connection(node).request("agent_attach", { agent: agentId, level: "full" });
@@ -382,6 +388,43 @@ export class ClientModel {
       model.prepend(older.entries, older.cursor);
     } else {
       // nothing older, or not followed
+    }
+  }
+
+  /** Every older entry of a followed agent, page by page. */
+  async loadAll(node: string, agentId: string): Promise<void> {
+    while (this.full.get(agentKey(node, agentId))?.cursor !== undefined) {
+      await this.loadOlder(node, agentId);
+    }
+  }
+
+  /** Stored sessions read without their agents (session_read), by node and file. */
+  readonly stored = new Map<string, { model: AgentModel; mtime: number; checked: number }>();
+
+  storedModel(node: string, file: string | undefined): AgentModel | undefined {
+    return file !== undefined ? this.stored.get(storedKey(node, file))?.model : undefined;
+  }
+
+  /**
+   * Reads a stored session whole, page by page, unless what was read is current (its file's mtime);
+   * a changed file is read again into the same model (the items it had stay).
+   */
+  async readStored(node: string, file: string, now: number): Promise<void> {
+    const key = storedKey(node, file);
+    const known = this.stored.get(key);
+    const api = this.connection(node);
+    const newest = await api.request("session_read", { file, limit: SNAPSHOT_ENTRIES });
+    if (known !== undefined && known.mtime === newest.mtime && known.model.cursor === undefined) {
+      known.checked = now;
+    } else {
+      const model = known?.model ?? new AgentModel("");
+      model.loadNewest(newest.entries, newest.cursor);
+      this.stored.set(key, { model, mtime: newest.mtime, checked: now });
+      while (model.cursor !== undefined && this.stored.get(key)?.model === model) {
+        const older = await api.request("session_read", { file, cursor: model.cursor, limit: SNAPSHOT_ENTRIES });
+        model.prepend(older.entries, older.cursor);
+      }
+      this.changed();
     }
   }
 

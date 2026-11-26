@@ -13,6 +13,7 @@ import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#pr
 import type { ActionId } from "../keymap.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
 import { agentKey, type ClientModel } from "../model/client-model.ts";
+import { Prefetch, PREFETCH_RECHECK_MS, prefetchMode, type PrefetchTarget } from "../model/prefetch.ts";
 import { NewSession } from "./new-session.ts";
 import { DEFAULT_VIEW, type TabView, type ViewStateStore, type WindowState } from "./view-state.ts";
 
@@ -371,6 +372,8 @@ export type WorkbenchOptions = {
   addHub?: (url: string, code: string) => Promise<void>;
   /** Where this window keeps its state between starts (view-state.ts); none: nothing is kept. */
   viewStore?: ViewStateStore;
+  /** Loads sessions ahead in the background (prefetch.ts); on by default, `ui.prefetch` tunes it. */
+  prefetch?: boolean;
 };
 
 /** A row of /settings a UI adds: choosing it runs `choose` (which may open its own list). */
@@ -428,6 +431,46 @@ export class Workbench {
     this.holdsHome = options.holdsHome ?? (() => false);
     this.addHub = options.addHub;
     this.viewStore = options.viewStore;
+    if (options.prefetch !== false) {
+      const prefetch = new Prefetch(client, () => this.prefetchTargets(), () => this.clock.now());
+      this.prefetch = prefetch;
+      // a pass when the window's sessions change, and at most once a minute for the lists' changes
+      client.onChange(() => {
+        const now = this.clock.now();
+        const targets = this.prefetchTargets();
+        const signature = JSON.stringify([prefetchMode(client.settings), targets]);
+        if (signature !== this.prefetchSignature || now - this.prefetchAt >= PREFETCH_RECHECK_MS) {
+          this.prefetchSignature = signature;
+          this.prefetchAt = now;
+          prefetch.kick();
+        } else {
+          // nothing new to load
+        }
+      });
+    } else {
+      this.prefetch = undefined;
+    }
+  }
+
+  private readonly prefetch: Prefetch | undefined;
+  private prefetchSignature = "";
+  private prefetchAt = 0;
+  /** When each tab was last active (the order tabs are loaded ahead in). */
+  private readonly usedAt = new Map<string, number>();
+
+  /** The window's tabs to load ahead: the active one, then by their last use. */
+  private prefetchTargets(): PrefetchTarget[] {
+    const active = this.activeTab();
+    const used = (tab: Tab): number => (active !== undefined && sameTab(tab, active) ? Infinity : (this.usedAt.get(`${tab.node}/${tab.sessionId}`) ?? 0));
+    return this.tabs()
+      .filter((tab) => tab.unavailable === undefined)
+      .sort((a, b) => used(b) - used(a))
+      .map((tab) => ({ node: tab.node, agent: tab.agent?.id, file: tab.sessionFile ?? tab.agent?.sessionFile }));
+  }
+
+  /** Stops loading ahead (the window closes). */
+  stopPrefetch(): void {
+    this.prefetch?.stop();
   }
 
   /* ----- what each tab left (view-state.ts) ----- */
@@ -648,7 +691,8 @@ export class Workbench {
 
   screen(width: number, editor: { mode: RunMode }): Screen {
     const tab = this.activeTab();
-    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    // a tab whose agent is not up yet shows what was read from its file
+    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : tab !== undefined ? this.client.storedModel(tab.node, tab.sessionFile) : undefined;
     if (tab?.agent !== undefined && agent === undefined && tab.unavailable === undefined) {
       // the active tab's agent became known (another client opened it, the node reported it): follow it
       void this.client.follow(tab.node, tab.agent.id).catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
@@ -1008,8 +1052,10 @@ export class Workbench {
     }
     if (tab?.unavailable !== undefined) {
       lines.push({ level: "warning", text: `⊘ ${tab.unavailable}` });
+    } else if (tab !== undefined && tab.agent === undefined && !tab.draft) {
+      lines.push({ level: "info", text: "starting…" }); // shown from its file meanwhile
     } else {
-      // available
+      // available, its agent up
     }
     const waiting = tabs.filter((candidate, index) => index !== this.active && candidate.glyph === "◆").length;
     if (waiting > 0) {
@@ -1501,9 +1547,12 @@ export class Workbench {
     this.client.changed();
   }
 
+  /** A tab shows at once (from what was loaded ahead); its agent starts meanwhile, and its transcript carries on. */
   private async goto(index: number): Promise<void> {
-    await this.ensureAgent(this.tabs()[index]);
+    const tab = this.tabs()[index];
     await this.activate(index);
+    await this.ensureAgent(tab);
+    this.client.changed();
   }
 
   /**
@@ -1811,6 +1860,7 @@ export class Workbench {
       const tab = tabs[Math.max(0, Math.min(index, tabs.length - 1))];
       if (tab !== undefined) {
         this.activeKey = { node: tab.node, sessionId: tab.sessionId };
+        this.usedAt.set(`${tab.node}/${tab.sessionId}`, this.clock.now());
         this.chosenNode = tab.node;
         this.lastActive.set(tab.node, tab.sessionId);
         this.newSessionChoice = undefined;

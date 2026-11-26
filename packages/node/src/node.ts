@@ -19,7 +19,7 @@ import { transcribe } from "./transcribe.ts";
 import { MAX_SUBAGENT_DEPTH, type SubagentLaunch } from "#protocol/state.ts";
 import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
 import { AgentLink, type AgentRecord } from "./agent-link.ts";
-import { listSessions, SessionLocks } from "./sessions.ts";
+import { listSessions, readSession, SessionLocks } from "./sessions.ts";
 import { SettingsStore } from "./settings.ts";
 import { checkClientFrame } from "#protocol/schemas.ts";
 import { systemClock, type Clock } from "#protocol/clock.ts";
@@ -290,6 +290,10 @@ export class HarnessNode {
         const sessions = await listSessions(this.config.dataDir, cwd);
         const served = new Map([...this.agents.values()].map((entry) => [entry.info.sessionId, entry.info.id]));
         return { sessions: sessions.map((session) => ({ ...session, agent: served.get(session.id) })) } as NodeOps[K]["result"];
+      }
+      case "session_read": {
+        const { file, cursor, limit } = args as NodeOps["session_read"]["args"];
+        return readSession(this.config.dataDir, file, cursor, limit ?? SNAPSHOT_ENTRIES) as NodeOps[K]["result"];
       }
       case "agents_list":
         return { agents: this.agentList() } as NodeOps[K]["result"];
