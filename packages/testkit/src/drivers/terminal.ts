@@ -121,6 +121,12 @@ export class VirtualTerminal implements TuiTerminal {
     this.resize?.();
   }
 
+  /** Where the terminal's own cursor stands on the visible screen (column, row). */
+  cursor(): { x: number; y: number } {
+    const buffer = this.xterm.buffer.active;
+    return { x: buffer.cursorX, y: buffer.cursorY };
+  }
+
   /** The visible screen as text, one string per row, trailing spaces trimmed. */
   text(): string[] {
     const buffer = this.xterm.buffer.active;

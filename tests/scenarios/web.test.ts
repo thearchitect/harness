@@ -241,8 +241,16 @@ export const scenario = defineScenario({
         await panel.getByText("●━━  on").waitFor({ state: "detached" });
         // SESSION: the name field names the tab as it is typed
         await panel.getByText("SESSION", { exact: true }).waitFor();
-        await panel.getByLabel("session name").fill("web-named");
+        await panel.getByLabel("session name").fill("web-nmed");
+        // the cursor moves with the arrows: the letter goes where it stands
+        for (let step = 0; step < 3; step += 1) {
+          await web.page.keyboard.press("ArrowLeft");
+        }
+        await web.page.keyboard.type("a");
         await web.page.getByText("web-named").first().waitFor();
+        // ↑ leaves the field for the row above (simple)
+        await web.page.keyboard.press("ArrowUp");
+        assert.equal(await panel.getByLabel("session name").evaluate((node) => node === document.activeElement), false);
         await web.page.keyboard.press("Escape");
         await panel.waitFor({ state: "detached" });
       },

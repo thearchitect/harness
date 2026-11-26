@@ -13,6 +13,7 @@ import { fontOf, useTheme, type Token } from "../theme/theme.tsx";
 import { EditorZoneView, type Completion } from "./EditorZone.tsx";
 import { NewSessionView } from "./NewSession.tsx";
 import { ComponentView } from "./ComponentView.tsx";
+import { LineField } from "./LineField.tsx";
 import { Button, GlyphMark, ListRow, T } from "./primitives.tsx";
 import { Transcript } from "./Transcript.tsx";
 import { focusList, focusMessage, useListKeys } from "./web-events";
@@ -238,15 +239,14 @@ function PanelField({ item, workbench }: { item: Extract<PanelItem, { kind: "tex
   return (
     <View style={{ flexDirection: "row", alignItems: "center", paddingHorizontal: 8, paddingVertical: 2 }}>
       <T style={{ marginRight: 8 }}>{item.label}</T>
-      <TextInput
-        accessibilityLabel={`session ${item.label}`}
+      <LineField
+        label={`session ${item.label}`}
         value={item.value}
         placeholder={item.placeholder}
-        placeholderTextColor={theme.colors.dim}
-        onChangeText={(text) => workbench.editSessionName(text)}
+        onChange={(text) => workbench.editSessionName(text)}
+        onSubmit={() => void workbench.commitSessionName()}
         onBlur={() => void workbench.commitSessionName()}
-        onKeyPress={(event) => (event.nativeEvent.key === "Escape" ? workbench.closeOverlay("panel") : undefined)}
-        style={[fontOf(theme.chrome), { flex: 1, color: theme.colors.text, borderBottomWidth: 1, borderColor: theme.colors.borderMuted, paddingVertical: 2 }]}
+        onEscape={() => workbench.closeOverlay("panel")}
       />
     </View>
   );

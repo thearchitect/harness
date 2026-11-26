@@ -194,16 +194,26 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "the panel's SESSION: the name field takes typing at once and names the tab without Enter; the implementer is the session's alone",
+      name: "the panel's SESSION: the name field takes typing at once, its cursor moves with the arrows and names the tab without Enter; the implementer is the session's alone",
       async run({ stand, clients: { tui } }) {
         await tui.act("panel.toggle");
         await tui.waitForText((screen) => screen.includes("SESSION") && screen.includes("implementer") && screen.includes("restart node"));
         await tui.press("\x1b[B"); // simple
         await tui.press("\x1b[B"); // name
-        for (const key of "renamed") {
+        for (const key of "rnamed") {
           await tui.press(key);
         }
+        // the cursor goes back and the missing letter goes in where it stands
+        for (let step = 0; step < 5; step += 1) {
+          await tui.press("\x1b[D");
+        }
+        await tui.press("e");
         await tui.waitForText(() => tui.workbench.tabs().some((tab) => tab.title === "renamed"));
+        // the field's cursor is the terminal's: it stands after the typed letter
+        const rows = tui.text().split("\n");
+        // the panel's row (the strip's tab shows the name too, further left)
+        const row = rows.findIndex((candidate) => /name\s+renamed/.test(candidate));
+        assert.deepEqual(tui.terminal.cursor(), { x: (rows[row] ?? "").lastIndexOf("renamed") + 2, y: row }, "the terminal's cursor after `re`");
         await tui.press("\x1b[B"); // implementer
         await tui.press(" ");
         await tui.waitForText(() => tui.screen().agent?.state.implementer !== "self");
@@ -263,7 +273,7 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "a rule parts the strip from the main area, rules part its blocks; a leading ! colors the editor's border for BUILD",
+      name: "a rule parts the strip from the main area, rules part its blocks; the editor has no padding; a leading ! colors the editor's border for BUILD",
       async run({ clients: { tui } }) {
         const rows = tui.text().split("\n");
         assert.ok(rows.filter((row) => row.slice(0, 20).includes("│")).length > 10, "a rule down the screen after the strip");
@@ -273,6 +283,8 @@ export const scenario = defineScenario({
         const plain = tui.app.borderMode();
         await tui.type("!");
         assert.equal(tui.app.borderMode(), "build");
+        // the editor has no padding: the text starts right after the rule
+        await tui.waitForText((text) => text.split("\n").some((row) => /^.{18}│!\s*$/.test(row)));
         assert.notEqual(plain, "build");
         await tui.press("\x7f");
         assert.equal(tui.app.borderMode(), plain);

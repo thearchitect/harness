@@ -6,12 +6,13 @@
 //
 // Keys: ↑/↓ move (cyclic, titles skipped), Space/Enter apply, Esc or Ctrl+\ close. The mouse: a click
 // applies a row, the pointer over a row selects it. A toggle keeps the panel open; an action closes it.
-// A text field (the session's name) takes typing and Backspace as soon as it is selected; leaving it
-// (↑/↓, closing) applies what was typed.
+// A text field (the session's name) is a LineField: selected, it takes typing at once and its cursor
+// moves with ←/→, Home/End and words; ↑/↓ leave it, which (as closing) applies what was typed.
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, matchesKey, truncateToWidth, visibleWidth, type Component, type Focusable, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { PanelId, PanelItem, PanelSection } from "#client/workbench/workbench.ts";
+import { LineField } from "#extension/presentation/tui/line-field.ts";
 
 /** The overlay's size: a quarter of the screen, never narrower than its rows need. */
 export const PANEL_WIDTH = "25%";
@@ -46,6 +47,8 @@ export class HarnessPanel implements Component, Focusable {
   private scroll = 0;
   /** For each drawn line, the item it shows. */
   private lineItems: (PanelItem | undefined)[] = [];
+  /** The text fields, by row: each keeps its cursor while the panel lives. */
+  private readonly fields = new Map<PanelId, LineField>();
 
   constructor(options: PanelOptions) {
     this.options = options;
@@ -86,13 +89,15 @@ export class HarnessPanel implements Component, Focusable {
       this.selectedId = items[(index + (keys.matches(data, "tui.select.up") ? count - 1 : 1)) % count]?.id;
       this.options.tui.requestRender();
     } else if (current?.kind === "text") {
-      if (keys.matches(data, "tui.editor.deleteCharBackward")) {
-        this.options.edit(current.id, [...current.value].slice(0, -1).join(""));
-      } else if (visibleWidth(data) > 0 && !/[\x00-\x1f\x7f]/.test(data)) {
-        this.options.edit(current.id, `${current.value}${data}`);
+      // the field takes every other key: typing, the cursor's moves, deleting, paste; Enter applies
+      const field = this.field(current);
+      field.handleInput(data);
+      if (keys.matches(data, "tui.select.confirm")) {
+        this.options.leave(current.id);
       } else {
-        // other keys do nothing in a field
+        // typed or moved: applied as it is typed (onChange)
       }
+      this.options.tui.requestRender();
     } else if (keys.matches(data, "tui.select.confirm") || matchesKey(data, "space")) {
       const item = items[index];
       if (item !== undefined) {
@@ -121,6 +126,21 @@ export class HarnessPanel implements Component, Focusable {
       return { handled: true, render: true };
     } else {
       return { handled: true };
+    }
+  }
+
+  /** A row's field, made at its first draw with the row's value. */
+  private field(item: Extract<PanelItem, { kind: "text" }>): LineField {
+    const known = this.fields.get(item.id);
+    if (known !== undefined) {
+      return known;
+    } else {
+      const theme = this.options.theme();
+      const field = new LineField({ placeholder: item.placeholder, placeholderStyle: (text) => theme.fg("dim", text) });
+      field.value = item.value;
+      field.onChange = (value) => this.options.edit(item.id, value);
+      this.fields.set(item.id, field);
+      return field;
     }
   }
 
@@ -194,20 +214,16 @@ export class HarnessPanel implements Component, Focusable {
         value = theme.fg("muted", item.value);
         break;
       case "text": {
-        // the field: what is typed, a cursor while selected; the session's title when empty
-        const room = Math.max(4, contentWidth - visibleWidth(item.label) - 2);
-        const cursor = selected ? theme.fg("accent", "▏") : "";
-        if (item.value === "") {
-          value = `${truncateToWidth(theme.fg("dim", item.placeholder), room - 1)}${cursor}`;
+        // the field: the rest of the row after the label; the terminal's cursor in it while selected
+        const room = Math.max(4, contentWidth - visibleWidth(item.label) - 1);
+        const field = this.field(item);
+        field.focused = this.focused && selected;
+        if (!field.focused) {
+          field.value = item.value; // the node's (another client's) name while nobody types here
         } else {
-          // the end of a long name stays in sight while it is typed
-          const chars = [...item.value];
-          let start = 0;
-          while (start < chars.length && visibleWidth(chars.slice(start).join("")) > room - 1) {
-            start += 1;
-          }
-          value = `${chars.slice(start).join("")}${cursor}`;
+          // typing here: the field's own text stands
         }
+        value = field.render(room)[0] ?? "";
         break;
       }
       case "action":

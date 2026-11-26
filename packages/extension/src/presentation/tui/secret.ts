@@ -2,37 +2,13 @@
 // checked here (secretValueProblem) before it leaves the client; the agent checks it again.
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { Input, truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI } from "@earendil-works/pi-tui";
+import { truncateToWidth, wrapTextWithAnsi, type Component, type Focusable, type TUI } from "@earendil-works/pi-tui";
 import { secretValueProblem, type SecretAnswer, type SecretPayload } from "#protocol/interactions.ts";
-
-/** A single-line input that never renders its value: one bullet per character. */
-export class MaskedSecretInput implements Component, Focusable {
-  private readonly input = new Input();
-  focused = false;
-  onSubmit?: (value: string) => void;
-  onEscape?: () => void;
-
-  constructor() {
-    this.input.onSubmit = (value) => this.onSubmit?.(value);
-    this.input.onEscape = () => this.onEscape?.();
-  }
-
-  handleInput(data: string): void {
-    this.input.handleInput(data);
-  }
-
-  invalidate(): void {
-    this.input.invalidate();
-  }
-
-  render(width: number): string[] {
-    const bullets = "•".repeat([...this.input.getValue()].length);
-    return [truncateToWidth(`> ${bullets}${this.focused ? "▏" : ""}`, width)];
-  }
-}
+import { LineField } from "./line-field.ts";
 
 export class SecretDialog implements Component, Focusable {
-  private readonly input = new MaskedSecretInput();
+  /** The value never drawn: one bullet per character, the cursor among them. */
+  private readonly input = new LineField({ prompt: "> ", mask: "•" });
   private problem: string | undefined;
   private readonly tui: TUI;
   private readonly theme: Theme;

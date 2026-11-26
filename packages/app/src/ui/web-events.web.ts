@@ -16,7 +16,8 @@ const DRAG_TYPE = "application/x-harness-row";
 
 /**
  * A list's keyboard: ↑/↓ move the focus between its rows, Space and Enter press the focused row,
- * Esc hands the keyboard back to the message field.
+ * Esc hands the keyboard back to the message field. A field in the list (data-list-row) is a row
+ * too: ↑/↓ leave it, every other key is its own.
  */
 export function useListKeys(ref: RefObject<unknown>, onEscape: () => void = focusMessage): void {
   useEffect(() => {
@@ -25,10 +26,13 @@ export function useListKeys(ref: RefObject<unknown>, onEscape: () => void = focu
       return undefined;
     } else {
       const keydown = (event: KeyboardEvent): void => {
-        const rows = [...node.querySelectorAll<HTMLElement>("[role=button]")];
+        const rows = [...node.querySelectorAll<HTMLElement>("[role=button], [data-list-row]")];
         const index = rows.indexOf(document.activeElement as HTMLElement);
+        const field = rows[index]?.hasAttribute("data-list-row") === true;
         if (index < 0) {
           return; // the focus is not on a row of this list
+        } else if (field && event.key !== "ArrowDown" && event.key !== "ArrowUp" && event.key !== "Escape") {
+          return; // typing, the cursor's moves, Enter: the field's own
         } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
           event.stopPropagation();

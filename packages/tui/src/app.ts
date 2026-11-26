@@ -345,7 +345,7 @@ export class App {
   }
 
   private newEditor(): Editor {
-    return new Editor(this.tui, { borderColor: (text) => modeColor(this.editorMode(), getTheme().getColorMode(), text), selectList: selectListTheme(getTheme()) }, { paddingX: 1 });
+    return new Editor(this.tui, { borderColor: (text) => modeColor(this.editorMode(), getTheme().getColorMode(), text), selectList: selectListTheme(getTheme()) }, { paddingX: 0 });
   }
 
   /**
