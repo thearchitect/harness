@@ -29,12 +29,17 @@ export class TuiDriver {
   readonly client: ClientModel;
   readonly workbench: Workbench;
   readonly app: App;
+  /** Links the TUI opened in the browser, text it copied: recorded, never sent to this machine's. */
+  readonly opened: string[];
+  readonly copied: string[];
 
-  private constructor(terminal: VirtualTerminal, client: ClientModel, workbench: Workbench, app: App) {
+  private constructor(terminal: VirtualTerminal, client: ClientModel, workbench: Workbench, app: App, outside: { opened: string[]; copied: string[] }) {
     this.terminal = terminal;
     this.client = client;
     this.workbench = workbench;
     this.app = app;
+    this.opened = outside.opened;
+    this.copied = outside.copied;
   }
 
   /** A TUI on `connection` (the client's home node), started on a new session in `cwd`. */
@@ -46,7 +51,20 @@ export class TuiDriver {
     await workbench.restoreViews();
     // pi's dark theme: the virtual terminal reports no colors of its own
     const settings = SettingsManager.inMemory({ theme: "dark" });
-    const app = new App({ client, workbench, renderers: await loadRenderers(options.cwd, []), cwd: options.cwd, settings, onQuit: () => undefined, terminal });
+    const outside = { opened: [] as string[], copied: [] as string[] };
+    const app = new App({
+      client,
+      workbench,
+      renderers: await loadRenderers(options.cwd, []),
+      cwd: options.cwd,
+      settings,
+      onQuit: () => undefined,
+      terminal,
+      openUrl: (url) => outside.opened.push(url),
+      copyText: async (text) => {
+        outside.copied.push(text);
+      },
+    });
     if (workbench.tabs().length === 0) {
       await workbench.newTab(node, options.cwd);
     } else {
@@ -54,7 +72,7 @@ export class TuiDriver {
     }
     await app.start();
     await terminal.flushed();
-    return new TuiDriver(terminal, client, workbench, app);
+    return new TuiDriver(terminal, client, workbench, app, outside);
   }
 
   async act(action: ActionId): Promise<void> {

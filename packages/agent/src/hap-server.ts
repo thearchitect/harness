@@ -358,8 +358,7 @@ export class HapServer {
       case "harness_login_providers":
         return { providers: loginProviders(this.session) };
       case "harness_login":
-        await login(this.session, this.hub, request.provider, request.authType);
-        return {};
+        return await login(this.session, this.hub, request.provider, request.authType);
       case "harness_logout":
         await this.session.modelRuntime.logout(request.provider);
         return {};

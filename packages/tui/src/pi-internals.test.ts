@@ -11,7 +11,7 @@ const EXPORTS: Record<keyof typeof PI_INTERNAL_MODULES, string[]> = {
   mermaid: ["createMermaidMarkdownTransformer"],
   keybindings: ["KeybindingsManager", "KEYBINDINGS"],
   customEntry: ["CustomEntryComponent"],
-  clipboard: ["readClipboardFilePaths", "readClipboardText"],
+  clipboard: ["readClipboardFilePaths", "readClipboardText", "copyToClipboard"],
   clipboardImage: ["readClipboardImage", "extensionForImageMimeType"],
   openBrowser: ["openBrowser"],
 };

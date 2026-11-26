@@ -290,6 +290,32 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "a login step: the options as rows, the link whole, Back one step, typing on a row goes to the field, Enter signs in",
+      async run({ stand, clients: { web } }) {
+        await web.type("/login");
+        await web.submit();
+        await web.page.getByRole("textbox", { name: /^Filter Log in on/ }).fill("probe");
+        await web.page.getByText("Probe SSO").first().waitFor();
+        await web.page.keyboard.press("Enter");
+        await web.page.getByText("Choose the probe's login method:").waitFor();
+        await web.page.getByRole("button", { name: "Browser" }).click();
+        await web.page.getByText(/^https:\/\/sso\.example\/authorize.*state=run\d+$/).waitFor();
+        await web.page.getByRole("button", { name: "open in browser" }).waitFor();
+        // Back: the method again
+        await web.page.getByRole("button", { name: "Back" }).click();
+        await web.page.getByText("Choose the probe's login method:").waitFor();
+        await web.page.getByRole("button", { name: "Browser" }).click();
+        // on a row, typing goes to the field
+        await web.page.getByRole("button", { name: "open in browser" }).focus();
+        await web.page.keyboard.type("good");
+        assert.equal(await web.page.getByLabel("login field").inputValue(), "good");
+        await web.page.keyboard.press("Enter");
+        await web.page.getByRole("textbox", { name: "Message" }).waitFor();
+        const auth = JSON.parse(readFileSync(join(stand.dataDir, "auth.json"), "utf8")) as Record<string, { access?: string }>;
+        assert.equal(auth["probe-sso"]?.access, "probe-access");
+      },
+    },
+    {
       name: "an extension's component shows as a remote terminal: its size, keys, paste and a click reach it",
       async run({ clients: { web } }) {
         await web.type("/probe-component");

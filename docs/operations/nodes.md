@@ -78,6 +78,19 @@ nodes): its agents get the `server` skill.
 3. In a browser or the app: open the link `device add --url` printed (or scan its QR code); see
    [app.md](app.md).
 
+## Logging in to providers
+
+`/login` logs in on the session's node: its `auth.json` keeps the login. Each step of the provider's
+flow shows in the client's editor zone: the sign-in link (open it in this machine's browser, or copy
+it), a choice, a field for a code or the address the browser ended on. ← outside the field goes back
+one step (the flow starts again and answers the steps before by itself), from the first step back to
+the providers; Esc cancels.
+
+A sign-in link usually sends the browser back to `127.0.0.1`/`localhost` on a port. A login on this
+machine's node needs nothing more: its flow listens there. For a node elsewhere the TUI listens on
+that port while the step is shown and passes the address on to the node; when the port is busy here,
+or in the app, paste the address the browser ended on into the field.
+
 ## Logs
 
 Each node logs events to `~/.harness/log/node-<name>.jsonl` (connections, refusals, agents

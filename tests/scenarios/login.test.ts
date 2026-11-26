@@ -1,6 +1,6 @@
 // Logging in to a provider from a client (plan 5.6, the agent's half of /login): the login runs on
-// the node, its prompt reaches the operator as an interaction, the key lands in the node user's
-// auth.json; cancelling the prompt fails the login with its reason.
+// the node, each step reaches the operator as a `login` interaction, the key lands in the node user's
+// auth.json; cancelling fails the login with its reason; back from the first step ends it with back.
 
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -40,9 +40,9 @@ export const scenario = defineScenario({
         assert.equal(openai.configured, false);
 
         const done = raw.api.call(agent.id, { type: "harness_login", provider: "openai", authType: "api_key" });
-        await until(model, () => model.interactions.some((request) => request.kind === "secret"));
-        const prompt = model.interactions.find((request) => request.kind === "secret");
-        assert.match(prompt?.kind === "secret" ? prompt.payload.name : "", /Log in to /);
+        await until(model, () => model.interactions.some((request) => request.kind === "login" && request.payload.prompt?.type === "secret"));
+        const prompt = model.interactions.find((request) => request.kind === "login");
+        assert.match(prompt?.kind === "login" ? prompt.payload.title : "", /Log in to /);
         await raw.api.call(agent.id, { type: "harness_interaction_response", interactionId: prompt?.id ?? "", answer: { value: "sk-test-login-key" } });
         await done;
 
@@ -58,10 +58,16 @@ export const scenario = defineScenario({
         const agent = memo.agent as string;
         const model = memo.model as AgentModel;
         const done = raw.api.call(agent, { type: "harness_login", provider: "openai", authType: "api_key" });
-        await until(model, () => model.interactions.some((request) => request.kind === "secret"));
-        const prompt = model.interactions.find((request) => request.kind === "secret");
+        await until(model, () => model.interactions.some((request) => request.kind === "login"));
+        const prompt = model.interactions.find((request) => request.kind === "login");
         await raw.api.call(agent, { type: "harness_interaction_response", interactionId: prompt?.id ?? "", answer: { cancelled: true } });
         await assert.rejects(done, /cancelled/i);
+
+        const back = raw.api.call<{ back?: true }>(agent, { type: "harness_login", provider: "openai", authType: "api_key" });
+        await until(model, () => model.interactions.some((request) => request.kind === "login"));
+        const first = model.interactions.find((request) => request.kind === "login");
+        await raw.api.call(agent, { type: "harness_interaction_response", interactionId: first?.id ?? "", answer: { back: true } });
+        assert.deepEqual(await back, { back: true });
 
         await raw.api.call(agent, { type: "harness_logout", provider: "openai" });
         const auth = JSON.parse(readFileSync(join(stand.dataDir, "auth.json"), "utf8")) as Record<string, unknown>;

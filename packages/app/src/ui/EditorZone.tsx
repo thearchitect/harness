@@ -38,7 +38,7 @@ export function HintLine({ hints }: { hints: KeyHint[] }) {
 function PickerBlock({ picker, onClose, onScope }: { picker: Picker; onClose: () => void; onScope: () => void }) {
   const theme = useTheme();
   const [filter, setFilter] = useState("");
-  const [selected, setSelected] = useState(0);
+  const [selected, setSelected] = useState(Math.max(0, picker.items.findIndex((item) => item.value === picker.initial)));
   const words = filter.toLowerCase().split(/\s+/).filter((word) => word !== "");
   const matching = picker.items.filter((item) => words.every((word) => `${item.label} ${item.description ?? ""}`.toLowerCase().includes(word)));
   // a list that takes typed values offers the text itself first
@@ -183,6 +183,8 @@ export function EditorZoneView(props: {
   completions: Completion[];
   onComplete: (completion: Completion) => void;
   onAnswer: (interactionId: string, value: unknown) => void;
+  /** A short word in the status line (copied, …). */
+  onNotify: (message: string) => void;
   onClosePicker: () => void;
   onPickerScope: () => void;
   /** An extension's component in the editor's place (ComponentView). */
@@ -206,7 +208,7 @@ export function EditorZoneView(props: {
           case "editor":
             return <Editor text={props.text} onText={props.onText} onSubmit={props.onSubmit} mode={zone.mode} completions={props.completions} onComplete={props.onComplete} placeholder={props.placeholder} device={props.device} />;
           case "interaction":
-            return <InteractionBlock request={zone.request} from={zone.from} answer={(value) => props.onAnswer(zone.request.id, value)} />;
+            return <InteractionBlock request={zone.request} from={zone.from} answer={(value) => props.onAnswer(zone.request.id, value)} notify={props.onNotify} />;
           case "picker":
             return <PickerBlock key={zone.picker.id} picker={zone.picker} onClose={props.onClosePicker} onScope={props.onPickerScope} />;
           case "hint":

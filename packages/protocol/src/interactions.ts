@@ -65,6 +65,27 @@ export type PiDialogPayload =
 
 export type PiDialogAnswer = { value: string } | { confirmed: boolean } | { cancelled: true };
 
+/** What a provider's login asks for now: a line (a code, a pasted address), a secret, a choice. */
+export type LoginPrompt =
+  | { type: "text" | "manual_code" | "secret"; message: string; placeholder?: string }
+  | { type: "select"; message: string; options: { id: string; label: string; description?: string }[] };
+
+/**
+ * One step of a provider's login, running on the session's node: what it shows (the sign-in link,
+ * a device code, progress) and what it asks (`prompt`), if anything. Opening and copying the link
+ * happen on the client; the answer goes on, back one step, or cancels the login.
+ */
+export type LoginPayload = {
+  title: string;
+  url?: string;
+  instructions?: string;
+  deviceCode?: { uri: string; code: string };
+  progress: string[];
+  prompt?: LoginPrompt;
+};
+
+export type LoginAnswer = { value: string } | { option: string } | { back: true } | { cancelled: true };
+
 export type InteractionMap = {
   gate: { payload: GatePayload; answer: GateAnswer };
   secret: { payload: SecretPayload; answer: SecretAnswer };
@@ -72,11 +93,12 @@ export type InteractionMap = {
   choice: { payload: ChoicePayload; answer: ChoiceAnswer };
   display: { payload: DisplayPayload; answer: DisplayAnswer };
   "pi-dialog": { payload: PiDialogPayload; answer: PiDialogAnswer };
+  login: { payload: LoginPayload; answer: LoginAnswer };
 };
 
 export type InteractionKind = keyof InteractionMap;
 
-export const INTERACTION_KINDS: readonly InteractionKind[] = ["gate", "secret", "questions", "choice", "display", "pi-dialog"];
+export const INTERACTION_KINDS: readonly InteractionKind[] = ["gate", "secret", "questions", "choice", "display", "pi-dialog", "login"];
 
 export type InteractionRequest = {
   [K in InteractionKind]: { id: string; kind: K; payload: InteractionMap[K]["payload"]; toolCallId?: string; openedAt: number };

@@ -6,6 +6,7 @@ import { useState } from "react";
 import { Image, TextInput, View } from "react-native";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { AskUser } from "./AskUser.tsx";
+import { Login } from "./Login.tsx";
 import { secretValueProblem } from "#protocol/interactions.ts";
 import { fontOf, useTheme } from "../theme/theme.tsx";
 import { Button, Frame, T } from "./primitives.tsx";
@@ -150,7 +151,7 @@ function PiDialog({ request, answer }: { request: Extract<InteractionRequest, { 
   }
 }
 
-export function InteractionBlock({ request, from, answer }: { request: InteractionRequest; from: string | undefined; answer: Answer }) {
+export function InteractionBlock({ request, from, answer, notify }: { request: InteractionRequest; from: string | undefined; answer: Answer; notify?: (message: string) => void }) {
   const body = (() => {
     switch (request.kind) {
       case "gate":
@@ -165,6 +166,8 @@ export function InteractionBlock({ request, from, answer }: { request: Interacti
         return <Display request={request} answer={answer} />;
       case "pi-dialog":
         return <PiDialog request={request} answer={answer} />;
+      case "login":
+        return <Login request={request} answer={answer} notify={notify ?? (() => undefined)} />;
       default:
         throw new Error(`unknown interaction: ${JSON.stringify(request satisfies never)}`);
     }

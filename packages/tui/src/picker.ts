@@ -34,6 +34,7 @@ export class PickerView extends Container implements Focusable {
     this.onCancel = actions.cancel;
     const t = theme();
     this.list = new SelectList(picker.items, Math.min(VISIBLE, Math.max(1, picker.items.length)), selectListTheme(t));
+    this.list.setSelectedIndex(Math.max(0, picker.items.findIndex((item) => item.value === picker.initial)));
     this.list.onSelect = (item) => void picker.choose(item.value);
     this.list.onCancel = () => this.onCancel();
 

@@ -72,7 +72,9 @@ playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools)
 - Sessions live on their node: closing the TUI leaves a node started as a service (and its
   agents) running; reopening shows everything again. Every client of a user sees the same tabs.
 - `harness hub`, `harness remote add`: [docs/operations/nodes.md](docs/operations/nodes.md).
-- Provider accounts: `harness auth login` (pi's command on `~/.harness`).
+- Provider accounts: `/login` in any client (the login runs on the session's node; its steps show in
+  the editor's place: open the sign-in link in this machine's browser or copy it, ← goes back a
+  step, Esc cancels), or `harness auth login` (pi's command on `~/.harness`).
 
 ## Code intelligence
 

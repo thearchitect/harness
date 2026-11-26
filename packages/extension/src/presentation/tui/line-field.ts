@@ -3,7 +3,7 @@
 // the end — without padding, its cursor the terminal's own (CURSOR_MARKER while focused, as in the
 // chat's editor). A mask draws one bullet per character, the cursor where the typed one is.
 
-import { Input, type Component, type Focusable } from "@earendil-works/pi-tui";
+import { Input, matchesKey, type Component, type Focusable } from "@earendil-works/pi-tui";
 
 export type LineFieldOptions = {
   prompt?: string;
@@ -58,6 +58,13 @@ export class LineField implements Component, Focusable {
   }
 
   handleInput(data: string): void {
+    if (matchesKey(data, "enter")) {
+      // Enter submits a line (harness binds pi-tui's tui.input.submit to the editor's Ctrl+Enter)
+      this.onSubmit?.(this.input.getValue());
+      return;
+    } else {
+      // a key for the field
+    }
     const before = this.input.getValue();
     this.input.handleInput(data);
     const after = this.input.getValue();

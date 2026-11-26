@@ -55,6 +55,36 @@ export function useListKeys(ref: RefObject<unknown>, onEscape: () => void = focu
   }, [ref, onEscape]);
 }
 
+/**
+ * A step's keys besides the list's (a login step): ← on a row goes back, typing on a row goes to the
+ * step's field at once (the character lands in it).
+ */
+export function useStepKeys(ref: RefObject<unknown>, onBack: () => void): void {
+  useEffect(() => {
+    const node = ref.current as HTMLElement | null;
+    if (node === null || typeof node.addEventListener !== "function") {
+      return undefined;
+    } else {
+      const keydown = (event: KeyboardEvent): void => {
+        const active = document.activeElement as HTMLElement | null;
+        const inField = active?.hasAttribute("data-list-row") === true;
+        if (inField || active === null || !node.contains(active)) {
+          return; // the field's keys, or the focus is elsewhere
+        } else if (event.key === "ArrowLeft") {
+          event.preventDefault();
+          onBack();
+        } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey && event.key !== " ") {
+          node.querySelector<HTMLElement>("[data-list-row]")?.focus();
+        } else {
+          // the list's keys
+        }
+      };
+      node.addEventListener("keydown", keydown);
+      return () => node.removeEventListener("keydown", keydown);
+    }
+  }, [ref, onBack]);
+}
+
 /** The keyboard into a list (by its accessible name): on its selected row, else its first. */
 export function focusList(label: string): boolean {
   const list = document.querySelector<HTMLElement>(`[aria-label="${label}"]`);

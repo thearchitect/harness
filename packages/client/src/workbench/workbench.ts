@@ -41,6 +41,8 @@ export type Picker = {
   custom?: string;
   scopes?: { title: string; items: PickerItem[] }[];
   scope?: number;
+  /** The item selected when the list opens (the one the operator came back from). */
+  initial?: string;
 };
 
 /** A key and what it does, for a list's hint line: drawn as pi draws key hints (`tab favorites/all`). */
@@ -1508,7 +1510,7 @@ export class Workbench {
    * Logs in to a provider on the active session's node (where its agents read auth.json): a list of
    * providers, then the login's steps as interactions in the editor's place.
    */
-  async loginPicker(): Promise<void> {
+  async loginPicker(initial?: string): Promise<void> {
     const tab = this.activeTab();
     if (tab?.agent === undefined) {
       this.notify("warning", "no session: logins are stored on a session's node");
@@ -1525,13 +1527,17 @@ export class Workbench {
           label: `${provider.configured ? "✓ " : ""}${provider.name}`,
           description: provider.authType === "oauth" ? (provider.subscription ? "subscription" : "account") : "API key",
         })),
+        ...(initial !== undefined ? { initial } : {}),
         choose: (value) => {
           const [provider, authType] = value.split("\u0000") as [string, "oauth" | "api_key"];
-          // the login runs on the node; its steps arrive as interactions
+          // the login runs on the node; its steps arrive as `login` interactions
           void api
-            .call(agentId, { type: "harness_login", provider, authType })
-            .then(() => this.notify("info", `logged in to ${provider} on ${node}`))
-            .catch((error: unknown) => this.notify("error", `login to ${provider}: ${error instanceof Error ? error.message : String(error)}`));
+            .call<{ back?: true }>(agentId, { type: "harness_login", provider, authType })
+            .then((result) => (result.back === true ? this.loginPicker(value) : this.notify("info", `logged in to ${provider} on ${node}`)))
+            .catch((error: unknown) => {
+              const message = error instanceof Error ? error.message : String(error);
+              this.notify(message === "Login cancelled" ? "info" : "error", `login to ${provider}: ${message}`);
+            });
         },
       });
     }

@@ -47,11 +47,13 @@ import { Footer } from "./footer.ts";
 import type { Renderers } from "./presentation.ts";
 import { HarnessPanel, PANEL_MIN_WIDTH, PANEL_WIDTH } from "./panel.ts";
 import { hintLine, PickerView } from "./picker.ts";
+import { LoginView } from "./login.ts";
+import { LoginCallback } from "./login-callback.ts";
 import { RemoteAutocompleteProvider } from "./remote-complete.ts";
 import { AskUserView } from "./ask-user.ts";
 import { TranscriptView, type TranscriptOptions } from "./transcript.ts";
 import { clipboardInsert, spaced, type Clipboard, type PasteTarget } from "./clipboard.ts";
-import { getTheme, mermaidTransformer, openBrowser, piKeybindings, systemClipboard, themeController, type ThemeController } from "./pi-internals.ts";
+import { copyToClipboard, getTheme, mermaidTransformer, openBrowser, piKeybindings, systemClipboard, themeController, type ThemeController } from "./pi-internals.ts";
 
 // the strips: narrow, the transcript has the width
 const LEFT_WIDTH = 18;
@@ -76,6 +78,8 @@ export type AppOptions = {
   clipboard?: Clipboard;
   /** Opens a link in the operator's browser (tests record it); pi's opener by default. */
   openUrl?: (url: string) => void;
+  /** Copies text to the system clipboard (tests record it); pi's copying by default. */
+  copyText?: (text: string) => Promise<void>;
 };
 
 /**
@@ -225,6 +229,8 @@ export class App {
   private prefillApplied: string | undefined;
   private urlOpened: string | undefined;
   private readonly openUrl: (url: string) => void;
+  private readonly loginCallback: LoginCallback;
+  private readonly copyText: (text: string) => Promise<void>;
   private themeApplied: string | undefined;
   private readonly taskOutput = new Lines();
   /** A subagent's heading over its transcript (the same transcript view as a session's). */
@@ -261,7 +267,14 @@ export class App {
     this.client = options.client;
     this.clipboard = options.clipboard ?? systemClipboard;
     this.openUrl = options.openUrl ?? openBrowser;
+    this.copyText = options.copyText ?? copyToClipboard;
     this.workbench = options.workbench;
+    // a login on another machine's node: the browser's way back comes through this machine
+    this.loginCallback = new LoginCallback(
+      (node) => node === undefined || node === this.client.home,
+      (interactionId, answer) => this.workbench.answer(interactionId, answer),
+      (message) => this.workbench.notify("warning", message),
+    );
     this.renderers = options.renderers;
     this.cwd = options.cwd;
     this.onQuit = options.onQuit;
@@ -694,8 +707,13 @@ export class App {
       return;
     } else {
       this.editorShown = id;
-      // what the zone showed ends: a running ask_user prompt stops
+      // what the zone showed ends: a running ask_user prompt stops; a login's callback stops listening
       (this.editorComponent as { dispose?: () => void } | undefined)?.dispose?.();
+      if (zone.kind !== "interaction" || zone.request.kind !== "login") {
+        this.loginCallback.stop();
+      } else {
+        // the login's next step follows it (interactionView)
+      }
       this.editorZone.clear();
       switch (zone.kind) {
         case "editor":
@@ -760,6 +778,13 @@ export class App {
         return choiceDialog(this.tui, request.payload, answer);
       case "pi-dialog":
         return piDialog(this.tui, request.payload, answer);
+      case "login":
+        this.loginCallback.follow(request, this.workbench.activeTab()?.node);
+        return new LoginView(this.tui, getTheme, request.payload, answer, {
+          open: (url) => this.openUrl(url),
+          copy: (text) => this.copyText(text),
+          notify: (message) => this.workbench.notify("info", message),
+        });
       case "display":
         return new Text(theme.fg("dim", ` display ${request.payload.path}`), 0, 0);
       default:

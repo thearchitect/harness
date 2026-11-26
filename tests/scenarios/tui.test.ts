@@ -361,6 +361,54 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "a login step in the editor's place: ← from the first step returns to the providers; the link without padding; open and copy; ← goes back one step; ← in the field moves the cursor; Enter signs in",
+      async run({ stand, clients: { tui } }) {
+        const login = async (): Promise<void> => {
+          await tui.type("/login");
+          await tui.submit();
+          await tui.waitForText((text) => text.includes("Log in on"));
+          await tui.type("probe");
+          await tui.waitForText((text) => text.includes("Probe SSO"));
+          await tui.press("\r");
+          await tui.waitForText((text) => text.includes("Choose the probe's login method:"));
+        };
+        // back from the first step: the providers again, the probe selected
+        await login();
+        await tui.press("\x1b[D");
+        await tui.waitForText((text) => text.includes("Log in on") && /→ .*Probe SSO/.test(text));
+        await tui.press("\x1b");
+
+        await login();
+        await tui.press("\r"); // Browser
+        const text = await tui.waitForText((screen) => screen.includes("Complete the probe's sign-in"));
+        assert.ok(text.split("\n").some((row) => /^.{18}│https:\/\/sso\.example\/authorize/.test(row)), "the link starts right after the rule");
+        await tui.press("\r"); // open in browser
+        assert.match(tui.opened.at(-1) ?? "", /state=run2/);
+        await tui.press("\x1b[B");
+        await tui.press("\r"); // copy link
+        assert.match(tui.copied.at(-1) ?? "", /^https:\/\/sso\.example\/authorize.*state=run2$/);
+
+        // back one step: the method again, then a new link
+        await tui.press("\x1b[A");
+        await tui.press("\x1b[D");
+        await tui.waitForText((screen) => screen.includes("Choose the probe's login method:"));
+        await tui.press("\r");
+        await tui.waitForText(() => {
+          const zone = tui.screen().zones.editor;
+          return zone.kind === "interaction" && zone.request.kind === "login" && (zone.request.payload.url ?? "").endsWith("state=run3");
+        });
+
+        // typing goes to the field at once; ← there moves the cursor
+        await tui.type("god");
+        await tui.press("\x1b[D");
+        await tui.type("o");
+        await tui.press("\r");
+        await tui.waitForText(() => tui.screen().zones.editor.kind === "editor");
+        const auth = JSON.parse(readFileSync(join(stand.dataDir, "auth.json"), "utf8")) as Record<string, { access?: string }>;
+        assert.equal(auth["probe-sso"]?.access, "probe-access");
+      },
+    },
+    {
       name: "keys as in pi: Ctrl+C clears the editor, Ctrl+D deletes forward with text and closes the tab without",
       async run({ clients: { tui } }) {
         const tabs = tui.workbench.tabs().length;

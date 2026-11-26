@@ -207,7 +207,7 @@ Providers one can log in to on the agent's machine. → { providers }
 
 ### `harness_login`
 
-Logs in to a provider on the agent's machine; its steps reach the operator as interactions; answers when the login is done. → {}
+Logs in to a provider on the agent's machine; each step is a `login` interaction; answers when the login is done, or { back: true } when the operator went back from its first step. → { back? }
 
 | Field | Type | Required | Description |
 |---|---|---|---|

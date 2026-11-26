@@ -481,6 +481,7 @@ export function Shell(props: {
             completions={props.completions}
             onComplete={props.onComplete}
             onAnswer={(id, value) => void workbench.answer(id, value)}
+            onNotify={(message) => workbench.notify("info", message)}
             onClosePicker={() => workbench.closePicker()}
             onPickerScope={() => workbench.nextPickerScope()}
             component={(component) => <ComponentView component={component} workbench={workbench} rows={20} />}

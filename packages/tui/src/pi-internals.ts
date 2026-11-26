@@ -83,7 +83,14 @@ export function customEntryComponent(entry: CustomEntry<unknown>, renderer: Entr
   return new customEntryModule.CustomEntryComponent(entry, renderer, outputPad);
 }
 
-const clipboardModule = await load<{ readClipboardFilePaths(): Promise<string[] | null>; readClipboardText(): Promise<string | null> }>(PI_INTERNAL_MODULES.clipboard);
+const clipboardModule = await load<{ readClipboardFilePaths(): Promise<string[] | null>; readClipboardText(): Promise<string | null>; copyToClipboard(text: string): Promise<void> }>(
+  PI_INTERNAL_MODULES.clipboard,
+);
+
+/** Copies text to the system clipboard as pi does (OSC 52 where the terminal takes it, the native tools otherwise). */
+export function copyToClipboard(text: string): Promise<void> {
+  return clipboardModule.copyToClipboard(text);
+}
 const clipboardImageModule = await load<{
   readClipboardImage(): Promise<{ bytes: Uint8Array; mimeType: string } | null>;
   extensionForImageMimeType(mimeType: string): string | null;

@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { GateDialog } from "#extension/presentation/tui/gate.ts";
 import { AskUserView } from "#tui/ask-user.ts";
+import { LoginView } from "#tui/login.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
 import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
@@ -41,6 +42,8 @@ function interaction(tui: TUI, request: InteractionRequest): Component {
       return choiceDialog(tui, request.payload, answer);
     case "pi-dialog":
       return piDialog(tui, request.payload, answer);
+    case "login":
+      return new LoginView(tui, getTheme, request.payload, answer, { open: () => undefined, copy: async () => undefined, notify: () => undefined });
     case "display":
       throw new Error("display has no dialog in the TUI");
     default:

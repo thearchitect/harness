@@ -172,7 +172,7 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
   harness_login: Request(
     "harness_login",
     { provider: Str(), authType: Type.Union([Type.Literal("oauth"), Type.Literal("api_key")]) },
-    "Logs in to a provider on the agent's machine; its steps reach the operator as interactions; answers when the login is done. → {}",
+    "Logs in to a provider on the agent's machine; each step is a `login` interaction; answers when the login is done, or { back: true } when the operator went back from its first step. → { back? }",
   ),
   harness_navigate: Request(
     "harness_navigate",

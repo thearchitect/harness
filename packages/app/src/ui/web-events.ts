@@ -15,6 +15,11 @@ export function useListKeys(_ref: RefObject<unknown>, _onEscape?: () => void): v
   // nothing to listen to
 }
 
+/** A step's ← and typing on its rows: phones have the back button and the field itself. */
+export function useStepKeys(_ref: RefObject<unknown>, _onBack: () => void): void {
+  // nothing to listen to
+}
+
 export function focusList(_label: string): boolean {
   return false;
 }

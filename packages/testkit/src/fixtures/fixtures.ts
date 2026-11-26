@@ -75,6 +75,34 @@ export const INTERACTIONS: Record<string, InteractionRequest> = {
   "pi-select": { id: "p1", kind: "pi-dialog", openedAt: at, payload: { method: "select", title: "Pick a profile", options: ["default", "fast", "careful"] } },
   "pi-confirm": { id: "p2", kind: "pi-dialog", openedAt: at, payload: { method: "confirm", title: "Delete the cache?", message: "12 MB in ~/.cache/x" } },
   "pi-input": { id: "p3", kind: "pi-dialog", openedAt: at, payload: { method: "input", title: "Branch name", placeholder: "feature/…" } },
+  "login-method": {
+    id: "l1",
+    kind: "login",
+    openedAt: at,
+    payload: {
+      title: "Log in to Anthropic",
+      progress: [],
+      prompt: { type: "select", message: "Select Anthropic login method:", options: [{ id: "browser", label: "Browser login (default)" }, { id: "manual", label: "Copy code login (headless)" }] },
+    },
+  },
+  "login-link": {
+    id: "l2",
+    kind: "login",
+    openedAt: at,
+    payload: {
+      title: "Log in to Anthropic",
+      url: "https://claude.ai/oauth/authorize?code=true&client_id=9d1c250a-e61b-44d9-88ed-5944d1962f5e&response_type=code&redirect_uri=http%3A%2F%2Flocalhost%3A53692%2Fcallback&scope=org%3Acreate_api_key+user%3Aprofile+user%3Ainference&code_challenge=cclTExtxrdsjWkTo_wBzREmM5MGnRkTu8PJXzNkQ-FU&code_challenge_method=S256&state=OQAGXVsKCKuXBv1eThmHZioj8UP4mskT1",
+      instructions: "Complete login in your browser. If the browser is on another machine, paste the final redirect URL here.",
+      progress: [],
+      prompt: { type: "manual_code", message: "Paste the authorization code or the redirect URL:" },
+    },
+  },
+  "login-device": {
+    id: "l3",
+    kind: "login",
+    openedAt: at,
+    payload: { title: "Log in to GitHub Copilot", deviceCode: { uri: "https://github.com/login/device", code: "ABCD-1234" }, progress: ["Waiting for authorization…"] },
+  },
 };
 
 function summary(status: "idle" | "running" | "waiting" | "error", extra: Partial<Tab> = {}): Tab {
