@@ -59,6 +59,16 @@ an invitation.
   own (`managed-only`, `autoMemoryEnabled: false` in its `--settings`): what it knows of the project
   is what harness loaded.
 
+  Clients show a `claude` subagent as a session: its stream-json becomes pi's messages
+  (`protocol/src/claude-transcript.ts`) drawn by pi's components — markdown, thinking (streamed with
+  `--include-partial-messages`), tool calls with their results, `Edit` as pi's `edit` with its diff,
+  `mcp__harness__<tool>` by that tool's renderer, the run's end as a banner. A subagent of Claude's
+  own (`Task`) shows inside its call: collapsed the count of its steps and the latest, expanded
+  (Ctrl+E) every step; its row among the session's tasks opens that call. The stream and the
+  messages harness sent are kept in `~/.harness/claude/<session>.jsonl`, so the transcript is there
+  after a restart; the HAP requests `harness_subagent_snapshot` and `harness_subagent_entries_before`
+  read it, `harness_subagent_entries` carries its changes to the clients attached to the session.
+
 ## Calls
 
 `subagent { agent, instruction, plan?, continue?, session?, background? }`. `instruction` says what to

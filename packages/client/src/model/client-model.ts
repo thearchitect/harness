@@ -351,6 +351,30 @@ export class ClientModel {
     }
   }
 
+  /**
+   * A `claude` subagent's transcript, kept by the session that runs it (followed in full): the model
+   * at once, its snapshot loading into it; the parent's stream keeps it current.
+   */
+  claudeTranscript(node: string, agentId: string, session: string): AgentModel | undefined {
+    const parent = this.full.get(agentKey(node, agentId));
+    const known = parent?.claude.get(session);
+    if (parent === undefined || known !== undefined) {
+      return known;
+    } else {
+      const model = new AgentModel(`${agentId}/claude/${session}`);
+      parent.claude.set(session, model);
+      model.onChange(() => this.changed());
+      void this.connection(node)
+        .call<{ entries: unknown[]; cursor?: string; streaming?: unknown; model?: string; costUsd: number }>(agentId, { type: "harness_subagent_snapshot", session, limit: SNAPSHOT_ENTRIES })
+        .then((snapshot) => {
+          model.claudeInfo = { ...(snapshot.model !== undefined ? { model: snapshot.model } : {}), costUsd: snapshot.costUsd };
+          model.loadEntries(snapshot.entries, snapshot.cursor, snapshot.streaming);
+        })
+        .catch((error: unknown) => model.notice("error", `the subagent's transcript: ${error instanceof Error ? error.message : String(error)}`));
+      return model;
+    }
+  }
+
   async loadOlder(node: string, agentId: string): Promise<void> {
     const model = this.full.get(agentKey(node, agentId));
     if (model !== undefined && model.cursor !== undefined) {

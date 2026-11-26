@@ -40,6 +40,9 @@ import { registerDisplayFile } from "./tools/display_file.ts";
 import { registerLsp } from "./tools/lsp/index.ts";
 import { registerProjectTree } from "./tools/project_tree.ts";
 import { registerSendFile } from "./tools/send_file.ts";
+import { ClaudeTranscripts } from "./subagents/engines/claude/transcripts.ts";
+import { CLAUDE_NOTICE_ENTRY, CLAUDE_RESULT_ENTRY, CLAUDE_TASK_TOOLS, type ClaudeTranscript } from "#protocol/claude-transcript.ts";
+import { claudeTaskRenderers } from "./presentation/claude-task.ts";
 
 const EXTENSION_DIR = dirname(fileURLToPath(import.meta.url));
 
@@ -61,6 +64,8 @@ export type HarnessController = {
   report(): Promise<string>;
   /** The subagent profiles this session may call, with their models resolved, and those left out. */
   subagentProfiles(): { profiles: SubagentProfileView[]; problems: string[] };
+  /** A `claude` subagent's transcript (live, or read back from its log). */
+  claudeTranscript(session: string): ClaudeTranscript;
   state(): HarnessState;
   supervisor: Supervisor;
 };
@@ -71,6 +76,7 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
   const store = new StateStore((state) => host.publishState(state));
   const interrupts = new Interrupts();
   const supervisor = new Supervisor({ publish: (tasks) => store.update({ tasks }) });
+  const claudeTranscripts = new ClaudeTranscripts(host.dataDir, (session, entries, streaming) => host.publishClaude(session, entries, streaming));
   const defaultsPath = join(host.dataDir, DEFAULTS_FILE);
   let live: Live | undefined;
   let nextMode: RunMode | undefined;
@@ -82,7 +88,7 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
   const launch = host.subagent;
   const engines = {
     harness: harnessEngine(host.children),
-    claude: claudeEngine({ interactions: host.interactions, dataDir: host.dataDir, mirror: (task, source) => supervisor.mirror(task, source), promptRun: () => promptRun }),
+    claude: claudeEngine({ interactions: host.interactions, dataDir: host.dataDir, mirror: (task, source) => supervisor.mirror(task, source), promptRun: () => promptRun, transcripts: claudeTranscripts }),
   };
 
   function rememberModel(ref: string): void {
@@ -179,6 +185,9 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
       ].join("\n");
     },
 
+    claudeTranscript(session) {
+      return claudeTranscripts.get(session);
+    },
     subagentProfiles() {
       const ctx = live?.ctx;
       const catalog = ctx !== undefined ? ctx.modelRegistry.getAll().map((model) => ({ provider: model.provider, id: model.id })) : [];
@@ -479,6 +488,11 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
     pi.registerEntryRenderer<FinishedEntryData>(ENTRY.finished, entryRenderers.finished);
     pi.registerEntryRenderer<SystemPromptEntryData>(ENTRY.systemPrompt, entryRenderers.systemPrompt);
     pi.registerEntryRenderer(MODEL_REF_ENTRY, entryRenderers.modelRef as never);
+
+    // a `claude` subagent's transcript: its run's end, its notices, the calls of Claude's own subagents
+    pi.registerEntryRenderer(CLAUDE_RESULT_ENTRY, entryRenderers.claudeResult as never);
+    pi.registerEntryRenderer(CLAUDE_NOTICE_ENTRY, entryRenderers.claudeNotice as never);
+    pi.registerToolRenderer((toolName, next) => (CLAUDE_TASK_TOOLS.has(toolName) ? (claudeTaskRenderers as never) : next()));
   };
 
   return { factory, controller };

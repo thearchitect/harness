@@ -26,6 +26,9 @@ export type HapRequest =
   | { type: "harness_task_input"; id: string; taskId: string; data: string }
   | { type: "harness_task_output"; id: string; taskId: string; offset: number; limit: number }
   | { type: "harness_subagent_send"; id: string; session: string; text: string }
+  /** A `claude` subagent's transcript: its latest entries (and a cursor for older ones), its model and cost. */
+  | { type: "harness_subagent_snapshot"; id: string; session: string; limit?: number }
+  | { type: "harness_subagent_entries_before"; id: string; session: string; cursor: string; limit?: number }
   | { type: "harness_complete"; id: string; kind: "path" | "file"; prefix: string }
   /** Keys for a bridged component (as the terminal sends them), and the width it is drawn at. */
   | { type: "harness_component_input"; id: string; componentId: string; data: string }
@@ -61,6 +64,8 @@ export const HAP_REQUEST_TYPES: readonly HapRequestType[] = [
   "harness_task_input",
   "harness_task_output",
   "harness_subagent_send",
+  "harness_subagent_snapshot",
+  "harness_subagent_entries_before",
   "harness_complete",
   "harness_component_input",
   "harness_component_resize",
@@ -134,6 +139,8 @@ export type HapEvent =
   | { type: "harness_hello"; protocol: number; harness: string; session: SessionView }
   | HapResponse
   | { type: "harness_state"; state: HarnessState }
+  /** A `claude` subagent's transcript changed: entries new or updated (by id), the message being streamed (null: none). */
+  | { type: "harness_subagent_entries"; session: string; entries: unknown[]; streaming: unknown }
   | { type: "harness_session"; session: SessionView }
   | { type: "harness_interaction_request"; request: InteractionRequest }
   | { type: "harness_interaction_closed"; interactionId: string; reason: InteractionCloseReason }

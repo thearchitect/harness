@@ -7,7 +7,8 @@
 // Steps: { text } · { edit: { file_path, old_string?, new_string?, content? } } (asks the hook,
 // writes when allowed) · { mcp: { name, arguments } } (calls harness's MCP tool) · { limit: true }
 // (waits for its limit until interrupted) · { task: { id, command } } (a background task until
-// stopped) · { sleep: ms }.
+// stopped) · { sleep: ms } · { raw: [lines] } (stream-json lines as they are: thinking, partial
+// messages, a Task with its subagent's steps; session_id is filled in).
 
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
@@ -18,6 +19,7 @@ type Step =
   | { mcp: { name: string; arguments: Record<string, unknown> } }
   | { limit: true }
   | { task: { id: string; command: string } }
+  | { raw: Record<string, unknown>[] }
   | { sleep: number };
 
 const argv = process.argv.slice(2);
@@ -158,6 +160,10 @@ async function play(steps: Step[]): Promise<void> {
       out({ type: "system", subtype: "api_retry", attempt: 1, max_retries: 300, retry_delay_ms: 3_600_000, error: "rate_limit", session_id: session });
       while (!interrupted) {
         await sleep(60_000);
+      }
+    } else if ("raw" in step) {
+      for (const line of step.raw) {
+        out({ ...line, session_id: session });
       }
     } else if ("task" in step) {
       toolCounter += 1;

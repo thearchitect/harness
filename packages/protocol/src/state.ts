@@ -29,6 +29,8 @@ export type TaskInfo = {
   notify: NotifyPolicy;
   /** The subagent session that owns the task (Claude background tasks). */
   owner?: string;
+  /** A subagent of Claude's: the Task call that started it in its owner's transcript. */
+  toolUseId?: string;
 };
 
 export type NotifyPolicy = "wake" | "queue" | "none";
@@ -79,14 +81,9 @@ export type SubagentInfo = {
   startedAt: number;
   endedAt?: number;
   costUsd?: number;
-  /** The latest steps (at most SUBAGENT_STEPS_SHOWN) and the latest text: what a client shows of a `claude` subagent. */
-  steps?: string[];
-  text?: string;
   /** The path of the plan the subagent works by (its `plan`). */
   plan?: string;
 };
-
-export const SUBAGENT_STEPS_SHOWN = 50;
 
 export type HarnessState = {
   variant: Variant;

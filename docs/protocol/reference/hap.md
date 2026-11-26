@@ -119,6 +119,29 @@ Operator steering of a live subagent.
 | `session` | string | yes | A live subagent session |
 | `text` | string | yes |  |
 
+### `harness_subagent_snapshot`
+
+A claude subagent's transcript as pi entries (claude-transcript.ts). → { entries, cursor?, streaming?, model?, costUsd }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_subagent_snapshot"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+| `session` | string | yes | A claude subagent's session |
+| `limit` | integer |  |  |
+
+### `harness_subagent_entries_before`
+
+Older entries of a claude subagent's transcript. → { entries, cursor? }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_subagent_entries_before"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+| `session` | string | yes |  |
+| `cursor` | string | yes | From harness_subagent_snapshot or an earlier page |
+| `limit` | integer |  |  |
+
 ### `harness_complete`
 
 Completions of paths on the agent's machine.
@@ -333,3 +356,14 @@ A bridged component closed.
 |---|---|---|---|
 | `type` | `"harness_component_close"` | yes |  |
 | `componentId` | string | yes |  |
+
+### `harness_subagent_entries`
+
+A claude subagent's transcript changed: entries new or updated by id.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_subagent_entries"` | yes |  |
+| `session` | string | yes |  |
+| `entries` | any[] | yes |  |
+| `streaming` | any | yes | The message being streamed, or null |

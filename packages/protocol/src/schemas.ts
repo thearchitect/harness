@@ -136,6 +136,16 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
   harness_task_input: Request("harness_task_input", { taskId: Str(), data: Str("Written to the task's stdin") }, "Input for a background task."),
   harness_task_output: Request("harness_task_output", { taskId: Str(), offset: Int("Byte offset in the task's output"), limit: Int("Bytes at most") }, "A background task's output."),
   harness_subagent_send: Request("harness_subagent_send", { session: Str("A live subagent session"), text: Str() }, "Operator steering of a live subagent."),
+  harness_subagent_snapshot: Request(
+    "harness_subagent_snapshot",
+    { session: Str("A claude subagent's session"), limit: Opt(Type.Integer({ minimum: 1 })) },
+    "A claude subagent's transcript as pi entries (claude-transcript.ts). → { entries, cursor?, streaming?, model?, costUsd }",
+  ),
+  harness_subagent_entries_before: Request(
+    "harness_subagent_entries_before",
+    { session: Str(), cursor: Str("From harness_subagent_snapshot or an earlier page"), limit: Opt(Type.Integer({ minimum: 1 })) },
+    "Older entries of a claude subagent's transcript. → { entries, cursor? }",
+  ),
   harness_complete: Request("harness_complete", { kind: Type.Union([Type.Literal("path"), Type.Literal("file")]), prefix: Str() }, "Completions of paths on the agent's machine."),
   harness_component_input: Request("harness_component_input", { componentId: Str(), data: Str("Keys as the terminal sends them") }, "Keys for a bridged component."),
   harness_component_resize: Request(
@@ -215,6 +225,10 @@ export const HAP_EVENT_SCHEMAS = {
   harness_component_open: Obj({ type: Type.Literal("harness_component_open"), componentId: Str(), overlay: Type.Boolean() }, "A bridged component opens (terminal clients)."),
   harness_component_render: Obj({ type: Type.Literal("harness_component_render"), componentId: Str(), lines: Type.Array(Str(), { description: "ANSI lines" }) }, "A bridged component's new lines."),
   harness_component_close: Obj({ type: Type.Literal("harness_component_close"), componentId: Str() }, "A bridged component closed."),
+  harness_subagent_entries: Obj(
+    { type: Type.Literal("harness_subagent_entries"), session: Str(), entries: Type.Array(Any("A pi entry")), streaming: Any("The message being streamed, or null") },
+    "A claude subagent's transcript changed: entries new or updated by id.",
+  ),
 } as const;
 
 export type Checked = { ok: true } | { ok: false; error: string };

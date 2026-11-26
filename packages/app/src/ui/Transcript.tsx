@@ -10,6 +10,7 @@ import type { AgentModel, Message, ToolRun, TranscriptItem } from "#client/model
 import type { ScrollAnchor } from "#client/workbench/view-state.ts";
 import { MODE_TEXT, isRunMode } from "#protocol/modes.ts";
 import { splitPlanMessage, type Plan } from "#protocol/plan.ts";
+import { argumentsLine, stepLine, type TaskDetails, type TaskStep } from "#protocol/claude-transcript.ts";
 import { useTheme, type Token } from "../theme/theme.tsx";
 import { Markdown } from "./Markdown.tsx";
 import { Button, T } from "./primitives.tsx";
@@ -35,7 +36,7 @@ function planOf(result: Message | undefined): Plan | undefined {
 /** The most telling argument of a tool call, for its row's title. */
 export function argumentSummary(args: unknown): string {
   const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
-  const first = record.path ?? record.command ?? record.pattern ?? record.query ?? record.url ?? record.file ?? record.agent ?? record.code;
+  const first = record.path ?? record.command ?? record.pattern ?? record.query ?? record.url ?? record.file ?? record.agent ?? record.code ?? record.description;
   return typeof first === "string" ? first.split("\n")[0]?.slice(0, 160) ?? "" : "";
 }
 
@@ -113,7 +114,7 @@ function SentFileRow({ file, onDownload }: { file: SentFile; onDownload: (path: 
   );
 }
 
-function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; result: Message | undefined; live: ToolRun | undefined; expanded: boolean; onDownload: (path: string, name: string) => void }) {
+export function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; result: Message | undefined; live: ToolRun | undefined; expanded: boolean; onDownload: (path: string, name: string) => void }) {
   const theme = useTheme();
   const sent = call.name === "send_file" ? sentFileOf(result) : undefined;
   if (sent !== undefined) {
@@ -123,7 +124,8 @@ function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; re
   }
   const [open, setOpen] = useState<boolean | undefined>(undefined);
   const shown = open ?? expanded;
-  const done = result !== undefined;
+  const task = taskOf(result);
+  const done = result !== undefined && task?.running !== true;
   const failed = result?.isError === true;
   const background: Token = !done ? "toolPendingBg" : failed ? "toolErrorBg" : "toolSuccessBg";
   const output = done ? blocksOf(result.content) : blocksOf((live?.partialResult as { content?: unknown } | undefined)?.content);
@@ -145,12 +147,15 @@ function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; re
       </Pressable>
       {editsOf(call) !== undefined ? (
         <DiffView edits={editsOf(call) ?? []} />
-      ) : shown ? (
+      ) : shown && task === undefined ? (
         <T zone="chat" color="dim" selectable>
           {JSON.stringify(call.arguments, null, 2)}
         </T>
       ) : null}
-      {text !== "" ? (
+      {task !== undefined ? (
+        // a subagent of Claude's: its steps, then its result
+        <TaskSteps details={task} expanded={shown} result={text} />
+      ) : text !== "" ? (
         <T zone="chat" color="toolOutput" selectable>
           {!shown && lines.length > 6 ? `… ${lines.length - 6} more lines\n` : ""}
           {preview}
@@ -167,6 +172,62 @@ function ToolRow({ call, result, live, expanded, onDownload }: { call: Block; re
         .map((block, index) => (
           <ZoomableImage key={index} uri={`data:${block.mimeType};base64,${block.data}`} />
         ))}
+    </View>
+  );
+}
+
+/** The steps of a subagent of Claude's (a Task call of a `claude` subagent), from its result's details. */
+function taskOf(result: Message | undefined): TaskDetails | undefined {
+  const details = result?.details as Partial<TaskDetails> | undefined;
+  return Array.isArray(details?.steps) ? (details as TaskDetails) : undefined;
+}
+
+/** Collapsed: the count and the latest step; expanded: every step, a nested Task's under it. */
+function TaskSteps({ details, expanded, result }: { details: TaskDetails; expanded: boolean; result: string }) {
+  const latest = details.steps.at(-1);
+  const said = expanded && latest?.kind === "text" && latest.text.trim() === result.trim();
+  return (
+    <View>
+      <T zone="chat" color="muted" lines={1}>
+        {`${details.steps.length} steps${details.running ? " · working" : ""}${latest !== undefined && !expanded ? ` · ${stepLine(latest)}` : ""}`}
+      </T>
+      {expanded ? <StepList steps={details.steps} depth={0} /> : null}
+      {result !== "" && !said ? <Markdown source={expanded ? result : result.split("\n").slice(0, 3).join("\n")} /> : null}
+    </View>
+  );
+}
+
+function StepList({ steps, depth }: { steps: TaskStep[]; depth: number }) {
+  return (
+    <View style={{ paddingLeft: 12 + depth * 12, gap: 2 }}>
+      {steps.map((step, index) => {
+        switch (step.kind) {
+          case "text":
+            return <Markdown key={index} source={step.text} />;
+          case "thinking":
+            return (
+              <T key={index} zone="chat" color="thinkingText" italic selectable>
+                {step.text}
+              </T>
+            );
+          case "tool":
+            return (
+              <View key={index}>
+                <T zone="chat" color={step.result === undefined ? "muted" : step.isError === true ? "error" : "toolTitle"} lines={1}>
+                  {`${step.result === undefined ? "…" : step.isError === true ? "✗" : "✓"} ${step.name} ${argumentsLine(step.args)}`}
+                </T>
+                {step.steps !== undefined ? <StepList steps={step.steps} depth={depth + 1} /> : null}
+                {step.result !== undefined && step.result !== "" ? (
+                  <T zone="chat" color="toolOutput" lines={8} selectable>
+                    {step.result}
+                  </T>
+                ) : null}
+              </View>
+            );
+          default:
+            throw new Error(`unknown step: ${JSON.stringify(step satisfies never)}`);
+        }
+      })}
     </View>
   );
 }

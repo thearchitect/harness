@@ -163,6 +163,64 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "Claude's run is a transcript like a session's: thinking, pi's edit, its subagent's steps inside the Task; kept for later; live",
+      async run({ stand, clients: { raw }, memo }) {
+        const agent = memo.agent as string;
+        const model = memo.model as AgentModel;
+        const target = join(stand.project, "t.txt");
+        const raw1 = (line: Record<string, unknown>): Record<string, unknown> => ({ parent_tool_use_id: null, ...line });
+        stand.claude([
+          [
+            {
+              raw: [
+                raw1({ type: "stream_event", event: { type: "message_start" } }),
+                raw1({ type: "stream_event", event: { type: "content_block_start", index: 0, content_block: { type: "thinking" } } }),
+                raw1({ type: "stream_event", event: { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "weighing it" } } }),
+                raw1({ type: "assistant", message: { id: "m1", content: [{ type: "thinking", thinking: "weighing it" }, { type: "text", text: "Plan **ready**" }] } }),
+                raw1({ type: "assistant", message: { id: "m2", content: [{ type: "tool_use", id: "t1", name: "Task", input: { description: "Check", subagent_type: "general-purpose" } }] } }),
+                { type: "system", subtype: "task_started", task_id: "ag1", tool_use_id: "t1", task_type: "local_agent", description: "Check" },
+                { type: "assistant", parent_tool_use_id: "t1", message: { id: "s1", content: [{ type: "tool_use", id: "t2", name: "Bash", input: { command: "npm test" } }] } },
+                { type: "user", parent_tool_use_id: "t1", message: { content: [{ type: "tool_result", tool_use_id: "t2", content: "3 passing" }] } },
+                raw1({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "t1", content: [{ type: "text", text: "all good" }] }] } }),
+                { type: "system", subtype: "task_notification", task_id: "ag1", status: "completed" },
+              ],
+            },
+            { edit: { file_path: target, old_string: "", new_string: "x" } },
+            { text: "transcribed" },
+          ],
+        ]);
+        const resultPromise = delegate(raw, agent, model, (turns) => stand.script(turns as never), "transcribe");
+        await until(model, () => model.interactions.length > 0);
+        await raw.api.call(agent, { type: "harness_interaction_response", interactionId: model.interactions[0]?.id ?? "", answer: { action: "allow" } });
+        await resultPromise;
+        const session = model.state.subagents.findLast((row) => row.engine === "claude")?.session ?? "";
+        assert.ok(!("steps" in (model.state.subagents.find((row) => row.session === session) ?? {})), "no steps in the state any more");
+
+        // the transcript, read back from the subagent's log
+        const transcript = raw.client.claudeTranscript(raw.node, agent, session);
+        assert.ok(transcript !== undefined);
+        await until(transcript, () => transcript.items.some((item) => item.kind === "custom"));
+        const roles = transcript.items.map((item) => (item.kind === "message" ? item.message.role : item.kind));
+        assert.deepEqual(roles.slice(0, 2), ["user", "assistant"], "the instruction first, once");
+        const all = JSON.stringify(transcript.items);
+        assert.match(all, /"thinking":"weighing it"/);
+        assert.match(all, /"name":"edit","arguments":\{"path":"[^"]*t\.txt","edits"/, "Edit as pi's edit");
+        const task = transcript.items.find((item) => item.kind === "message" && item.message.role === "toolResult" && item.message.toolCallId === "t1");
+        assert.deepEqual(task?.kind === "message" ? task.message.details : undefined, { steps: [{ kind: "tool", id: "t2", name: "bash", args: { command: "npm test" }, result: "3 passing", isError: false }], running: false });
+        assert.ok(!transcript.items.some((item) => item.kind === "message" && JSON.stringify(item.message).includes("t2") && item !== task), "the subagent's step only inside its Task");
+        assert.ok(
+          model.state.tasks.some((row) => row.id === "ag1" && row.toolUseId === "t1"),
+          "the subagent of Claude's names its Task call",
+        );
+
+        // live: the next run's messages reach the open transcript as they come
+        const before = transcript.items.length;
+        stand.claude([[{ text: "and live" }]]);
+        await delegate(raw, agent, model, (turns) => stand.script(turns as never), "more", { session });
+        await until(transcript, () => transcript.items.length > before && JSON.stringify(transcript.items.slice(before)).includes("and live"));
+      },
+    },
+    {
       name: "Claude logged out, too old, or on an API key: the call stops with the reason",
       async run({ stand, clients: { raw }, memo }) {
         const agent = memo.agent as string;

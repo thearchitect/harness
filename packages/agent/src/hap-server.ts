@@ -18,6 +18,9 @@ import { ensureTheme, createUiContext } from "./ui-context.ts";
 import { ComponentBridge } from "./component-bridge.ts";
 import { getTheme } from "./theme.ts";
 
+/** Entries of a claude subagent's transcript a snapshot or a page carries. */
+const CLAUDE_PAGE = 200;
+
 type Output = (record: object) => void;
 
 type ToolInFlight = { toolCallId: string; toolName: string; args: unknown; partialResult?: unknown };
@@ -329,6 +332,23 @@ export class HapServer {
         } catch (error) {
           throw new HarnessError("not_found", error instanceof Error ? error.message : String(error));
         }
+      case "harness_subagent_snapshot": {
+        const transcript = this.controller.claudeTranscript(request.session);
+        const start = Math.max(0, transcript.entries.length - (request.limit ?? CLAUDE_PAGE));
+        return {
+          entries: transcript.entries.slice(start),
+          ...(start > 0 ? { cursor: String(start) } : {}),
+          streaming: transcript.streaming ?? null,
+          ...(transcript.model !== undefined ? { model: transcript.model } : {}),
+          costUsd: transcript.costUsd,
+        };
+      }
+      case "harness_subagent_entries_before": {
+        const transcript = this.controller.claudeTranscript(request.session);
+        const end = Math.max(0, Math.min(transcript.entries.length, Number.parseInt(request.cursor, 10) || 0));
+        const start = Math.max(0, end - (request.limit ?? CLAUDE_PAGE));
+        return { entries: transcript.entries.slice(start, end), ...(start > 0 ? { cursor: String(start) } : {}) };
+      }
       case "harness_navigate": {
         const result = await this.session.navigateTree(request.entryId, { summarize: request.summarize === true });
         this.emit({ type: "harness_reload" });

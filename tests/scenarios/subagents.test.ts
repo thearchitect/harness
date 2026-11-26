@@ -169,8 +169,9 @@ export const scenario = defineScenario({
         const childModel = await raw.client.follow(raw.node, child.id);
         await until(childModel, () => childModel.items.some((item) => item.kind === "message" && JSON.stringify(item.message.content).includes("background report")) && !childModel.running);
         const reopened = await session(raw, stand.project, sessionFile);
-        await until(reopened.model, () => reopened.model.items.some((item) => item.kind === "custom" && item.customType === "harness-subagent" && JSON.stringify(item.data).includes("background report")));
-        await until(reopened.model, () => reopened.model.state.subagents.some((row) => row.state === "done" && row.text === "background report"));
+        await until(reopened.model, () => reopened.model.items.some((item) => item.kind === "custom" && item.customType === "harness-subagent" && (item.data as { state?: string }).state === "done"));
+        await until(reopened.model, () => reopened.model.items.some((item) => item.kind === "message" && item.message.role === "custom" && JSON.stringify(item.message.content).includes("background report")));
+        await until(reopened.model, () => reopened.model.state.subagents.some((row) => row.state === "done"));
       },
     },
   ],

@@ -19,7 +19,7 @@ export type SubagentEvent =
   | { kind: "rate_limit_wait"; window: string; resetsAt?: number }
   | { kind: "rate_limit_over" }
   | { kind: "overage" }
-  | { kind: "task"; id: string; state: TaskState; command?: string; outputFile?: string }
+  | { kind: "task"; id: string; state: TaskState; command?: string; outputFile?: string; /** The call that started it (Claude's Task or Bash). */ toolUseId?: string }
   | { kind: "result"; outcome: "done" | "stopped" | "failed"; text: string; turns?: number; error?: string };
 
 export type SubagentStart = {

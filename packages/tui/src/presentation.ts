@@ -118,6 +118,7 @@ export async function loadRenderers(cwd: string, extensionPaths: readonly string
   const inert = createHarnessExtension({
     interactions: { ask: async () => undefined },
     publishState: () => {},
+    publishClaude: () => {},
     dataDir: "/nonexistent",
     children: {
       start: async () => {

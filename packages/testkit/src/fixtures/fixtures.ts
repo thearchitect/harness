@@ -3,6 +3,7 @@
 // the TUI gallery draws them with TUI components, the app's gallery with its own.
 
 import type { InteractionRequest } from "#protocol/interactions.ts";
+import type { TaskDetails } from "#protocol/claude-transcript.ts";
 import type { Item, NodeRow, Tab } from "#client/workbench/workbench.ts";
 
 const at = 1_700_000_000_000;
@@ -107,6 +108,30 @@ export const NODES: NodeRow[] = [
   { name: "hub", label: "hub", glyph: "◆" },
   { name: "work", label: "work", glyph: "⊘" },
 ];
+
+/** A subagent of Claude's inside its Task call: steps with a nested Task, a running one, a failure. */
+export const CLAUDE_TASK: { args: { description: string; subagent_type: string }; result: { content: { type: string; text: string }[]; details: TaskDetails } } = {
+  args: { description: "Check the tests and lint", subagent_type: "general-purpose" },
+  result: {
+    content: [{ type: "text", text: "Tests pass; lint found **one** warning." }],
+    details: {
+      running: false,
+      steps: [
+        { kind: "thinking", text: "Run the tests first, then lint." },
+        { kind: "tool", id: "t1", name: "bash", args: { command: "npm test" }, result: "> test\n3 passing" },
+        {
+          kind: "tool",
+          id: "t2",
+          name: "Task",
+          args: { description: "Lint" },
+          result: "one warning",
+          steps: [{ kind: "tool", id: "t3", name: "bash", args: { command: "npm run lint" }, result: "a.ts:3 unused variable", isError: true }],
+        },
+        { kind: "text", text: "Tests pass; lint found **one** warning." },
+      ],
+    },
+  },
+};
 
 export const ITEMS: Item[] = [
   { kind: "session", id: "session", label: "harness", detail: "BUILD", glyph: "●", depth: 0 },

@@ -14,6 +14,7 @@ import { LineDecoder } from "#protocol/framing.ts";
 import type { TaskInfo } from "#protocol/state.ts";
 import { createAuthorizer, scratchWorkspaceRoot } from "../../../core/authorize.ts";
 import { CLAUDE_NATIVE_TOOLS, claudeSystemPrompt, HARNESS_SRC } from "../../../core/prompt.ts";
+import type { ClaudeTranscripts } from "./transcripts.ts";
 import type { Interactions } from "../../../host.ts";
 import type { MirroredSource } from "../../../supervisor/supervisor.ts";
 import type { SubagentEngine, SubagentEvent, SubagentSession, SubagentStart } from "../../engine.ts";
@@ -37,6 +38,8 @@ export type ClaudeEngineDeps = {
   bridge?: string[];
   /** The calling agent's system prompt options of its current run (its project context, skills, tool guidelines, sections). */
   promptRun: () => NormalizedBuildSystemPromptOptions | undefined;
+  /** Where each subagent's stream and the messages sent to it are kept and shown as a transcript. */
+  transcripts: ClaudeTranscripts;
 };
 
 function isToolContext(ctx: ExtensionContext): ctx is ExtensionToolContext {
@@ -71,6 +74,7 @@ class ClaudeSubagent implements SubagentSession {
     const decoder = new LineDecoder();
     process.stdout?.on("data", (chunk: Buffer) => {
       for (const line of decoder.push(chunk)) {
+        this.transcribe(line);
         for (const event of this.stream.push(line)) {
           this.receive(event);
         }
@@ -91,6 +95,15 @@ class ClaudeSubagent implements SubagentSession {
         // it ended between runs
       }
     });
+  }
+
+  /** A line of Claude's stream into the subagent's transcript (malformed lines are left out). */
+  private transcribe(line: string): void {
+    try {
+      this.deps.transcripts.record(this.info.session, JSON.parse(line) as { type: string }, line);
+    } catch {
+      // not a JSON line: Claude's stream has nothing else, the stream reader ignores it too
+    }
   }
 
   private emit(event: SubagentEvent): void {
@@ -145,6 +158,7 @@ class ClaudeSubagent implements SubagentSession {
       outputBytes: 0,
       notify: this.start.profile.notify,
       owner: this.info.session,
+      ...((event.toolUseId ?? previous?.toolUseId) !== undefined ? { toolUseId: event.toolUseId ?? previous?.toolUseId } : {}),
     };
     this.tasks.set(event.id, info);
     if (event.outputFile !== undefined) {
@@ -221,6 +235,7 @@ class ClaudeSubagent implements SubagentSession {
       this.emit({ kind: "operator", text }); // Claude takes it at its next turn boundary
     }
     this.write({ type: "user", message: { role: "user", content: [{ type: "text", text }] }, parent_tool_use_id: null, session_id: this.info.session });
+    this.deps.transcripts.record(this.info.session, { type: "harness_input", from, text });
   }
 
   async interrupt(): Promise<void> {

@@ -143,7 +143,9 @@ export class ClaudeStream {
       case "task_started": {
         const command = (message.tool_use_id !== undefined ? this.commands.get(message.tool_use_id) : undefined) ?? message.description ?? message.task_id;
         this.taskCommands.set(message.task_id, command);
-        return [{ kind: "task", id: message.task_id, state: "running", command }];
+        // a subagent of Claude's (local_agent) names its Task call: its row opens that call in Claude's transcript
+        const agent = message.task_type?.includes("agent") === true && message.tool_use_id !== undefined;
+        return [{ kind: "task", id: message.task_id, state: "running", command, ...(agent ? { toolUseId: message.tool_use_id } : {}) }];
       }
       case "task_updated":
         return message.patch.status !== undefined ? [{ kind: "task", id: message.task_id, state: taskState(message.patch.status), command: this.taskCommands.get(message.task_id) }] : [];

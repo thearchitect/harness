@@ -60,6 +60,7 @@ async function main(): Promise<void> {
   const { factory, controller } = createHarnessExtension({
     interactions: hub,
     publishState: (state: HarnessState) => emit({ type: "harness_state", state }),
+    publishClaude: (session, entries, streaming) => emit({ type: "harness_subagent_entries", session, entries, streaming }),
     dataDir: home,
     children,
     subagent: values.subagent !== undefined ? (JSON.parse(values.subagent) as SubagentLaunch) : undefined,

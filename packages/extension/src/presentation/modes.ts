@@ -104,6 +104,25 @@ export const entryRenderers = {
     return new Text(modeColor(storedMode(entry.data), theme.getColorMode(), text) + tail, 0, 0);
   },
 
+  /** The end of a run of a `claude` subagent: its outcome, turns, time and cost (claude-transcript.ts). */
+  claudeResult(entry: CustomEntry<{ outcome?: string; turns?: number; costUsd?: number; durationMs?: number; error?: string; denials?: string[] }>, _options: EntryRenderOptions, theme: Theme): Text {
+    const data = entry.data ?? {};
+    const parts = [
+      data.outcome ?? "done",
+      ...(data.turns !== undefined ? [`${data.turns} turns`] : []),
+      ...(data.durationMs !== undefined ? [`${Math.round(data.durationMs / 1000)}s`] : []),
+      ...(data.costUsd !== undefined ? [`$${data.costUsd.toFixed(4)}`] : []),
+      ...((data.denials ?? []).length > 0 ? [`refused: ${(data.denials ?? []).join(", ")}`] : []),
+    ];
+    const color = data.outcome === "failed" ? "error" : data.outcome === "stopped" ? "warning" : "success";
+    return new Text(`${theme.fg(color, `◆ Claude ${parts.join(" · ")}`)}${data.error !== undefined ? theme.fg("error", `\n${data.error}`) : ""}`, 0, 0);
+  },
+
+  /** What Claude's stream says beside its messages (a long wait to retry). */
+  claudeNotice(entry: CustomEntry<{ text?: string }>, _options: EntryRenderOptions, theme: Theme): Text {
+    return new Text(theme.fg("warning", `◆ ${entry.data?.text ?? ""}`), 0, 0);
+  },
+
   /** A model reference chosen or resolved again: "opus: claude-opus-5-5 → claude-opus-5-6" when the model changed. */
   modelRef(entry: CustomEntry<{ ref?: string; resolved?: string; previous?: string }>, _options: EntryRenderOptions, theme: Theme): Text | undefined {
     const data = entry.data;

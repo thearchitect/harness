@@ -7,7 +7,7 @@ import * as Clipboard from "expo-clipboard";
 import { useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
 import { PanResponder, Platform, Pressable, TextInput, View } from "react-native";
 import type { AgentModel } from "#client/model/agent-model.ts";
-import type { Item, NodeRow, PanelId, PanelItem, Screen, StatusLine, Tab, Workbench } from "#client/workbench/workbench.ts";
+import { subagentHeading, type Item, type NodeRow, type PanelId, type PanelItem, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
 import { fontOf, useTheme, type Token } from "../theme/theme.tsx";
 import { EditorZoneView, type Completion } from "./EditorZone.tsx";
@@ -378,18 +378,12 @@ function Main({ screen, workbench, onLoadOlder, device }: { screen: Screen; work
         </View>
       );
     case "subagent":
-      return main.agent !== undefined ? (
-        <Transcript agent={main.agent} expanded={screen.toolsExpanded} onLoadOlder={() => (main.agent !== undefined ? onLoadOlder(main.agent) : undefined)} onDownload={device.download} />
-      ) : (
-        <View style={{ flex: 1, padding: 8, gap: 4 }}>
-          <T bold>{`${main.subagent?.profile ?? "subagent"} ${main.id}`}</T>
-          <T color="dim">{`${main.subagent?.state ?? ""} · ${main.subagent?.engine ?? ""}${main.subagent?.model !== undefined ? ` · ${main.subagent.model}` : ""} · the editor steers it while it runs`}</T>
-          {(main.subagent?.steps ?? []).map((step, index) => (
-            <T key={index} color="muted" lines={1}>{`› ${step}`}</T>
-          ))}
-          <T zone="chat" selectable>
-            {main.subagent?.text ?? ""}
-          </T>
+      return (
+        <View style={{ flex: 1 }}>
+          <T color="dim" lines={1}>{subagentHeading(main)}</T>
+          {main.agent !== undefined ? (
+            <Transcript agent={main.agent} expanded={screen.toolsExpanded} onLoadOlder={() => (main.agent !== undefined ? onLoadOlder(main.agent) : undefined)} onDownload={device.download} />
+          ) : null}
         </View>
       );
     case "newSession":

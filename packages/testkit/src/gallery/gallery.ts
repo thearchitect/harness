@@ -18,7 +18,8 @@ import { appWebDir } from "#node/endpoints/static.ts";
 import { startWebApp } from "#node/webapp.ts";
 import { bundledBrowser, gridHtml, screenshot } from "../capture/rasterize.ts";
 import { VirtualTerminal } from "../drivers/terminal.ts";
-import { INTERACTIONS, ITEMS, NODES, TABS } from "../fixtures/fixtures.ts";
+import { CLAUDE_TASK, INTERACTIONS, ITEMS, NODES, TABS } from "../fixtures/fixtures.ts";
+import { claudeTaskRenderers } from "#extension/presentation/claude-task.ts";
 import { reportsRoot } from "../report/report.ts";
 
 /** The strips are only drawn here. */
@@ -61,6 +62,17 @@ export function exhibits(): Exhibit[] {
         return strip;
       },
     },
+    // a subagent of Claude's inside its Task call (a claude subagent's transcript), collapsed and expanded
+    ...[false, true].map((expanded) => ({
+      name: `claude-task-${expanded ? "expanded" : "collapsed"}`,
+      width: 100,
+      component: () => {
+        const container = new Container();
+        container.addChild(claudeTaskRenderers.renderCall(CLAUDE_TASK.args, theme()));
+        container.addChild(claudeTaskRenderers.renderResult(CLAUDE_TASK.result, { expanded, isPartial: false }, theme(), { isError: false }));
+        return container;
+      },
+    })),
     {
       name: "strip-empty",
       width: 18,

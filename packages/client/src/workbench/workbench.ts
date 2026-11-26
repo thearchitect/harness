@@ -79,13 +79,37 @@ export type NodeRow = { name: string; label: string; glyph: "⊘" | "◆" | "●
 
 export type StatusLine = { level: "info" | "warning" | "error" | "working"; text: string };
 
-/** A subagent: its row in the session's state, and for a `harness` subagent its own agent's transcript. */
+/** The line above a subagent's transcript: its profile, state, engine, model, cost. */
+export function subagentHeading(main: Extract<MainZone, { kind: "subagent" }>): string {
+  const subagent = main.subagent;
+  const model = main.agent?.claudeInfo?.model ?? subagent?.model;
+  const cost = main.agent?.claudeInfo?.costUsd ?? subagent?.costUsd ?? 0;
+  return [
+    `${subagent?.profile ?? "subagent"} ${main.id.slice(0, 8)}`,
+    subagent?.state ?? "gone",
+    subagent?.engine ?? "",
+    ...(model !== undefined ? [model] : []),
+    ...(cost > 0 ? [`$${cost.toFixed(2)}`] : []),
+    "the editor steers it while it runs",
+  ]
+    .filter((part) => part !== "")
+    .join(" · ");
+}
+
+/** A subagent: its row in the session's state and its transcript (a `harness` subagent's agent, a `claude` one's stream). */
 export type MainZone =
   | { kind: "transcript" }
   /** Choosing where a new session starts (Ctrl+T, + new). */
   | { kind: "newSession"; choice: NewSession }
   | { kind: "task"; taskId: string; task: TaskInfo | undefined; output: string }
-  | { kind: "subagent"; id: string; subagent: SubagentInfo | undefined; agent: AgentModel | undefined };
+  | {
+      kind: "subagent";
+      id: string;
+      subagent: SubagentInfo | undefined;
+      agent: AgentModel | undefined;
+      /** A call to show in its transcript, expanded: the Task of a subagent of Claude's whose row was chosen. */
+      focus?: string;
+    };
 
 export type EditorZone =
   | { kind: "editor"; mode: RunMode }
@@ -910,7 +934,17 @@ export class Workbench {
         } else {
           // followed already, or its agent is gone
         }
-        return { kind: "subagent", id: selected, subagent, agent: child !== undefined ? this.client.full.get(agentKey(tab.node, child.id)) : undefined };
+        const transcript =
+          child !== undefined
+            ? this.client.full.get(agentKey(tab.node, child.id))
+            : subagent?.engine === "claude" && tab.agent !== undefined
+              ? this.client.claudeTranscript(tab.node, tab.agent.id, subagent.session)
+              : undefined;
+        return { kind: "subagent", id: selected, subagent, agent: transcript };
+      } else if (task?.toolUseId !== undefined && task.owner !== undefined && tab.agent !== undefined) {
+        // a subagent of Claude's: its Task call in Claude's transcript
+        const owner = agent.state.subagents.find((candidate) => candidate.session === task.owner);
+        return { kind: "subagent", id: task.owner, subagent: owner, agent: this.client.claudeTranscript(tab.node, tab.agent.id, task.owner), focus: task.toolUseId };
       } else {
         return { kind: "task", taskId: selected, task, output: this.taskOutputs.get(selected) ?? "" };
       }
@@ -1750,7 +1784,10 @@ export class Workbench {
   }
 
   select(tab: Tab, itemId: string): void {
-    this.updateView(tab, { selected: itemId });
+    // a subagent of Claude's opens its Task call expanded
+    const agent = tab.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    const claudeAgent = agent?.state.tasks.some((task) => task.id === itemId && task.toolUseId !== undefined) === true;
+    this.updateView(tab, claudeAgent ? { selected: itemId, expanded: true } : { selected: itemId });
     if (itemId !== "session") {
       this.tasksSeen.set(tab.sessionId, this.clock.now());
     } else {

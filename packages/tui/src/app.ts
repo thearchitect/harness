@@ -31,8 +31,9 @@ import {
 } from "@earendil-works/pi-tui";
 import type { ComponentMouse } from "#protocol/hap.ts";
 import type { ClientModel } from "#client/model/client-model.ts";
+import type { AgentModel } from "#client/model/agent-model.ts";
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
-import { LEFT_STRIP_MIN, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
+import { LEFT_STRIP_MIN, subagentHeading, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
 import type { ScrollAnchor, TabView } from "#client/workbench/view-state.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { modeOfText } from "#protocol/modes.ts";
@@ -226,6 +227,9 @@ export class App {
   private readonly openUrl: (url: string) => void;
   private themeApplied: string | undefined;
   private readonly taskOutput = new Lines();
+  /** A subagent's heading over its transcript (the same transcript view as a session's). */
+  private readonly subagentHeading = new Lines();
+  private readonly subagentView = new Container();
   private readonly mainArea = new Container();
   private readonly aboveEditor = new Container();
   private readonly aboveLines = new Lines();
@@ -240,6 +244,8 @@ export class App {
   private shownTab: { node: string; sessionId: string } | undefined;
   /** The scroll of a tab that came back, applied once its transcript is drawn. */
   private pendingScroll: ScrollAnchor | undefined;
+  /** The call last scrolled to (agent:call), so a screen does not scroll to it again. */
+  private focused: string | undefined;
   /** What the editor zone shows now: the editor, an interaction or a picker (by id). */
   private editorShown = "editor";
   private editorComponent: Component | undefined;
@@ -288,6 +294,8 @@ export class App {
       () => this.workbench.stepSearch(-1),
     );
     this.mainArea.addChild(this.transcript);
+    this.subagentView.addChild(this.subagentHeading);
+    this.subagentView.addChild(this.transcript);
     this.aboveEditor.addChild(this.aboveLines);
     this.editorZone.addChild(this.editor);
 
@@ -417,6 +425,24 @@ export class App {
     }
   }
 
+  /** The call a chosen row names (a Task of Claude's subagent): scrolled to once its message is drawn. */
+  private focusCall(agent: AgentModel, focus: string | undefined): void {
+    const key = focus !== undefined ? `${agent.agentId}:${focus}` : undefined;
+    if (focus === undefined || key === this.focused) {
+      return; // nothing to show, or shown
+    } else {
+      const item = agent.items.find((candidate) => candidate.kind === "message" && JSON.stringify(candidate.message.content ?? "").includes(`"id":${JSON.stringify(focus)}`));
+      const line = item !== undefined ? this.transcript.lineOf(item.key, this.transcriptScroll.getContentWidth(this.tui.terminal.columns)) : undefined;
+      if (line !== undefined) {
+        this.focused = key;
+        // under the heading line
+        this.scrollToLine(line + 1, 0);
+      } else {
+        // its transcript is still loading: the next screen tries again
+      }
+    }
+  }
+
   /**
    * Scrolls the transcript to a line once the scroll view knows the transcript's height: it learns
    * it when it draws, so a line past the height it knew is tried again after the next frames.
@@ -529,23 +555,15 @@ export class App {
         break;
       }
       case "subagent": {
+        // its transcript (a harness subagent's session, a claude subagent's stream), steered from the editor
+        this.subagentHeading.lines = [getTheme().fg("dim", ` ${subagentHeading(main)} · Alt+↑ back`)];
         if (main.agent !== undefined) {
-          // a harness subagent: its own session, steered from the editor
-          this.swapMain(this.transcript);
+          this.swapMain(this.subagentView);
           this.transcript.show(main.agent);
+          this.focusCall(main.agent, main.focus);
         } else {
-          // a claude subagent (or one whose agent is gone): its steps and latest text
-          this.swapMain(this.taskOutput);
-          const theme = getTheme();
-          const subagent = main.subagent;
-          this.taskOutput.lines = [
-            theme.bold(` ${subagent?.profile ?? "subagent"} ${main.id}`),
-            theme.fg("dim", ` ${subagent?.state ?? ""} · ${subagent?.engine ?? ""}${subagent?.model !== undefined ? ` · ${subagent.model}` : ""} · the editor steers it while it runs · Alt+↑ back`),
-            "",
-            ...(subagent?.steps ?? []).map((step) => theme.fg("muted", ` › ${step}`)),
-            "",
-            ...(subagent?.text ?? "").split("\n"),
-          ];
+          // its agent is gone: the heading alone
+          this.swapMain(this.subagentHeading);
         }
         break;
       }

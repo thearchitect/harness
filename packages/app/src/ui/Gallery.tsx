@@ -3,7 +3,8 @@
 // fixtures are the same data the TUI gallery draws.
 
 import { View } from "react-native";
-import { INTERACTIONS, ITEMS, NODES, TABS } from "#testkit/fixtures/fixtures.ts";
+import { CLAUDE_TASK, INTERACTIONS, ITEMS, NODES, TABS } from "#testkit/fixtures/fixtures.ts";
+import { ToolRow } from "./Transcript.tsx";
 import { useTheme } from "../theme/theme.tsx";
 import { InteractionBlock } from "./Interactions.tsx";
 import { T } from "./primitives.tsx";
@@ -22,6 +23,19 @@ function exhibit(name: string) {
           <TabsStrip tabs={TABS} active={1} onGoto={() => undefined} onNew={() => undefined} />
           <ItemsStrip items={ITEMS} selected="t2" onSelect={() => undefined} />
         </View>
+      ),
+    };
+  } else if (name === "claude-task-collapsed" || name === "claude-task-expanded") {
+    return {
+      width: 720,
+      body: (
+        <ToolRow
+          call={{ type: "toolCall", id: "t0", name: "Task", arguments: CLAUDE_TASK.args }}
+          result={{ role: "toolResult", toolCallId: "t0", toolName: "Task", isError: false, ...CLAUDE_TASK.result }}
+          live={undefined}
+          expanded={name === "claude-task-expanded"}
+          onDownload={() => undefined}
+        />
       ),
     };
   } else if (name === "strip-empty") {

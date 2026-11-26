@@ -5,6 +5,7 @@
 
 import type { InteractionKind, InteractionMap } from "#protocol/interactions.ts";
 import type { HarnessState, SubagentLaunch } from "#protocol/state.ts";
+import type { TranscriptEntry, TranscriptMessage } from "#protocol/claude-transcript.ts";
 
 export type AskOptions = {
   /** Closes the interaction (reason "cancelled") when aborted; the ask then resolves undefined. */
@@ -58,6 +59,8 @@ export interface ExtensionHost {
   readonly interactions: Interactions;
   /** The whole state after every change; the host forwards it to clients. */
   publishState(state: HarnessState): void;
+  /** A `claude` subagent's transcript changed: these entries (new or updated), the message being streamed. */
+  publishClaude(session: string, entries: TranscriptEntry[], streaming: TranscriptMessage | null): void;
   /** The user's data directory (`~/.harness`). */
   readonly dataDir: string;
   /** Agents of subagents (engine `harness`), started through the node. */

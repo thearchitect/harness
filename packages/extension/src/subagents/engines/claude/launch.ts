@@ -92,6 +92,8 @@ export function claudeArgs(options: LaunchOptions): string[] {
     "--output-format",
     "stream-json",
     "--verbose",
+    // text and thinking as they come: clients draw the message being written
+    "--include-partial-messages",
     ...modelFlags(options.model),
     "--permission-mode",
     "manual",

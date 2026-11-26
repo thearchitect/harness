@@ -100,6 +100,35 @@ export class AgentModel {
     this.changed();
   }
 
+  /** The transcripts of this session's `claude` subagents a client opened, by their sessions (the stream keeps them current). */
+  readonly claude = new Map<string, AgentModel>();
+  /** A `claude` subagent's model and cost (its transcript's model only). */
+  claudeInfo: { model?: string; costUsd: number } | undefined;
+
+  /** A `claude` subagent's transcript: its entries (from its snapshot) and the message being streamed. */
+  loadEntries(entries: unknown[], cursor: string | undefined, streaming: unknown): void {
+    this.items = (entries as Entry[]).map(itemOfEntry).filter((item): item is TranscriptItem => item !== undefined);
+    this.cursor = cursor;
+    this.streaming = (streaming ?? undefined) as Message | undefined;
+    this.changed();
+  }
+
+  /** Entries new or updated (by id) of a `claude` subagent's transcript, and the message being streamed now. */
+  upsert(entries: unknown[], streaming: unknown): void {
+    let items = this.items;
+    for (const item of (entries as Entry[]).map(itemOfEntry)) {
+      if (item === undefined) {
+        // not drawn
+      } else {
+        const at = items.findIndex((candidate) => candidate.key === item.key);
+        items = at >= 0 ? items.map((candidate, index) => (index === at ? item : candidate)) : [...items, item];
+      }
+    }
+    this.items = items;
+    this.streaming = (streaming ?? undefined) as Message | undefined;
+    this.changed();
+  }
+
   /** Older entries, loaded when the transcript scrolls to its top. */
   prepend(entries: unknown[], cursor: string | undefined): void {
     const items = (entries as Entry[]).map(itemOfEntry).filter((item): item is TranscriptItem => item !== undefined);
@@ -177,6 +206,17 @@ export class AgentModel {
       case "harness_state":
         this.state = r.state as HarnessState;
         break;
+      case "harness_subagent_entries": {
+        const transcript = this.claude.get(String(r.session));
+        if (transcript !== undefined) {
+          transcript.upsert(r.entries as unknown[], r.streaming);
+          const subagent = this.state.subagents.find((candidate) => candidate.session === r.session);
+          transcript.claudeInfo = { ...(subagent?.model !== undefined ? { model: subagent.model } : {}), costUsd: subagent?.costUsd ?? 0 };
+        } else {
+          // a transcript this client has not opened
+        }
+        break;
+      }
       case "harness_interaction_request":
         this.interactions = [...this.interactions, r.request as InteractionRequest];
         break;

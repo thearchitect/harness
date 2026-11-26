@@ -7,7 +7,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import type { Plan } from "#protocol/plan.ts";
-import { SUBAGENT_STEPS_SHOWN, type RunMode, type SubagentInfo, type SubagentState } from "#protocol/state.ts";
+import { type RunMode, type SubagentInfo, type SubagentState } from "#protocol/state.ts";
 import { interruptedError, type Interrupts } from "../core/interrupts.ts";
 import { subagentRenderers } from "../presentation/subagent.ts";
 import type { SubagentEngine, SubagentEvent, SubagentSession } from "./engine.ts";
@@ -216,8 +216,6 @@ export class Subagents {
       startedAt: run.startedAt,
       ...(run.ended ? { endedAt: run.startedAt + run.handover.durationMs } : {}),
       costUsd: run.handover.costUsd,
-      steps: run.handover.steps.slice(-SUBAGENT_STEPS_SHOWN),
-      ...(run.handover.text !== "" ? { text: run.handover.text } : {}),
       ...(run.plan !== undefined ? { plan: run.plan.path } : {}),
     };
   }
