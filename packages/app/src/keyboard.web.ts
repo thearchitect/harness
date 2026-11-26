@@ -25,9 +25,21 @@ export function actionOfKey(name: string): ActionId | undefined {
 /** Actions the editor handles itself (sending, new lines) are not taken here. */
 const EDITOR_OWN = new Set<ActionId>(["editor.submit", "editor.newline"]);
 
+/** While a component or a terminal takes the keys: the workbench actions it leaves to the workbench. */
+let capturedBy: { keeps: (action: ActionId) => boolean } | undefined;
+
+function isField(target: EventTarget | null): boolean {
+  const tag = (target as { tagName?: string } | null)?.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA";
+}
+
+/**
+ * The workbench's keys. React Native Web's fields stop their keys from bubbling, so keys typed in a
+ * field are taken on the way down (capture), the others on the way up, after the page's lists and
+ * dialogs had them. Esc in a field is the field's (a dialog's, a list's filter).
+ */
 export function listenKeys(act: (action: ActionId) => void): () => void {
-  const onKey = (event: KeyboardEvent): void => {
-    const action = actionOfKey(keyName(event));
+  const take = (event: KeyboardEvent, action: ActionId | undefined): void => {
     const target = event.target as { value?: unknown } | null;
     const typing = typeof target?.value === "string" && target.value !== "";
     if (action === "tabs.close" && typing) {
@@ -39,19 +51,48 @@ export function listenKeys(act: (action: ActionId) => void): () => void {
       // a key of the page, the editor or a field
     }
   };
-  window.addEventListener("keydown", onKey);
-  return () => window.removeEventListener("keydown", onKey);
+  const down = (event: KeyboardEvent): void => {
+    const action = actionOfKey(keyName(event));
+    if (capturedBy !== undefined) {
+      if (action !== undefined && capturedBy.keeps(action)) {
+        take(event, action);
+      } else {
+        // the component's or the terminal's key (listenComponentKeys)
+      }
+    } else if (isField(event.target) && action !== "run.abort") {
+      take(event, action);
+    } else {
+      // taken on the way up, after the page had it
+    }
+  };
+  const up = (event: KeyboardEvent): void => {
+    if (capturedBy !== undefined || (isField(event.target) && event.defaultPrevented)) {
+      return; // a component's or a terminal's keys, or taken on the way down
+    } else {
+      take(event, actionOfKey(keyName(event)));
+    }
+  };
+  window.addEventListener("keydown", down, true);
+  window.addEventListener("keydown", up);
+  return () => {
+    window.removeEventListener("keydown", down, true);
+    window.removeEventListener("keydown", up);
+  };
 }
 
 /**
- * While an extension's component is open every key is its own, as terminal bytes (the workbench
- * keeps tab switching and the panel); pasted text arrives as bracketed paste.
+ * While an extension's component (or a session's terminal) is open every key is its own, as terminal
+ * bytes (the workbench keeps tab switching, the panel and what `keep` names); pasted text arrives as
+ * bracketed paste (where `bracketed` says the program takes it).
  */
-export function listenComponentKeys(send: (bytes: string) => void): () => void {
+export function listenComponentKeys(send: (bytes: string) => void, keep: (action: ActionId) => boolean = () => false, bracketed: () => boolean = () => true): () => void {
+  const keeps = (action: ActionId): boolean => action.startsWith("tabs.") || action === "panel.toggle" || keep(action);
+  const mine = { keeps };
+  capturedBy = mine;
   const onKey = (event: KeyboardEvent): void => {
     const action = actionOfKey(keyName(event));
     const bytes = terminalKey({ key: event.key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey });
-    if ((action !== undefined && (action.startsWith("tabs.") || action === "panel.toggle")) || bytes === undefined) {
+    if ((action !== undefined && keeps(action)) || bytes === undefined) {
       return; // the workbench's key, or none a terminal sends
     } else {
       event.preventDefault();
@@ -63,7 +104,7 @@ export function listenComponentKeys(send: (bytes: string) => void): () => void {
     const text = event.clipboardData?.getData("text/plain") ?? "";
     if (text !== "") {
       event.preventDefault();
-      send(bracketedPaste(text));
+      send(bracketed() ? bracketedPaste(text) : text);
     } else {
       // nothing as text
     }
@@ -71,6 +112,7 @@ export function listenComponentKeys(send: (bytes: string) => void): () => void {
   window.addEventListener("keydown", onKey, true);
   window.addEventListener("paste", onPaste, true);
   return () => {
+    capturedBy = capturedBy === mine ? undefined : capturedBy;
     window.removeEventListener("keydown", onKey, true);
     window.removeEventListener("paste", onPaste, true);
   };

@@ -6,6 +6,7 @@ import { SNAPSHOT_ENTRIES, type HapRecord, type SnapshotData } from "#protocol/h
 import type { AgentInfo, AgentSummary, NodeEvent, NodeInfo, NodeOp, NodeOps, SessionListItem } from "#protocol/node.ts";
 import { RequestError, type NodeConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
+import { TerminalModel } from "./terminal-model.ts";
 import { systemClock, type Clock } from "#protocol/clock.ts";
 import { settingRevision } from "#protocol/settings.ts";
 
@@ -267,10 +268,32 @@ export class ClientModel {
           // another node's settings: not this client's
         }
         break;
+      case "terminal_output":
+        this.terminals.get(`${node}\u0000${event.session}`)?.output(event.data);
+        return; // the terminal tells when its screen has it
+      case "terminal_exit":
+        this.terminals.get(`${node}\u0000${event.session}`)?.exited(event.code);
+        return;
       default:
         break; // an event of a newer node
     }
     this.changed();
+  }
+
+  /** The sessions' terminals this client showed, by node and session. */
+  private readonly terminals = new Map<string, TerminalModel>();
+
+  /** A session's terminal on its node (made at the first show; kept while the client runs). */
+  terminal(node: string, session: string, cwd: string): TerminalModel {
+    const key = `${node}\u0000${session}`;
+    const known = this.terminals.get(key);
+    if (known !== undefined) {
+      return known;
+    } else {
+      const made = new TerminalModel(node, session, cwd, () => this.connection(node), () => this.changed());
+      this.terminals.set(key, made);
+      return made;
+    }
   }
 
   private onHap(node: string, agent: string, record: HapRecord): void {

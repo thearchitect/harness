@@ -237,6 +237,44 @@ The node's event log, newest last; its own user, or a hub's admins. → { lines 
 |---|---|---|---|
 | `lines` | integer |  |  |
 
+### `terminal_open`
+
+Shows a session's terminal to this client: a shell in its directory on this node, started at the first show (and again after it exited); the stream follows as terminal_output events. → { screen } (its screen with history as ANSI)
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `session` | string | yes | The session's id |
+| `cwd` | string | yes | Its directory |
+| `cols` | integer | yes |  |
+| `rows` | integer | yes |  |
+
+### `terminal_input`
+
+Input to a session's terminal. → {}
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `session` | string | yes |  |
+| `data` | string | yes | Bytes for the shell, as a terminal sends them |
+
+### `terminal_resize`
+
+The terminal's size (the last client's wins). → {}
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `session` | string | yes |  |
+| `cols` | integer | yes |  |
+| `rows` | integer | yes |  |
+
+### `terminal_detach`
+
+Hides the terminal from this client; the shell runs on. → {}
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `session` | string | yes |  |
+
 ### `node_restart`
 
 Stops every agent and its processes and starts the node again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}
@@ -317,3 +355,23 @@ A node behind a hub refused this client's channel.
 |---|---|---|---|
 | `ev` | `"refused"` | yes |  |
 | `error` | any | yes | { code, message } |
+
+### `terminal_output`
+
+Output of a session's terminal this client shows.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `ev` | `"terminal_output"` | yes |  |
+| `session` | string | yes |  |
+| `data` | string | yes | Bytes of the shell as text |
+
+### `terminal_exit`
+
+A session's terminal shell exited; terminal_open starts another.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `ev` | `"terminal_exit"` | yes |  |
+| `session` | string | yes |  |
+| `code` | integer | yes |  |

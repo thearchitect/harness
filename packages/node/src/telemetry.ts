@@ -16,7 +16,9 @@ export type TelemetryEvent =
   | { event: "refused"; connection: string; code: string }
   | { event: "agent_start"; agent: string; session: string; cwd: string }
   | { event: "agent_exit"; agent: string; code: number | null; error?: string }
-  | { event: "agent_unload"; agent: string };
+  | { event: "agent_unload"; agent: string }
+  | { event: "terminal_started"; session: string; cwd: string; pid: number }
+  | { event: "terminal_exited"; session: string; code: number };
 
 export class Telemetry {
   private readonly path: string;

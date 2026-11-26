@@ -66,7 +66,9 @@ playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools)
   session in the middle, its background tasks and subagents on the right. A message plans; a
   message starting with `!` builds (`/simple`: one mode that decides itself). Ctrl+Enter (or
   Alt+Enter) sends, Ctrl+T opens a new session, Ctrl+O an existing one, Alt+1…9 switches tabs,
-  Ctrl+\ opens the harness panel, Ctrl+F searches the transcript, Ctrl+L chooses the model. As in
+  Ctrl+\ opens the harness panel, Ctrl+F searches the transcript, Ctrl+L chooses the model, Ctrl+I
+  shows a terminal in the session's directory on its node (Alt+I where the terminal cannot tell
+  Ctrl+I from Tab; the shell runs on while hidden). As in
   pi, Ctrl+C clears the editor and Ctrl+D on an empty editor closes the session's tab (its agent
   keeps running); Ctrl+Q quits.
 - Sessions live on their node: closing the TUI leaves a node started as a service (and its

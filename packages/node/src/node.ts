@@ -20,6 +20,7 @@ import { MAX_SUBAGENT_DEPTH, type SubagentLaunch } from "#protocol/state.ts";
 import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
 import { AgentLink, type AgentRecord } from "./agent-link.ts";
 import { listSessions, readSession, SessionLocks } from "./sessions.ts";
+import { Terminals } from "./terminals.ts";
 import { SettingsStore } from "./settings.ts";
 import { checkClientFrame } from "#protocol/schemas.ts";
 import { systemClock, type Clock } from "#protocol/clock.ts";
@@ -124,12 +125,18 @@ export class HarnessNode {
   readonly clock: Clock;
   private unloadTimer: unknown;
   readonly telemetry: Telemetry;
+  private readonly terminals: Terminals;
   private closing = false;
 
   constructor(config: NodeConfig) {
     this.config = config;
     this.clock = config.clock ?? systemClock;
     this.telemetry = new Telemetry(config.dataDir, config.name, () => this.clock.now());
+    // the sessions' terminals: their events to the connections that show them
+    this.terminals = new Terminals(
+      (viewer, event) => (viewer as Connection).send({ k: "evt", node: this.config.name, event }),
+      (event) => this.telemetry.log(event),
+    );
     this.scheduleUnload();
     this.locks = new SessionLocks(config.dataDir);
     this.settings = new SettingsStore(config.dataDir);
@@ -176,6 +183,7 @@ export class HarnessNode {
 
   disconnect(connection: Connection): void {
     this.connections.delete(connection.id);
+    this.terminals.disconnect(connection);
     this.telemetry.log({ event: "disconnect", connection: connection.id });
     this.hub?.disconnect(connection);
     for (const entry of this.agents.values()) {
@@ -414,6 +422,25 @@ export class HarnessNode {
           setImmediate(() => void restart());
           return {} as NodeOps[K]["result"];
         }
+      }
+      case "terminal_open": {
+        const { session, cwd, cols, rows } = args as NodeOps["terminal_open"]["args"];
+        return (await this.terminals.open(connection, session, this.expandHome(cwd), cols, rows)) as NodeOps[K]["result"];
+      }
+      case "terminal_input": {
+        const { session, data } = args as NodeOps["terminal_input"]["args"];
+        this.terminals.input(session, data);
+        return {} as NodeOps[K]["result"];
+      }
+      case "terminal_resize": {
+        const { session, cols, rows } = args as NodeOps["terminal_resize"]["args"];
+        this.terminals.resize(session, cols, rows);
+        return {} as NodeOps[K]["result"];
+      }
+      case "terminal_detach": {
+        const { session } = args as NodeOps["terminal_detach"]["args"];
+        this.terminals.detach(connection, session);
+        return {} as NodeOps[K]["result"];
       }
       default:
         throw new HarnessError("invalid_record", `unknown operation ${String(op satisfies never)}`);
@@ -800,6 +827,7 @@ export class HarnessNode {
     this.telemetry.log({ event: "node_stop" });
     this.clock.clearTimeout(this.unloadTimer);
     await Promise.all([...this.agents.values()].map((entry) => entry.link.stop()));
+    this.terminals.closeAll();
     this.locks.releaseAll();
     for (const { connection } of this.connections.values()) {
       connection.close();

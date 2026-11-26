@@ -20,6 +20,7 @@
   nodejs,
   patchelfUnstable,
   autoPatchelfHook,
+  python3,
   libxcb,
   writeText,
   writeShellScriptBin,
@@ -99,7 +100,9 @@ let
   # pi, the bundled pi packages and the npm-distributed MCP servers, from one
   # generated lockfile (nix/npm). Install scripts are skipped: none of the
   # bundled packages needs them (onnxruntime-node's only downloads optional GPU
-  # providers; prebuilt native modules ship in the packages).
+  # providers; prebuilt native modules ship in the packages) but node-pty on
+  # Linux, whose addon is built here by node-gyp against this node (macOS
+  # takes the package's prebuilds).
   npmTools = importNpmLock.buildNodeModules {
     npmRoot = ./npm;
     inherit nodejs;
@@ -110,6 +113,7 @@ let
       nativeBuildInputs = lib.optionals stdenv.hostPlatform.isLinux [
         patchelfUnstable
         autoPatchelfHook
+        python3
       ];
       buildInputs = lib.optionals stdenv.hostPlatform.isLinux [
         stdenv.cc.cc.lib
@@ -120,7 +124,23 @@ let
       # out of the runtime closure.
       postInstall = ''
         rm -f $out/package.json $out/package-lock.json $out/node_modules/.package-lock.json
-      '';
+      ''
+      + (
+        if stdenv.hostPlatform.isLinux then
+          ''
+            (
+              cd $out/node_modules/node-pty
+              HOME=$TMPDIR ${nodejs}/bin/node ${nodejs}/lib/node_modules/npm/node_modules/node-gyp/bin/node-gyp.js \
+                rebuild --nodedir=${nodejs}
+              find build -mindepth 1 -maxdepth 1 ! -name Release -exec rm -rf {} +
+              find build/Release -mindepth 1 ! -name '*.node' -exec rm -rf {} +
+            )
+          ''
+        else
+          ''
+            chmod +x $out/node_modules/node-pty/prebuilds/darwin-*/spawn-helper
+          ''
+      );
       # npm cannot detect the libc inside the sandbox and installs sharp's musl
       # builds next to the glibc ones; they can never load here.
       preFixup = lib.optionalString stdenv.hostPlatform.isLinux ''

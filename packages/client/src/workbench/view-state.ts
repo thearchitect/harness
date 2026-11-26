@@ -15,6 +15,8 @@ export type TabView = {
   expanded: boolean;
   /** The item the main area shows: the session itself, a task, a subagent. */
   selected: string;
+  /** The session's terminal shown over the main area (Ctrl+I). */
+  terminal?: boolean;
 };
 
 export type WindowState = {

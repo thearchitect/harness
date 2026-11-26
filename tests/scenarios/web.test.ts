@@ -290,6 +290,34 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "the session's terminal: Ctrl+I shows it over the main area, keys go to the shell, the TUI on the same session sees the same screen",
+      async run({ clients: { web, tui } }) {
+        process.env.SHELL = "/bin/sh"; // the user's shell is theirs; this step speaks sh
+        // from the message field: its keys do not bubble, the workbench takes them on the way down
+        await web.page.getByRole("textbox", { name: "Message" }).focus();
+        await web.page.keyboard.press("Control+i");
+        const terminal = web.page.getByLabel("terminal", { exact: true });
+        await terminal.waitFor();
+        await web.page.keyboard.type("echo web-$((3+4))");
+        await web.page.keyboard.press("Enter");
+        await terminal.getByText(/^web-7\s*$/).waitFor();
+
+        // the TUI shows the same session's terminal: the same screen (its tab is the web's active one)
+        const shown = await web.screen();
+        const title = shown.tabs[shown.active]?.title;
+        const tab = tui.workbench.tabs().find((candidate) => candidate.title === title);
+        assert.ok(tab !== undefined, `the TUI has the web's tab ${title}`);
+        await tui.workbench.activate(tab.index);
+        await tui.press("\x1bi");
+        await tui.waitForText((text) => text.includes("╭─ terminal · ") && text.includes("web-7"));
+        await tui.press("\x1bi");
+        await tui.waitForText((text) => !text.includes("╭─ terminal · "));
+
+        await web.page.keyboard.press("Control+i");
+        await terminal.waitFor({ state: "detached" });
+      },
+    },
+    {
       name: "a login step: the options as rows, the link whole, Back one step, typing on a row goes to the field, Enter signs in",
       async run({ stand, clients: { web } }) {
         await web.type("/login");

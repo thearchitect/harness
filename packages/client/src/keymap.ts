@@ -20,6 +20,7 @@ export const ACTIONS = {
   "tools.expand": { keys: ["ctrl+e"], description: "Expand or collapse tool output" },
   "strip.tabs": { keys: ["alt+left"], description: "The keyboard into the strip: nodes, sessions, items (over the screen when it is too narrow for it); again or Esc: back" },
   "transcript.search": { keys: ["ctrl+f"], description: "Search the transcript" },
+  "terminal.toggle": { keys: ["ctrl+i", "alt+i"], description: "The session's terminal over the main area, in its directory (Ctrl+I where the terminal tells it from Tab, Alt+I elsewhere)" },
   "app.quit": { keys: ["ctrl+q"], description: "Quit (a node this window holds stops with it: asked first while agents work or other windows use it)" },
 } as const;
 

@@ -62,6 +62,15 @@ The same in the TUI and the app:
 - The panel (`Ctrl+\`) has the logs of the node you came in through: its own user sees them, and
   on a hub its admins.
 
+## The session's terminal
+
+Ctrl+I shows a terminal over the main area: a shell (the node user's `$SHELL`) in the session's
+directory on the session's node, the same one the TUI shows for that session (`terminal_open`).
+Its first show starts it; hidden, it runs on, and showing it again brings its screen as it is now.
+While it is shown every key is the shell's but the workbench's own (tabs, the panel, Ctrl+I);
+pasting goes to it. When the shell exits, Enter starts another. On a phone the status line's
+`terminal` button shows it, with a strip of keys (↑ ↓ ⏎ Esc Tab Ctrl+C) and a field for typing.
+
 ## What the browser adds
 
 - The page title and icon show `◆ N` while N sessions wait for you.

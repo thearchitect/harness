@@ -13,10 +13,10 @@ import {
   Editor,
   Input,
   isKeyRelease,
+  isKittyProtocolActive,
   type KeybindingsConfig,
   matchesKey,
   ProcessTerminal,
-  ScrollView,
   setKeybindings,
   Text,
   truncateToWidth,
@@ -49,6 +49,7 @@ import { HarnessPanel, PANEL_MIN_WIDTH, PANEL_WIDTH } from "./panel.ts";
 import { hintLine, PickerView } from "./picker.ts";
 import { LoginView } from "./login.ts";
 import { MainScroll, MainSlot } from "./main-area.ts";
+import { TerminalView } from "./terminal-view.ts";
 import { LoginCallback } from "./login-callback.ts";
 import { RemoteAutocompleteProvider } from "./remote-complete.ts";
 import { AskUserView } from "./ask-user.ts";
@@ -113,7 +114,26 @@ export function installKeybindings(user: KeybindingsConfig = {}): void {
   );
 }
 
+/**
+ * The key that shows and hides the session's terminal here: Ctrl+I where the terminal reports it
+ * apart from Tab (the kitty protocol), Alt+I elsewhere (Ctrl+I is Tab's byte there).
+ */
+export function terminalToggleKey(): "ctrl+i" | "alt+i" {
+  return isKittyProtocolActive() ? "ctrl+i" : "alt+i";
+}
+
+function isTerminalToggle(data: string): boolean {
+  return terminalToggleKey() === "ctrl+i" ? data !== "\t" && matchesKey(data, "ctrl+i") : matchesKey(data, "alt+i");
+}
+
 export function actionOf(data: string): ActionId | undefined {
+  if (isTerminalToggle(data)) {
+    return "terminal.toggle";
+  } else if (matchesKey(data, "ctrl+i") || matchesKey(data, "alt+i")) {
+    return undefined; // Tab (or Alt+I where Ctrl+I toggles): the focused component's
+  } else {
+    // another key
+  }
   for (const goto of TAB_GOTO_KEYS) {
     if (matchesKey(data, goto.key as never)) {
       return goto.action;
@@ -848,7 +868,61 @@ export class App {
   }
 
   /** Overlays: the harness panel and the hidden strips, over the right or left edge. */
+  /** The session's terminal over the main area, and the geometry it was shown at. */
+  private terminalOverlay: { view: TerminalView; handle: OverlayHandle; geometry: string } | undefined;
+
+  /**
+   * The terminal's frame: 86% of the main area's width, centered on it; 2 rows from the top; its
+   * bottom above the footer's lines.
+   */
+  private terminalGeometry(): { col: number; row: number; width: number; height: number } {
+    const columns = this.tui.terminal.columns;
+    const left = columns >= LEFT_STRIP_MIN ? LEFT_WIDTH + 1 : 0;
+    const main = columns - left;
+    const width = Math.max(10, Math.floor(main * 0.86));
+    const below = this.footer.render(columns).length;
+    return { col: left + Math.floor((main - width) / 2), row: 2, width, height: Math.max(4, this.tui.terminal.rows - 2 - below) };
+  }
+
+  private drawTerminal(screen: Screen): void {
+    const model = screen.terminal;
+    const geometry = this.terminalGeometry();
+    const key = JSON.stringify(geometry);
+    const shown = this.terminalOverlay;
+    if (shown !== undefined && (model !== shown.view.terminal || key !== shown.geometry)) {
+      shown.handle.hide();
+      this.terminalOverlay = undefined;
+    } else {
+      // shown as it should be, or nothing shown
+    }
+    if (model !== undefined && this.terminalOverlay === undefined) {
+      const failed = (error: unknown): void => this.workbench.notify("error", `terminal: ${error instanceof Error ? error.message : String(error)}`);
+      const view = new TerminalView(model, getTheme, () => geometry.height, () => (terminalToggleKey() === "ctrl+i" ? "Ctrl+I" : "Alt+I"), failed);
+      const handle = this.tui.showOverlay(view, {
+        width: geometry.width,
+        col: geometry.col,
+        row: geometry.row,
+        // a new size shows it again at the new geometry
+        visible: () => {
+          if (JSON.stringify(this.terminalGeometry()) !== key) {
+            setImmediate(() => this.refresh());
+          } else {
+            // the same size
+          }
+          return true;
+        },
+      });
+      this.terminalOverlay = { view, handle, geometry: key };
+      this.tui.setFocus(view);
+    } else if (model === undefined && shown !== undefined) {
+      this.tui.setFocus(this.editorComponent ?? this.editor);
+    } else {
+      // no change
+    }
+  }
+
   private drawOverlays(screen: Screen): void {
+    this.drawTerminal(screen);
     const component = screen.zones.componentOverlay;
     if (component?.componentId !== this.componentOverlay?.id) {
       this.componentOverlay?.handle.hide();
@@ -997,7 +1071,9 @@ export class App {
     const input = this.screen?.input ?? "editor";
     const inStrip = this.stripFocused && this.strip.focused;
     const inPanel = this.overlayHandles.has("panel");
-    if ((inStrip || inPanel || input === "newSession") && (action === undefined || action === "run.abort" || action === "editor.submit" || action === "editor.newline")) {
+    if (this.terminalOverlay !== undefined && action !== "terminal.toggle") {
+      return undefined; // every other key is the shell's
+    } else if ((inStrip || inPanel || input === "newSession") && (action === undefined || action === "run.abort" || action === "editor.submit" || action === "editor.newline")) {
       return undefined; // the strip's, the panel's or the folder choice's own keys: arrows, Enter, Space, Delete, Esc, typing
     } else if (matchesKey(data, "ctrl+c" as never)) {
       // as in pi: Ctrl+C clears the editor; in dialogs and lists it is theirs (cancel)

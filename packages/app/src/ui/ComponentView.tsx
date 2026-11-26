@@ -14,7 +14,7 @@ import { charWidth, fontOf, lineHeight, useTheme } from "../theme/theme.tsx";
 import { listenComponentKeys } from "../keyboard";
 import { Button, T } from "./primitives.tsx";
 
-function spanStyle(style: AnsiStyle, colors: { text: string; pageBg: string }): object {
+export function spanStyle(style: AnsiStyle, colors: { text: string; pageBg: string }): object {
   const fg = style.inverse === true ? (style.bg ?? colors.pageBg) : (style.fg ?? colors.text);
   const bg = style.inverse === true ? (style.fg ?? colors.text) : style.bg;
   return {

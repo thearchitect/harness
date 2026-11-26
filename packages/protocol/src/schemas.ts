@@ -100,6 +100,13 @@ export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
   files_upload: Obj({ name: Str("The file's name"), base64: Str() }, "A file the operator hands to a session (dropped, shared, picked), kept in the node's ~/.harness/uploads. → { path }"),
   transcribe: Obj({ base64: Str("The recording"), mime: Str("Its type, e.g. audio/webm") }, "Speech to text on the node with its user's OpenAI login (gpt-4o-transcribe). → { text }"),
   logs_tail: Obj({ lines: Opt(Type.Integer({ minimum: 1, maximum: 2000 })) }, "The node's event log, newest last; its own user, or a hub's admins. → { lines }"),
+  terminal_open: Obj(
+    { session: Str("The session's id"), cwd: Str("Its directory"), cols: Int(), rows: Int() },
+    "Shows a session's terminal to this client: a shell in its directory on this node, started at the first show (and again after it exited); the stream follows as terminal_output events. → { screen } (its screen with history as ANSI)",
+  ),
+  terminal_input: Obj({ session: Str(), data: Str("Bytes for the shell, as a terminal sends them") }, "Input to a session's terminal. → {}"),
+  terminal_resize: Obj({ session: Str(), cols: Int(), rows: Int() }, "The terminal's size (the last client's wins). → {}"),
+  terminal_detach: Obj({ session: Str() }, "Hides the terminal from this client; the shell runs on. → {}"),
   node_restart: Obj({}, "Stops every agent and its processes and starts the node again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}"),
   settings_get: Obj({}, "The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }"),
   settings_set: Obj(
@@ -215,6 +222,8 @@ export const NODE_EVENT_SCHEMAS = {
   settings: Obj({ ev: Type.Literal("settings"), settings: Any("The user's settings") }, "The user's settings changed (sent only to that user's connections)."),
   nodes: Obj({ ev: Type.Literal("nodes"), nodes: Any("NodeInfo[]: name, online, roles") }, "A hub's nodes came online or went offline."),
   refused: Obj({ ev: Type.Literal("refused"), error: Any("{ code, message }") }, "A node behind a hub refused this client's channel."),
+  terminal_output: Obj({ ev: Type.Literal("terminal_output"), session: Str(), data: Str("Bytes of the shell as text") }, "Output of a session's terminal this client shows."),
+  terminal_exit: Obj({ ev: Type.Literal("terminal_exit"), session: Str(), code: Type.Integer() }, "A session's terminal shell exited; terminal_open starts another."),
 } as const;
 
 export const HAP_EVENT_SCHEMAS = {

@@ -13,6 +13,7 @@ import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#pr
 import type { ActionId } from "../keymap.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
 import { agentKey, type ClientModel } from "../model/client-model.ts";
+import type { TerminalModel } from "../model/terminal-model.ts";
 import { Prefetch, PREFETCH_RECHECK_MS, prefetchMode, type PrefetchTarget } from "../model/prefetch.ts";
 import { NewSession } from "./new-session.ts";
 import { DEFAULT_VIEW, type TabView, type ViewStateStore, type WindowState } from "./view-state.ts";
@@ -186,6 +187,8 @@ export type Screen = {
   prefill: { key: string; text: string } | undefined;
   /** A link the active session asks the operator's browser to open: a UI opens it once per `key`. */
   openUrl: { key: string; url: string } | undefined;
+  /** The active session's terminal, shown over the main area (Ctrl+I): the UI opens it at its size. */
+  terminal: TerminalModel | undefined;
 };
 
 export type PanelId = "madness" | "simple" | "name" | "implementer" | "subagents" | "dependencies" | "logs" | "restart" | "update";
@@ -764,7 +767,22 @@ export class Workbench {
       view: tab !== undefined ? this.view(tab) : undefined,
       prefill: this.prefillOf(agent),
       openUrl: agent?.openUrl !== undefined ? { key: `${agent.agentId}:${agent.openUrl.seq}`, url: agent.openUrl.url } : undefined,
+      terminal: this.shownTerminal(tab),
     };
+  }
+
+  private terminalShown: TerminalModel | undefined;
+
+  /** The active tab's terminal when it is shown; the one shown before (another tab's, a hidden one) stops coming here. */
+  private shownTerminal(tab: Tab | undefined): TerminalModel | undefined {
+    const shown = tab !== undefined && tab.unavailable === undefined && this.view(tab).terminal === true ? this.client.terminal(tab.node, tab.sessionId, tab.cwd) : undefined;
+    if (shown !== this.terminalShown) {
+      this.terminalShown?.detach();
+      this.terminalShown = shown;
+    } else {
+      // the same
+    }
+    return shown;
   }
 
   /** The latest text for the editor: the workbench's own, or a newer one of the agent. */
@@ -1499,6 +1517,14 @@ export class Workbench {
             break;
           case "panel.toggle":
             this.toggleOverlay("panel");
+            break;
+          case "terminal.toggle":
+            if (tab !== undefined) {
+              this.updateView(tab, { terminal: this.view(tab).terminal !== true });
+              this.client.changed();
+            } else {
+              // no session: no directory for a terminal
+            }
             break;
           case "strip.tabs":
             this.toggleOverlay("tabs");

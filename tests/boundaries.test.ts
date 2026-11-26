@@ -22,8 +22,8 @@ const ALLOWED: Record<Package, readonly Package[]> = {
   testkit: PACKAGES,
 };
 
-/** npm packages the isomorphic packages may use. */
-const ISOMORPHIC_NPM = ["typebox"];
+/** npm packages the isomorphic packages may use (pure JS: the app bundles them too). */
+const ISOMORPHIC_NPM = ["typebox", "@xterm/headless"];
 
 function sources(dir: string): string[] {
   return readdirSync(dir, { withFileTypes: true, recursive: true })

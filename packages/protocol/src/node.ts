@@ -93,6 +93,16 @@ export type NodeOps = {
   theme_get: { args: { name?: string }; result: ThemeColors };
   /** Stops every agent and its processes and starts the node again: in the same process when a client holds it, by its supervisor when it is a service. */
   node_restart: { args: Record<string, never>; result: Record<string, never> };
+  /**
+   * Shows a session's terminal to this client: a shell in its directory, started at the first show
+   * (and again after it exited); `screen` is its screen with history as ANSI, the stream follows as
+   * terminal_output events.
+   */
+  terminal_open: { args: { session: string; cwd: string; cols: number; rows: number }; result: { screen: string } };
+  terminal_input: { args: { session: string; data: string }; result: Record<string, never> };
+  terminal_resize: { args: { session: string; cols: number; rows: number }; result: Record<string, never> };
+  /** Hides it from this client: the shell runs on. */
+  terminal_detach: { args: { session: string }; result: Record<string, never> };
 };
 
 /** A directory in dirs_list: `hasChildren` when it holds directories itself (it opens with →). */
@@ -126,6 +136,10 @@ export const NODE_OPS: readonly NodeOp[] = [
   "settings_set",
   "theme_get",
   "node_restart",
+  "terminal_open",
+  "terminal_input",
+  "terminal_resize",
+  "terminal_detach",
 ];
 
 export type NodeEvent =
@@ -136,7 +150,11 @@ export type NodeEvent =
   /** A hub's nodes changed: one came online or went offline. */
   | { ev: "nodes"; nodes: NodeInfo[] }
   /** A node behind a hub refused this client's channel (a protocol version mismatch). */
-  | { ev: "refused"; error: ProtocolError };
+  | { ev: "refused"; error: ProtocolError }
+  /** Output of a session's terminal this client shows. */
+  | { ev: "terminal_output"; session: string; data: string }
+  /** Its shell exited; terminal_open starts another. */
+  | { ev: "terminal_exit"; session: string; code: number };
 
 /** What a client can draw besides the protocol's typed data: "component-bridge" — ANSI lines of an agent's pi-tui components (terminal clients). */
 export type ClientCapability = "component-bridge";

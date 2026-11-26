@@ -8,6 +8,6 @@ export function listenKeys(_act: (action: ActionId) => void): () => void {
 }
 
 /** Bridged components take keys on the web only (a phone types through their key strip). */
-export function listenComponentKeys(_send: (bytes: string) => void): () => void {
+export function listenComponentKeys(_send: (bytes: string) => void, _keep?: (action: ActionId) => boolean, _bracketed?: () => boolean): () => void {
   return () => undefined;
 }

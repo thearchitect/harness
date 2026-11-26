@@ -9,10 +9,11 @@ import { PanResponder, Platform, Pressable, TextInput, View } from "react-native
 import type { AgentModel } from "#client/model/agent-model.ts";
 import { subagentHeading, type Item, type NodeRow, type PanelId, type PanelItem, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
-import { fontOf, useTheme, type Token } from "../theme/theme.tsx";
+import { fontOf, lineHeight, useTheme, type Token } from "../theme/theme.tsx";
 import { EditorZoneView, type Completion } from "./EditorZone.tsx";
 import { NewSessionView } from "./NewSession.tsx";
 import { ComponentView } from "./ComponentView.tsx";
+import { TerminalView } from "./TerminalView.tsx";
 import { LineField } from "./LineField.tsx";
 import { Button, GlyphMark, ListRow, T } from "./primitives.tsx";
 import { Transcript } from "./Transcript.tsx";
@@ -501,8 +502,20 @@ export function Shell(props: {
               {line.text}
             </T>
           ))}
+          {Platform.OS !== "web" && screen.tab !== undefined ? (
+            // a phone has no Ctrl+I: the session's terminal by touch
+            <View style={{ flexDirection: "row" }}>
+              <Button label="terminal" onPress={() => void workbench.act("terminal.toggle")} />
+            </View>
+          ) : null}
           <Footer screen={screen} />
         </View>
+        {screen.terminal !== undefined ? (
+          // over the main area: 86% of its width, centered, 2 lines from the top, above the footer
+          <View style={{ position: "absolute", left: "7%" as never, right: "7%" as never, top: lineHeight(theme.chrome) * 2, bottom: lineHeight(theme.chrome) * 3, zIndex: 2 }}>
+            <TerminalView terminal={screen.terminal} client={workbench.client} onHide={() => void workbench.act("terminal.toggle")} />
+          </View>
+        ) : null}
       </View>
       {screen.zones.componentOverlay !== undefined ? (
         <View style={{ position: "absolute", left: "10%" as never, right: "10%" as never, top: "10%" as never, bottom: "10%" as never, zIndex: 3, backgroundColor: theme.colors.pageBg, borderWidth: 1, borderColor: theme.colors.borderAccent, padding: 6 }}>
