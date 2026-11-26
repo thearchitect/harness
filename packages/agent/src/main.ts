@@ -74,6 +74,7 @@ async function main(): Promise<void> {
     extensionFactories: [factory],
     extensionPaths: layout.extensionPaths,
     skillPaths: layout.skillPaths,
+    openUrl: (url) => emit({ type: "harness_ui", method: "open_url", url }),
   });
   for (const diagnostic of runtime.takeUnreportedDiagnostics()) {
     process.stderr.write(`[harness-agent] ${diagnostic.type}: ${diagnostic.message}\n`);

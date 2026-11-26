@@ -60,4 +60,13 @@ describe("the agent model", () => {
     model.apply({ type: "harness_ui", method: "status", key: "mc" });
     assert.deepEqual(model.status, {});
   });
+
+  test("a link for the operator's browser: once per request, and in the notices", () => {
+    const model = new AgentModel("a1");
+    model.apply({ type: "harness_ui", method: "open_url", url: "https://auth.example/a" });
+    assert.deepEqual(model.openUrl, { seq: 1, url: "https://auth.example/a" });
+    assert.match(model.notices.at(-1)?.message ?? "", /https:\/\/auth\.example\/a/);
+    model.apply({ type: "harness_ui", method: "open_url", url: "https://auth.example/a" });
+    assert.equal(model.openUrl?.seq, 2, "the same link asked again opens again");
+  });
 });

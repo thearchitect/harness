@@ -26,7 +26,10 @@ import {
   type OverlayHandle,
   type Terminal,
   type TUI,
+  type TuiMouseEvent,
+  type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
+import type { ComponentMouse } from "#protocol/hap.ts";
 import type { ClientModel } from "#client/model/client-model.ts";
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
 import { LEFT_STRIP_MIN, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
@@ -47,7 +50,7 @@ import { RemoteAutocompleteProvider } from "./remote-complete.ts";
 import { AskUserView } from "./ask-user.ts";
 import { TranscriptView, type TranscriptOptions } from "./transcript.ts";
 import { clipboardInsert, spaced, type Clipboard, type PasteTarget } from "./clipboard.ts";
-import { getTheme, mermaidTransformer, piKeybindings, systemClipboard, themeController, type ThemeController } from "./pi-internals.ts";
+import { getTheme, mermaidTransformer, openBrowser, piKeybindings, systemClipboard, themeController, type ThemeController } from "./pi-internals.ts";
 
 // the strips: narrow, the transcript has the width
 const LEFT_WIDTH = 18;
@@ -70,6 +73,8 @@ export type AppOptions = {
   terminal?: Terminal;
   /** The system clipboard (a fake one in tests); pi's reading of it by default. */
   clipboard?: Clipboard;
+  /** Opens a link in the operator's browser (tests record it); pi's opener by default. */
+  openUrl?: (url: string) => void;
 };
 
 /**
@@ -157,30 +162,47 @@ class SearchBox extends Input {
 class BridgedView implements Component {
   focused = false;
   private width = 0;
+  private rows = 0;
   private readonly lines: () => readonly string[];
   private readonly input: (data: string) => void;
-  private readonly resize: (width: number) => void;
+  private readonly resize: (width: number, rows: number) => void;
+  private readonly pointer: (event: ComponentMouse) => void;
+  private readonly height: () => number;
 
-  constructor(lines: () => readonly string[], input: (data: string) => void, resize: (width: number) => void) {
+  constructor(lines: () => readonly string[], input: (data: string) => void, resize: (width: number, rows: number) => void, pointer: (event: ComponentMouse) => void, height: () => number) {
     this.lines = lines;
     this.input = input;
     this.resize = resize;
+    this.pointer = pointer;
+    this.height = height;
   }
 
   invalidate(): void {}
 
   render(width: number): string[] {
-    if (width !== this.width) {
+    const rows = this.height();
+    if (width !== this.width || rows !== this.rows) {
       this.width = width;
-      this.resize(width);
+      this.rows = rows;
+      this.resize(width, rows);
     } else {
-      // drawn at this width already
+      // drawn at this size already
     }
     return this.lines().map((line) => truncateToWidth(line, width));
   }
 
   handleInput(data: string): void {
     this.input(data);
+  }
+
+  /** The pointer goes to the component in the agent, at the cell it is over. */
+  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+    if (event.type === "drag") {
+      return undefined; // the component has no drags across the bridge
+    } else {
+      this.pointer({ type: event.type, button: event.button, x: event.x, y: event.y, ...(event.wheelDelta !== undefined ? { wheelDelta: event.wheelDelta } : {}) });
+      return { handled: true };
+    }
   }
 }
 
@@ -200,6 +222,8 @@ export class App {
   private readonly transcriptScroll: ScrollView;
   private loadingOlder = false;
   private prefillApplied: string | undefined;
+  private urlOpened: string | undefined;
+  private readonly openUrl: (url: string) => void;
   private themeApplied: string | undefined;
   private readonly taskOutput = new Lines();
   private readonly mainArea = new Container();
@@ -230,6 +254,7 @@ export class App {
     this.settings = options.settings;
     this.client = options.client;
     this.clipboard = options.clipboard ?? systemClipboard;
+    this.openUrl = options.openUrl ?? openBrowser;
     this.workbench = options.workbench;
     this.renderers = options.renderers;
     this.cwd = options.cwd;
@@ -422,6 +447,13 @@ export class App {
     const screen = this.workbench.screen(this.tui.terminal.columns, { mode: this.editorMode() });
     this.screen = screen;
     this.followTheme();
+    if (screen.openUrl !== undefined && screen.openUrl.key !== this.urlOpened) {
+      // a sign-in link of the active session: this machine's browser (the status line has the link too)
+      this.urlOpened = screen.openUrl.key;
+      this.openUrl(screen.openUrl.url);
+    } else {
+      // no new link
+    }
     if (screen.prefill !== undefined && screen.prefill.key !== this.prefillApplied) {
       this.prefillApplied = screen.prefill.key;
       this.editor.setText(screen.prefill.text);
@@ -721,7 +753,9 @@ export class App {
     return new BridgedView(
       () => this.screen?.agent?.components.find((component) => component.componentId === componentId)?.lines ?? [],
       (data) => void this.workbench.componentInput(componentId, data),
-      (width) => void this.workbench.componentResize(componentId, width),
+      (width, rows) => void this.workbench.componentResize(componentId, width, rows),
+      (event) => void this.workbench.componentMouse(componentId, event),
+      () => this.tui.terminal.rows,
     );
   }
 

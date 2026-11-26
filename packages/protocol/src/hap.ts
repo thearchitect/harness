@@ -29,7 +29,8 @@ export type HapRequest =
   | { type: "harness_complete"; id: string; kind: "path" | "file"; prefix: string }
   /** Keys for a bridged component (as the terminal sends them), and the width it is drawn at. */
   | { type: "harness_component_input"; id: string; componentId: string; data: string }
-  | { type: "harness_component_resize"; id: string; componentId: string; width: number }
+  | { type: "harness_component_resize"; id: string; componentId: string; width: number; rows?: number }
+  | { type: "harness_component_mouse"; id: string; componentId: string; event: ComponentMouse }
   /** The agent's dependencies report (bundle, Claude Code, subagent profiles, bundled versions) → { text }. */
   | { type: "harness_report"; id: string }
   /** The subagent profiles this session may call → { profiles, problems }. */
@@ -63,6 +64,7 @@ export const HAP_REQUEST_TYPES: readonly HapRequestType[] = [
   "harness_complete",
   "harness_component_input",
   "harness_component_resize",
+  "harness_component_mouse",
   "harness_report",
   "harness_subagents",
   "harness_login_providers",
@@ -73,6 +75,16 @@ export const HAP_REQUEST_TYPES: readonly HapRequestType[] = [
 
 /** A component of an extension (ctx.ui.custom) drawn in the agent and shown by terminal clients. */
 export type BridgedComponent = { componentId: string; overlay: boolean; lines: string[] };
+
+/** The pointer over a bridged component: the cell (column, line of its drawn lines) and what happened there. */
+export type ComponentMouse = {
+  type: "press" | "release" | "move" | "click" | "wheel";
+  button: "left" | "middle" | "right" | "none";
+  x: number;
+  y: number;
+  /** Lines; negative scrolls up (wheel). */
+  wheelDelta?: number;
+};
 
 export function isHapRequest(record: { type?: unknown }): record is HapRequest {
   return typeof record.type === "string" && (HAP_REQUEST_TYPES as readonly string[]).includes(record.type);
@@ -131,6 +143,8 @@ export type HapEvent =
   | { type: "harness_ui"; method: "widget"; key: string; lines?: string[] }
   | { type: "harness_ui"; method: "editor_text"; text: string }
   | { type: "harness_ui"; method: "title"; title: string }
+  /** A link the operator opens in their browser (an MCP server's sign-in): the client opens it where it runs. */
+  | { type: "harness_ui"; method: "open_url"; url: string }
   | { type: "harness_component_open"; componentId: string; overlay: boolean }
   | { type: "harness_component_render"; componentId: string; lines: string[] }
   | { type: "harness_component_close"; componentId: string }

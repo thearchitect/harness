@@ -3,6 +3,7 @@
 // never taken (copying); Ctrl+D closes the tab only from an empty field.
 
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
+import { bracketedPaste, terminalKey } from "#client/terminal-keys.ts";
 
 /** pi-tui's key name of a keydown: `ctrl+t`, `alt+1`, `ctrl+pageDown`, `escape`, `shift+tab`. */
 export function keyName(event: KeyboardEvent): string {
@@ -40,4 +41,37 @@ export function listenKeys(act: (action: ActionId) => void): () => void {
   };
   window.addEventListener("keydown", onKey);
   return () => window.removeEventListener("keydown", onKey);
+}
+
+/**
+ * While an extension's component is open every key is its own, as terminal bytes (the workbench
+ * keeps tab switching and the panel); pasted text arrives as bracketed paste.
+ */
+export function listenComponentKeys(send: (bytes: string) => void): () => void {
+  const onKey = (event: KeyboardEvent): void => {
+    const action = actionOfKey(keyName(event));
+    const bytes = terminalKey({ key: event.key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey });
+    if ((action !== undefined && (action.startsWith("tabs.") || action === "panel.toggle")) || bytes === undefined) {
+      return; // the workbench's key, or none a terminal sends
+    } else {
+      event.preventDefault();
+      event.stopPropagation();
+      send(bytes);
+    }
+  };
+  const onPaste = (event: ClipboardEvent): void => {
+    const text = event.clipboardData?.getData("text/plain") ?? "";
+    if (text !== "") {
+      event.preventDefault();
+      send(bracketedPaste(text));
+    } else {
+      // nothing as text
+    }
+  };
+  window.addEventListener("keydown", onKey, true);
+  window.addEventListener("paste", onPaste, true);
+  return () => {
+    window.removeEventListener("keydown", onKey, true);
+    window.removeEventListener("paste", onPaste, true);
+  };
 }

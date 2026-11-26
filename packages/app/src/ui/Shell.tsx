@@ -12,6 +12,7 @@ import { MODE_COLOR_HEX } from "#protocol/modes.ts";
 import { fontOf, useTheme, type Token } from "../theme/theme.tsx";
 import { EditorZoneView, type Completion } from "./EditorZone.tsx";
 import { NewSessionView } from "./NewSession.tsx";
+import { ComponentView } from "./ComponentView.tsx";
 import { Button, GlyphMark, ListRow, T } from "./primitives.tsx";
 import { Transcript } from "./Transcript.tsx";
 import { focusList, focusMessage, useListKeys } from "./web-events";
@@ -488,6 +489,7 @@ export function Shell(props: {
             onAnswer={(id, value) => void workbench.answer(id, value)}
             onClosePicker={() => workbench.closePicker()}
             onPickerScope={() => workbench.nextPickerScope()}
+            component={(component) => <ComponentView component={component} workbench={workbench} rows={20} />}
             device={props.device}
             placeholder={
               Platform.OS === "web"
@@ -507,6 +509,11 @@ export function Shell(props: {
           <Footer screen={screen} />
         </View>
       </View>
+      {screen.zones.componentOverlay !== undefined ? (
+        <View style={{ position: "absolute", left: "10%" as never, right: "10%" as never, top: "10%" as never, bottom: "10%" as never, zIndex: 3, backgroundColor: theme.colors.pageBg, borderWidth: 1, borderColor: theme.colors.borderAccent, padding: 6 }}>
+          <ComponentView component={screen.zones.componentOverlay} workbench={workbench} />
+        </View>
+      ) : null}
       {overlays.includes("panel") ? <Panel workbench={workbench} /> : null}
       {menu !== undefined ? <MenuView menu={menu} onClose={() => setMenu(undefined)} /> : null}
     </View>

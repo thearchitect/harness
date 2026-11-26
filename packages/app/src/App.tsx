@@ -2,7 +2,7 @@
 // workbench — the same model, zones and actions as the TUI — in the user's theme and fonts.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { KeyboardAvoidingView, Platform, useWindowDimensions, View } from "react-native";
+import { KeyboardAvoidingView, Linking, Platform, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { NodeConnection } from "#client/connection.ts";
 import type { AgentModel } from "#client/model/agent-model.ts";
@@ -45,7 +45,8 @@ type Connected = { client: ClientModel; workbench: Workbench; endpoint: Endpoint
 
 async function connect(endpoint: Endpoint): Promise<Connected> {
   const client = new ClientModel();
-  await client.addEndpoint(async () => NodeConnection.open(await wsTransport(endpoint.url), "app", endpoint.token), { home: true });
+  // extensions' components show here as a remote terminal (ComponentView)
+  await client.addEndpoint(async () => NodeConnection.open(await wsTransport(endpoint.url), "app", endpoint.token, ["component-bridge"]), { home: true });
   const themeNames: string[] = [];
   // no directory of its own: new sessions ask for one on their node
   const workbench: Workbench = new Workbench(client, {
@@ -344,6 +345,17 @@ function WorkbenchApp() {
     voice: VOICE_SUPPORTED ? voice : undefined,
     recording: stopRecording !== undefined,
   };
+
+  // a sign-in link of the active session (an MCP server's): this device's browser, once
+  const urlOpened = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (screen?.openUrl !== undefined && screen.openUrl.key !== urlOpened.current) {
+      urlOpened.current = screen.openUrl.key;
+      void Linking.openURL(screen.openUrl.url).catch(() => undefined);
+    } else {
+      // no new link
+    }
+  }, [screen?.openUrl?.key]);
 
   // the agent's (or a branch's) text for the editor, once per key
   useEffect(() => {

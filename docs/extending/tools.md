@@ -23,8 +23,9 @@ payload, { signal, toolCallId })` (`packages/extension/src/host.ts`), never thro
 Every client draws them its own way; the first answer closes them everywhere. Pass the tool
 call's `signal` so an aborted run closes the interaction.
 
-Foreign extensions that call `ctx.ui.custom()` keep working in terminal clients through the
-component bridge; other clients get `undefined` ([pi-mapping.md](../pi-mapping.md#apis)).
+Foreign extensions that call `ctx.ui.custom()` keep working in every client through the component
+bridge: the TUI draws them as they are, the app as a remote terminal; with no such client the
+component waits for one ([pi-mapping.md](../pi-mapping.md#apis)).
 
 ## Draw from the record only
 

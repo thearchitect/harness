@@ -233,10 +233,18 @@ export class AgentModel {
         this.editorText = String(r.text);
         this.editorTextSeq += 1;
         break;
+      case "open_url":
+        // the operator's browser opens it where the client runs; the link stays in the status line too
+        this.openUrl = { seq: (this.openUrl?.seq ?? 0) + 1, url: String(r.url) };
+        this.notice("info", `open in your browser: ${String(r.url)}`);
+        break;
       default:
         break; // a title: the client's own business
     }
   }
+
+  /** The latest link for the operator's browser (an MCP sign-in), once per `seq`. */
+  openUrl: { seq: number; url: string } | undefined;
 
   notice(level: Notice["level"], message: string): void {
     this.noticeCounter += 1;

@@ -4,7 +4,7 @@
 // all the user's UIs; which tab is active and which item is selected are this client's own.
 
 import { systemClock, type Clock } from "#protocol/clock.ts";
-import type { BridgedComponent, LoginProvider, SubagentProfileView } from "#protocol/hap.ts";
+import type { BridgedComponent, ComponentMouse, LoginProvider, SubagentProfileView } from "#protocol/hap.ts";
 import { familyRefs } from "#protocol/model-ref.ts";
 import { modeOfText } from "#protocol/modes.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
@@ -157,6 +157,8 @@ export type Screen = {
   view: TabView | undefined;
   /** Text for the editor: a UI puts it in once per `key` (the agent's setEditorText, a branch's message). */
   prefill: { key: string; text: string } | undefined;
+  /** A link the active session asks the operator's browser to open: a UI opens it once per `key`. */
+  openUrl: { key: string; url: string } | undefined;
 };
 
 export type PanelId = "madness" | "simple" | "name" | "implementer" | "subagents" | "dependencies" | "logs" | "restart" | "update";
@@ -691,6 +693,7 @@ export class Workbench {
       toolsExpanded: tab !== undefined ? this.view(tab).expanded : false,
       view: tab !== undefined ? this.view(tab) : undefined,
       prefill: this.prefillOf(agent),
+      openUrl: agent?.openUrl !== undefined ? { key: `${agent.agentId}:${agent.openUrl.seq}`, url: agent.openUrl.url } : undefined,
     };
   }
 
@@ -1601,8 +1604,13 @@ export class Workbench {
     await this.componentCall({ type: "harness_component_input", componentId, data });
   }
 
-  async componentResize(componentId: string, width: number): Promise<void> {
-    await this.componentCall({ type: "harness_component_resize", componentId, width });
+  async componentResize(componentId: string, width: number, rows?: number): Promise<void> {
+    await this.componentCall({ type: "harness_component_resize", componentId, width, ...(rows !== undefined ? { rows } : {}) });
+  }
+
+  /** The pointer at a cell of a bridged component. */
+  async componentMouse(componentId: string, event: ComponentMouse): Promise<void> {
+    await this.componentCall({ type: "harness_component_mouse", componentId, event });
   }
 
   private async componentCall(record: { type: string; [key: string]: unknown }): Promise<void> {

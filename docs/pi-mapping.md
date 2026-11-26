@@ -40,7 +40,9 @@ as written.
 | pi | harness |
 |---|---|
 | `ctx.ui.select/confirm/input/editor` | the same calls; they become `pi-dialog` interactions every client can answer |
-| `ctx.ui.custom()`, component widgets | run in the agent; terminal clients show them through the component bridge, other clients get `undefined` (as in pi's RPC mode). harness's own code uses typed interactions instead ([extending/tools.md](extending/tools.md)) |
+| `ctx.mode` | `"tui"`: harness always has the operator's interface, so extensions draw for a terminal (pi's `/mcp` opens its manager) |
+| `ctx.ui.custom()`, component widgets | run in the agent; the TUI and the app show them through the component bridge — the app as a remote terminal (ANSI lines in a monospace font, keys as terminal bytes, pasted text, clicks at a cell; a key strip on phones). Without such a client the component waits and the status line says so. harness's own code uses typed interactions instead ([extending/tools.md](extending/tools.md)) |
+| an MCP server's sign-in link (`openUrl`) | opened by the clients where they run (the TUI's machine, the app's browser), not on the node; the link is in the status line too |
 | `ctx.ui.setFooter`, `setHeader`, `setEditorComponent`, `onTerminalInput`, working indicators, `setTheme` | no effect: the footer, editor, indicators and themes belong to the client |
 | `InteractiveMode` | the TUI (`packages/tui`) |
 | RPC mode (`rpc.md`, `rpc-commands.md`, `rpc-extension-ui.md`) | HAP: pi's RPC records pass unchanged, harness adds `harness_*` records ([protocol/hap.md](protocol/hap.md)) |

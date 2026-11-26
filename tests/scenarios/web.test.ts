@@ -282,6 +282,27 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "an extension's component shows as a remote terminal: its size, keys, paste and a click reach it",
+      async run({ clients: { web } }) {
+        await web.type("/probe-component");
+        await web.submit();
+        const view = web.page.getByLabel("extension component");
+        await view.getByText(/^probe \(\d+x20\): $/).waitFor({ timeout: 15_000 });
+        await web.page.keyboard.type("xy");
+        await view.getByText(/^probe \(\d+x20\): xy$/).waitFor();
+        await web.page.evaluate(() => {
+          const data = new DataTransfer();
+          data.setData("text/plain", "pasted");
+          window.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data }));
+        });
+        await view.getByText(/xy\|pasted\|$/).waitFor();
+        // the cell under the click: the line "click here" is the third
+        await view.getByText("click", { exact: true }).click();
+        await web.page.getByText(/probe result: click \d+,2/).first().waitFor({ timeout: 15_000 });
+        await view.waitFor({ state: "detached" });
+      },
+    },
+    {
       name: "each tab keeps its message being written; the page opened again has it and its active tab",
       async run({ stand, clients: { web } }) {
         // a second tab to switch to

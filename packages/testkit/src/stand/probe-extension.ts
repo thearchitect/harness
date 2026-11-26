@@ -1,6 +1,7 @@
 // A pi extension of the test stand that exercises client UIs from inside an agent: `/probe-component`
-// opens a ctx.ui.custom() component (typed text shows in it, Enter finishes with it), and reports
-// the result — or that no client could show it — as a notification.
+// opens a ctx.ui.custom() component (its size in cells and the typed text show in it, pasted text
+// between bars, Enter finishes with the text, a click with its cell), and reports the result as a
+// notification.
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
@@ -15,15 +16,23 @@ export default function probeExtension(pi: ExtensionAPI): void {
           return {
             invalidate() {},
             render(width: number) {
-              return [`probe (${width}): ${typed}`, "Enter finishes"];
+              return [`probe (${width}x${tui.terminal.rows}): ${typed}`, "Enter finishes", "\x1b[31mclick\x1b[0m here"];
             },
             handleInput(data: string) {
               if (data === "\r") {
                 done(typed);
               } else {
-                typed += data;
+                typed += data.replace(/\x1b\[20[01]~/g, "|");
                 tui.requestRender();
               }
+            },
+            handleMouse(event: { type: string; x: number; y: number }) {
+              if (event.type === "click") {
+                done(`click ${event.x},${event.y}`);
+              } else {
+                // moves and presses: nothing
+              }
+              return { handled: true };
             },
           };
         },
@@ -32,4 +41,5 @@ export default function probeExtension(pi: ExtensionAPI): void {
       ctx.ui.notify(result === undefined ? "probe: no client can show components" : `probe result: ${result}`, "info");
     },
   });
+
 }

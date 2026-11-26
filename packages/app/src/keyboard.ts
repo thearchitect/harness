@@ -6,3 +6,8 @@ import type { ActionId } from "#client/keymap.ts";
 export function listenKeys(_act: (action: ActionId) => void): () => void {
   return () => undefined;
 }
+
+/** Bridged components take keys on the web only (a phone types through their key strip). */
+export function listenComponentKeys(_send: (bytes: string) => void): () => void {
+  return () => undefined;
+}

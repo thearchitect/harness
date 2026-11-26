@@ -1,9 +1,10 @@
 // The editor's zone (plan A25): the editor, or in its place an interaction or a list to choose from.
 // Above it, on the editor's width: the queue and the completions of `/commands` and `@files`.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Pressable, TextInput, View, type TextInputKeyPressEvent } from "react-native";
 import { pickerHints, type EditorZone as Zone, type KeyHint, type Picker, type Zones } from "#client/workbench/workbench.ts";
+import type { BridgedComponent } from "#protocol/hap.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
 import { fontOf, useTheme } from "../theme/theme.tsx";
 import { InteractionBlock } from "./Interactions.tsx";
@@ -184,6 +185,8 @@ export function EditorZoneView(props: {
   onAnswer: (interactionId: string, value: unknown) => void;
   onClosePicker: () => void;
   onPickerScope: () => void;
+  /** An extension's component in the editor's place (ComponentView). */
+  component: (component: BridgedComponent) => ReactNode;
   placeholder: string;
   device: DeviceActions;
 }) {
@@ -213,11 +216,7 @@ export function EditorZoneView(props: {
               </T>
             );
           case "component":
-            return (
-              <Frame title="An extension's dialog" tone="warning">
-                <T color="muted">This dialog is drawn for terminals only: answer it in the TUI (harness), or press Esc there.</T>
-              </Frame>
-            );
+            return props.component(zone.component);
           default:
             throw new Error(`unknown editor zone: ${JSON.stringify(zone satisfies never)}`);
         }

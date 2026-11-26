@@ -103,7 +103,8 @@ export class HapServer {
     this.unsubscribe = session.subscribe((event) => this.onSessionEvent(event));
     await session.bindExtensions({
       uiContext: createUiContext(this.hub, (event) => this.emit(event), getTheme, this.bridge),
-      mode: "rpc",
+      // harness always has the operator's interface: extensions draw for a terminal (the bridge)
+      mode: "tui",
       commandContextActions: {
         waitForIdle: () => session.waitForIdle(),
         newSession: async (options) => this.runtime.newSession(options),
@@ -238,7 +239,7 @@ export class HapServer {
     } else if (record.type === "harness_node") {
       this.onNodeFrame(record.frame);
     } else if (record.type === "harness_clients") {
-      this.bridge.clients = Number(record.componentBridge ?? 0);
+      this.bridge.setClients(Number(record.componentBridge ?? 0));
     } else {
       const command = record as unknown as RpcCommand;
       try {
@@ -263,6 +264,14 @@ export class HapServer {
       case "harness_prompt": {
         // one after another: a message's mode is taken with that message, before the next one sets its own
         const session = this.session;
+        const name = /^\/(\S+)/.exec(request.text)?.[1];
+        if (name !== undefined && session.extensionRunner.getRegisteredCommands().some((command) => command.invocationName === name)) {
+          // an extension's command runs at once, as in pi, and may stay open (a dialog): the session takes messages meanwhile
+          void session.prompt(request.text, { source: "rpc" }).catch((error: unknown) => this.emit({ type: "harness_ui", method: "notify", level: "error", message: `/${name}: ${error instanceof Error ? error.message : String(error)}` }));
+          return { disposition: "handled" };
+        } else {
+          // a message: in turn
+        }
         const turn = this.prompts.then(
           () =>
             new Promise<{ disposition: unknown }>((resolveResponse, reject) => {
@@ -344,7 +353,10 @@ export class HapServer {
         this.bridge.input(request.componentId, request.data);
         return {};
       case "harness_component_resize":
-        this.bridge.resize(request.componentId, request.width);
+        this.bridge.resize(request.componentId, request.width, request.rows);
+        return {};
+      case "harness_component_mouse":
+        this.bridge.mouse(request.componentId, request.event);
         return {};
       default:
         throw new HarnessError("invalid_record", `unknown request ${String((request satisfies never as { type: string }).type)}`);

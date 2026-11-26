@@ -138,7 +138,25 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
   harness_subagent_send: Request("harness_subagent_send", { session: Str("A live subagent session"), text: Str() }, "Operator steering of a live subagent."),
   harness_complete: Request("harness_complete", { kind: Type.Union([Type.Literal("path"), Type.Literal("file")]), prefix: Str() }, "Completions of paths on the agent's machine."),
   harness_component_input: Request("harness_component_input", { componentId: Str(), data: Str("Keys as the terminal sends them") }, "Keys for a bridged component."),
-  harness_component_resize: Request("harness_component_resize", { componentId: Str(), width: Type.Integer({ minimum: 1 }) }, "The width a bridged component is drawn at."),
+  harness_component_resize: Request(
+    "harness_component_resize",
+    { componentId: Str(), width: Type.Integer({ minimum: 1 }), rows: Opt(Type.Integer({ minimum: 1, description: "The client's height for it (the component's terminal.rows)" })) },
+    "The size a bridged component is drawn at.",
+  ),
+  harness_component_mouse: Request(
+    "harness_component_mouse",
+    {
+      componentId: Str(),
+      event: Type.Object({
+        type: Type.Union(["press", "release", "move", "click", "wheel"].map((value) => Type.Literal(value))),
+        button: Type.Union(["left", "middle", "right", "none"].map((value) => Type.Literal(value))),
+        x: Type.Integer({ minimum: 0, description: "The column" }),
+        y: Type.Integer({ minimum: 0, description: "The line of the component's drawn lines" }),
+        wheelDelta: Opt(Type.Integer()),
+      }),
+    },
+    "The pointer over a bridged component: a click, a move, the wheel at a cell.",
+  ),
   harness_report: Request("harness_report", {}, "The agent's dependencies report: the bundle, Claude Code, subagent profiles, bundled versions. → { text }"),
   harness_login_providers: Request("harness_login_providers", {}, "Providers one can log in to on the agent's machine. → { providers }"),
   harness_login: Request(
@@ -193,7 +211,7 @@ export const HAP_EVENT_SCHEMAS = {
   harness_interaction_request: Obj({ type: Type.Literal("harness_interaction_request"), request: Any("InteractionRequest: id, kind, payload, toolCallId?, openedAt") }, "An interaction opens for the operator."),
   harness_interaction_closed: Obj({ type: Type.Literal("harness_interaction_closed"), interactionId: Str(), reason: Str("answered, cancelled, expired or ended") }, "An interaction closed."),
   harness_task_output: Obj({ type: Type.Literal("harness_task_output"), taskId: Str(), offset: Int(), chunk: Str() }, "Output of a background task."),
-  harness_ui: Obj({ type: Type.Literal("harness_ui"), method: Str("notify, status, widget, editor_text, title") }, "An extension's UI call that every client can show (the method's fields follow)."),
+  harness_ui: Obj({ type: Type.Literal("harness_ui"), method: Str("notify, status, widget, editor_text, title, open_url") }, "An extension's UI call that every client can show (the method's fields follow)."),
   harness_component_open: Obj({ type: Type.Literal("harness_component_open"), componentId: Str(), overlay: Type.Boolean() }, "A bridged component opens (terminal clients)."),
   harness_component_render: Obj({ type: Type.Literal("harness_component_render"), componentId: Str(), lines: Type.Array(Str(), { description: "ANSI lines" }) }, "A bridged component's new lines."),
   harness_component_close: Obj({ type: Type.Literal("harness_component_close"), componentId: Str() }, "A bridged component closed."),

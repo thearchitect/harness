@@ -13,6 +13,7 @@ const EXPORTS: Record<keyof typeof PI_INTERNAL_MODULES, string[]> = {
   customEntry: ["CustomEntryComponent"],
   clipboard: ["readClipboardFilePaths", "readClipboardText"],
   clipboardImage: ["readClipboardImage", "extensionForImageMimeType"],
+  openBrowser: ["openBrowser"],
 };
 
 test("pi's internal modules and their exports", async () => {

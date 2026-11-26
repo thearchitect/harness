@@ -32,11 +32,13 @@ export type RuntimeOptions = {
   extensionPaths: string[];
   /** Skill files or directories added to discovery. */
   skillPaths: string[];
+  /** A link for the operator's browser (an MCP server's sign-in): the clients open it where they run, not the node. */
+  openUrl: (url: string) => void;
 };
 
 export async function createHarnessRuntime(options: RuntimeOptions): Promise<AgentSessionRuntime> {
   const trustStore = new ProjectTrustStore(options.agentDir);
-  const extensionFactories: ExtensionFactory[] = [createCodemodeExtension(), createMcpExtension(), ...options.extensionFactories];
+  const extensionFactories: ExtensionFactory[] = [createCodemodeExtension(), createMcpExtension({ openUrl: options.openUrl }), ...options.extensionFactories];
 
   const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, agentDir, sessionManager, sessionStartEvent }) => {
     const projectTrusted = trustStore.get(cwd) ?? !hasTrustRequiringProjectResources(cwd);

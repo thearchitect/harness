@@ -19,6 +19,7 @@ export const PI_INTERNAL_MODULES = {
   customEntry: "./modes/interactive/components/custom-entry.js",
   clipboard: "./utils/clipboard.js",
   clipboardImage: "./utils/clipboard-image.js",
+  openBrowser: "./utils/open-browser.js",
 } as const;
 
 async function load<T>(path: string): Promise<T> {
@@ -95,6 +96,13 @@ export const systemClipboard: Clipboard = {
   text: () => clipboardModule.readClipboardText(),
   extensionOf: (mimeType) => clipboardImageModule.extensionForImageMimeType(mimeType) ?? undefined,
 };
+
+const openBrowserModule = await load<{ openBrowser(target: string): void }>(PI_INTERNAL_MODULES.openBrowser);
+
+/** Opens a link in this machine's browser, as pi does (no shell). */
+export function openBrowser(url: string): void {
+  openBrowserModule.openBrowser(url);
+}
 
 const keybindingsModule = await load<{ KeybindingsManager: new (userBindings?: KeybindingsConfig) => KeybindingsManager }>(PI_INTERNAL_MODULES.keybindings);
 

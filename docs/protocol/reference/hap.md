@@ -143,7 +143,7 @@ Keys for a bridged component.
 
 ### `harness_component_resize`
 
-The width a bridged component is drawn at.
+The size a bridged component is drawn at.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -151,6 +151,18 @@ The width a bridged component is drawn at.
 | `id` | string | yes | Chosen by the client; harness_response carries it back |
 | `componentId` | string | yes |  |
 | `width` | integer | yes |  |
+| `rows` | integer |  | The client's height for it (the component's terminal.rows) |
+
+### `harness_component_mouse`
+
+The pointer over a bridged component: a click, a move, the wheel at a cell.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `type` | `"harness_component_mouse"` | yes |  |
+| `id` | string | yes | Chosen by the client; harness_response carries it back |
+| `componentId` | string | yes |  |
+| `event` | { type, button, x, y, wheelDelta } | yes |  |
 
 ### `harness_report`
 
@@ -291,7 +303,7 @@ An extension's UI call that every client can show (the method's fields follow).
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `type` | `"harness_ui"` | yes |  |
-| `method` | string | yes | notify, status, widget, editor_text, title |
+| `method` | string | yes | notify, status, widget, editor_text, title, open_url |
 
 ### `harness_component_open`
 
