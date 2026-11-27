@@ -41,6 +41,8 @@ import { loadRenderers } from "#tui/presentation.ts";
 import { tuiViewStore } from "#tui/view-store.ts";
 
 const DEFAULT_HUB = "default";
+/** How a client names its own machine's hub (the strip reads `inprocess` while this window holds it). */
+const LOCAL_HUB = "local";
 
 /** A terminal draws extensions' components (the component bridge). */
 const TUI_CAPABILITIES = ["component-bridge" as const];
@@ -217,10 +219,10 @@ async function runTui(args: string[]): Promise<void> {
 
   // the local hub, then the remote hubs: each reconnects by itself after a loss
   const client = new ClientModel();
-  const nodeName = await client.addEndpoint(open, { home: true });
+  const localHub = await client.addEndpoint(open, { home: true, name: LOCAL_HUB });
   for (const remote of readRemotes(home)) {
     await client
-      .addEndpoint(async () => HubConnection.open(await wsTransport(remote.url), "tui", remote.token, TUI_CAPABILITIES), { home: false })
+      .addEndpoint(async () => HubConnection.open(await wsTransport(remote.url), "tui", remote.token, TUI_CAPABILITIES), { home: false, name: remote.name })
       .catch((error: unknown) => client.offline.set(remote.name, error instanceof Error ? error.message : String(error)));
   }
   // the bundle's update: checked in the background, upgraded from the panel
@@ -245,7 +247,7 @@ async function runTui(args: string[]): Promise<void> {
       const name = new URL(url).hostname;
       const { token } = await redeemPairing(url, code);
       writeRemotes(home, [...readRemotes(home).filter((remote) => remote.name !== name), { name, url, token }]);
-      await client.addEndpoint(async () => HubConnection.open(await wsTransport(url), "tui", token, TUI_CAPABILITIES), { home: false });
+      await client.addEndpoint(async () => HubConnection.open(await wsTransport(url), "tui", token, TUI_CAPABILITIES), { home: false, name });
     },
     themes: () => clientThemes(home),
     viewStore: tuiViewStore(home),
@@ -263,21 +265,21 @@ async function runTui(args: string[]): Promise<void> {
   // What this start opens: the session asked for; the latest of this directory; a new one in the
   // directory given; else the window as it was, or choosing a new session's folder without tabs.
   if (values.session !== undefined || values.continue === true) {
-    const sessions = await client.sessions(nodeName);
+    const sessions = await client.sessions(localHub);
     const wanted =
       values.session !== undefined
         ? sessions.find((session) => session.id.startsWith(values.session ?? ""))
         : sessions.filter((session) => session.cwd === cwd).sort((a, b) => b.modified - a.modified)[0];
     if (wanted !== undefined) {
-      await workbench.openSession(nodeName, wanted);
+      await workbench.openSession(localHub, wanted);
     } else {
       process.stderr.write(values.session !== undefined ? `no session ${values.session}\n` : "no session in this directory yet: starting a new one\n");
-      await workbench.newTab(nodeName, cwd);
+      await workbench.newTab(localHub, cwd);
     }
   } else if (positionals.length > 0) {
-    await workbench.newTab(nodeName, cwd);
+    await workbench.newTab(localHub, cwd);
   } else if (workbench.tabs().length === 0) {
-    workbench.openNewSession(nodeName);
+    workbench.openNewSession(localHub);
   } else {
     // the window's tabs: the active one opens (start)
   }

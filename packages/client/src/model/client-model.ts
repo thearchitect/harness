@@ -77,9 +77,12 @@ export class ClientModel {
     }
   }
 
-  /** Adds a connection to a hub. The home connection's settings are the client's. */
-  async addConnection(connection: HubConnection, options: { home: boolean }): Promise<string> {
-    const name = connection.welcome?.hub ?? "node";
+  /**
+   * Adds a connection to a hub, by the name the client knows it by (`name`: this machine's `local`,
+   * a remote's own; the hub's own name when absent). The home connection's settings are the client's.
+   */
+  async addConnection(connection: HubConnection, options: { home: boolean; name?: string }): Promise<string> {
+    const name = options.name ?? connection.welcome?.hub ?? "hub";
     if (options.home) {
       this.home = name;
       this.homeConnection = connection;
@@ -110,7 +113,7 @@ export class ClientModel {
    * A connection that comes back: opened now, and after a loss reopened with backoff — its hubs
    * listed again and the agents this client followed in full re-followed (fresh snapshots).
    */
-  async addEndpoint(open: () => Promise<HubConnection>, options: { home: boolean; clock?: Clock }): Promise<string> {
+  async addEndpoint(open: () => Promise<HubConnection>, options: { home: boolean; name?: string; clock?: Clock }): Promise<string> {
     const clock = options.clock ?? systemClock;
     let attempt = 0;
     const connect = async (): Promise<string> => {
