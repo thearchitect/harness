@@ -108,11 +108,11 @@ test("drafts and scroll stay with their tabs; a TUI started again has them, its 
 });
 
 test("two windows' states merge by tab: each keeps the other's tabs; the last saved names the active tab", () => {
-  const view = (draft: string) => ({ draft, scroll: "follow" as const, expanded: false, selected: "session" });
-  const first: WindowState = { version: 1, tabs: { "n/a": view("a1"), "n/b": view("b1") }, active: { hub: "n", sessionId: "a" }, drafts: [] };
-  const second: WindowState = { version: 1, tabs: { "n/b": view("b2"), "n/c": view("c2") }, active: { hub: "n", sessionId: "c" }, drafts: [] };
+  const view = (selected: string) => ({ scroll: "follow" as const, expanded: false, selected });
+  const first: WindowState = { version: 2, tabs: { "n/a": view("a1"), "n/b": view("b1") }, active: { hub: "n", sessionId: "a" } };
+  const second: WindowState = { version: 2, tabs: { "n/b": view("b2"), "n/c": view("c2") }, active: { hub: "n", sessionId: "c" } };
   const merged = mergeWindowStates(first, second);
   assert.deepEqual(Object.keys(merged.tabs).sort(), ["n/a", "n/b", "n/c"]);
-  assert.equal(merged.tabs["n/b"]?.draft, "b2");
+  assert.equal(merged.tabs["n/b"]?.selected, "b2");
   assert.deepEqual(merged.active, { hub: "n", sessionId: "c" });
 });

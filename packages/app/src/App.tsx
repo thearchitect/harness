@@ -3,7 +3,7 @@
 
 import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { KeyboardAvoidingView, Linking, Platform, useWindowDimensions, View } from "react-native";
+import { AppState, KeyboardAvoidingView, Linking, Platform, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import { HubConnection } from "#client/connection.ts";
 import type { AgentModel } from "#client/model/agent-model.ts";
@@ -229,15 +229,22 @@ function WorkbenchApp() {
     }
   }, [connected, version, width, editorText, theme.chrome]);
 
+  // the page or the app going to the background: what is typed goes to the hub now
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => (state !== "active" ? void connected?.workbench.flushDrafts() : undefined));
+    return () => subscription.remove();
+  }, [connected]);
+
   // each tab has its own message being written: it comes back with the tab, and is kept as it is typed
   const shownTab = screen?.tab !== undefined ? `${screen.tab.hub}/${screen.tab.sessionId}` : "";
   useEffect(() => {
-    setEditorText(screen?.view?.draft ?? "");
+    // the tab's draft as its hub has it (begun on another device, maybe); typing here then owns it
+    setEditorText(screen?.tab !== undefined ? (connected?.workbench.draftText(screen.tab) ?? "") : "");
   }, [shownTab]);
   useEffect(() => {
     const tab = connected?.workbench.activeTab();
-    if (tab !== undefined && `${tab.hub}/${tab.sessionId}` === shownTab && connected?.workbench.view(tab).draft !== editorText) {
-      connected?.workbench.updateView(tab, { draft: editorText });
+    if (tab !== undefined && `${tab.hub}/${tab.sessionId}` === shownTab && connected?.workbench.draftText(tab) !== editorText) {
+      connected?.workbench.setDraft(tab, editorText);
     } else {
       // the tab's draft already, or another tab coming
     }
@@ -330,7 +337,7 @@ function WorkbenchApp() {
       if (connected === undefined || tab === undefined) {
         connected?.workbench.notify("warning", "open a session to hand it files");
       } else {
-        void Promise.all(files.map((file) => connected.client.connection(tab.hub).request("files_upload", { name: file.name, base64: file.base64 })))
+        void Promise.all(files.map((file) => connected.client.connection(tab.hub).request("attachments_put", { session: tab.sessionId, name: file.name, base64: file.base64 })))
           .then((stored) => setEditorText((text) => `${text}${text === "" || text.endsWith(" ") ? "" : " "}${stored.map((file) => `@${file.path}`).join(" ")} `))
           .catch((reason: unknown) => connected.workbench.notify("error", `upload: ${String(reason)}`));
       }

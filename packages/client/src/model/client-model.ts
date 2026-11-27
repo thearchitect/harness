@@ -3,7 +3,7 @@
 // recently visited ones; the rest at summary level). Isomorphic: no Node API.
 
 import { SNAPSHOT_ENTRIES, type HapRecord, type SnapshotData } from "#protocol/hap.ts";
-import type { AgentInfo, AgentSummary, HubEvent, HubOp, HubOps, HubStatus, SessionListItem } from "#protocol/hub.ts";
+import type { AgentInfo, AgentSummary, HubEvent, HubOp, HubOps, HubStatus, SessionListItem, WorkspaceData, WorkspaceTab } from "#protocol/hub.ts";
 import { RequestError, type HubConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
 import { TerminalModel } from "./terminal-model.ts";
@@ -57,6 +57,8 @@ export class ClientModel {
   home: string | undefined;
   /** Each hub's network access and devices, as its last `hub` event told (the /hub dialog). */
   readonly hubStatus = new Map<string, HubStatus>();
+  /** Each hub's workspace (its tabs and drafts); kept while a hub is offline, so its tabs show as such. */
+  readonly workspaces = new Map<string, WorkspaceData>();
   private homeConnection: HubConnection | undefined;
   readonly agents = new Map<AgentKey, AgentInfo>();
   readonly full = new Map<AgentKey, AgentModel>();
@@ -165,6 +167,7 @@ export class ClientModel {
   private async addNode(api: HubApi): Promise<void> {
     this.connections.set(api.hub, api);
     this.offline.delete(api.hub);
+    this.workspaces.set(api.hub, await api.request("workspace_get", {}));
     const { agents } = await api.request("agents_list", {});
     for (const agent of agents) {
       this.agents.set(agentKey(api.hub, agent.id), agent);
@@ -246,6 +249,13 @@ export class ClientModel {
         return;
       case "hub":
         this.hubStatus.set(node, event.status);
+        break;
+      case "workspace":
+        if (event.workspace.revision >= (this.workspaces.get(node)?.revision ?? -1)) {
+          this.workspaces.set(node, event.workspace);
+        } else {
+          // older than what an answer brought already
+        }
         break;
       default:
         break; // an event of a newer node
@@ -435,8 +445,7 @@ export class ClientModel {
 
   /**
    * Changes a setting from its current value: when another client changed it meanwhile (conflict),
-   * the change applies again to the value the hub has now. For values clients change together
-   * (ui.tabs): no change of another client is lost.
+   * the change applies again to the value the hub has now: no change of another client is lost.
    */
   async updateSetting<T>(key: string, change: (current: T | undefined) => T): Promise<void> {
     for (let attempt = 0; ; attempt += 1) {
@@ -452,6 +461,34 @@ export class ClientModel {
           throw error;
         }
       }
+    }
+  }
+
+  /** Arranges a hub's tabs from their current value: another client's change at the same time is kept. */
+  async updateWorkspace(hub: string, change: (tabs: WorkspaceTab[]) => WorkspaceTab[]): Promise<void> {
+    const api = this.connection(hub);
+    for (let attempt = 0; ; attempt += 1) {
+      const base = this.workspaces.get(hub) ?? (await api.request("workspace_get", {}));
+      try {
+        this.applyWorkspace(hub, await api.request("workspace_tabs_set", { tabs: change(base.tabs), ifRevision: base.revision }));
+        return;
+      } catch (error) {
+        if (error instanceof RequestError && error.code === "conflict" && attempt < UPDATE_ATTEMPTS) {
+          this.applyWorkspace(hub, await api.request("workspace_get", {}));
+        } else {
+          throw error;
+        }
+      }
+    }
+  }
+
+  /** A workspace a hub answered with: kept unless an event brought a newer one meanwhile. */
+  applyWorkspace(hub: string, workspace: WorkspaceData): void {
+    if (workspace.revision >= (this.workspaces.get(hub)?.revision ?? -1)) {
+      this.workspaces.set(hub, workspace);
+      this.changed();
+    } else {
+      // an event was newer
     }
   }
 

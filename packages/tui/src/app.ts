@@ -405,9 +405,16 @@ export class App {
     let editor = this.editors.get(key);
     if (editor === undefined) {
       editor = this.newEditor();
-      editor.setText(view?.draft ?? "");
-      const shown = this.shownTab;
-      editor.onChange = (text) => (shown !== undefined ? this.workbench.updateView(shown, { draft: text }) : undefined);
+      editor.setText(tab !== undefined ? this.workbench.draftText(tab) : "");
+      editor.onChange = (text) => {
+        // the tab as it is now (it may have joined the workspace meanwhile)
+        const current = this.workbench.tabs().find((candidate) => tab !== undefined && candidate.hub === tab.hub && candidate.sessionId === tab.sessionId);
+        if (current !== undefined) {
+          this.workbench.setDraft(current, text);
+        } else {
+          // the tab is closed
+        }
+      };
       this.editors.set(key, editor);
     } else {
       // the tab's own editor, as it was left
@@ -507,7 +514,25 @@ export class App {
   /** Keeps the window's state now: the shown tab's scroll and every draft (on quitting). */
   async keepWindow(): Promise<void> {
     this.keepScroll();
-    await this.workbench.saveViews();
+    await Promise.all([this.workbench.saveViews(), this.workbench.flushDrafts()]);
+  }
+
+  /**
+   * The drafts of the tabs not shown follow their hub (written on another device meanwhile); the
+   * shown one is being typed in here and stays as it is.
+   */
+  private followDrafts(): void {
+    const shown = this.shownTab !== undefined ? `${this.shownTab.hub}/${this.shownTab.sessionId}` : "";
+    for (const tab of this.workbench.tabs()) {
+      const key = `${tab.hub}/${tab.sessionId}`;
+      const editor = this.editors.get(key);
+      const text = this.workbench.draftText(tab);
+      if (key !== shown && editor !== undefined && editor.getText() !== text) {
+        editor.setText(text);
+      } else {
+        // shown, not made yet, or as it is
+      }
+    }
   }
 
   private editorMode(): ReturnType<typeof modeOfText>["mode"] {
@@ -545,6 +570,7 @@ export class App {
     } else {
       // the same tab
     }
+    this.followDrafts();
 
     this.strip.content = {
       hubs: screen.hubs,
@@ -1126,10 +1152,18 @@ export class App {
   /** Ctrl+V: copied files, an image or text from the system clipboard, as pi pastes them (clipboard.ts). */
   private async paste(): Promise<void> {
     const tab = this.workbench.activeTab();
-    const target: PasteTarget =
-      tab === undefined || tab.hub === this.client.home
-        ? { local: true }
-        : { local: false, upload: async (name, base64) => (await this.client.connection(tab.hub).request("files_upload", { name, base64 })).path };
+    const hub = tab?.hub ?? this.client.home;
+    const session = tab?.sessionId ?? "unsorted";
+    const target: PasteTarget = {
+      local: hub === undefined || hub === this.client.home,
+      upload: async (name, base64) => {
+        if (hub === undefined) {
+          throw new Error("no hub to keep the file");
+        } else {
+          return (await this.client.connection(hub).request("attachments_put", { session, name, base64 })).path;
+        }
+      },
+    };
     try {
       const inserted = await clipboardInsert(this.clipboard, target, this.editor.getText().trimStart().startsWith("!"));
       if (inserted === undefined) {

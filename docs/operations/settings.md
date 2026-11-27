@@ -5,6 +5,7 @@
   .gitignore            # "*"
   settings.json         # pi's settings (model, thinking, packages, theme)
   ui-settings.json      # the user's UI settings (below)
+  workspace.json        # the open tabs of this hub's sessions and their drafts (below)
   auth.json             # provider credentials (pi)
   harness.json          # defaults of new sessions: variant, madness, model
   remotes.json          # this client's hubs and device tokens (0600)
@@ -15,19 +16,37 @@
   hub/                  # the hub's paired devices and pairing codes (hashes)
   themes/               # themes (pi's format)
   log/                  # hub events and agents' output
-  uploads/              # files handed to sessions from the app (dropped, picked)
+  attachments/<session>/ # files handed to sessions (pasted, dropped, picked), by content
   ui-state/tui.json     # the TUI windows' state on this machine (below)
 ```
 
+## The workspace
+
+Each hub keeps the user's open tabs of its sessions in `workspace.json`, in order, each with what of
+it was seen (which clears its ✓/✗) and its draft — the message being written there, shared by every
+device: begun on one, finished on another. A draft goes to the hub at most once a second and at once
+on leaving its tab or quitting; the field being typed in is never overwritten by another device's
+write. Changes of the tabs carry the revision they were read at, so clients changing them at once
+keep each other's.
+
+A session belongs there once it differs from a new one: a message, a draft (text or an attached
+file), a name. Until then it is its window's alone and closing it leaves nothing; wiped back to a
+new one (no message, the draft empty) it is its window's alone again. A tab whose session has a
+draft and no message yet comes back after a restart as a new session in its folder with the draft;
+one whose session file is gone is removed, and the status line says so.
+
+Files pasted, dropped or picked go to the hub at once (`attachments/<session>/<sha256>.<ext>`), never
+to a temporary directory, so a draft naming them lasts; one that no draft and no transcript names is
+removed after `attachments.retentionDays`.
+
 ## A window's state
 
-What each tab left — the message being written, where its transcript was scrolled, expanded tool
-output, the item shown — the active tab and the hub chosen in the strip belong to the device, not
-to the user: the TUI keeps them in `ui-state/tui.json` (written under its lock and merged by tab, so
-two windows keep each other's tabs; the active tab and hub are the window's that closed last), the
-web app in the browser's `localStorage`, the phone apps in a file of their own. They are kept at
-most every half second and on quitting; a draft's cursor comes back at its end. A session without
-a message comes back only with a draft: as a new session in its folder, the draft in it.
+What depends on the screen — where each tab's transcript was scrolled, expanded tool output, the
+item shown, the terminal shown — the active tab and the hub chosen in the strip belong to the
+client: the TUI keeps them in `ui-state/tui.json` (written under its lock and merged by tab, so two
+windows keep each other's tabs; the active tab and hub are the window's that closed last), the web
+app in the browser's `localStorage`, the phone apps in a file of their own. They are kept at most
+every half second and on quitting.
 
 ## UI settings
 
@@ -36,7 +55,7 @@ Shared by every client of the user: the hub's `ui-settings.json`. Clients read t
 
 | Key | Meaning |
 |---|---|
-| `ui.tabs` | The open session tabs, in order: `{ hub, sessionId, sessionFile, cwd, seen }`; `seen` clears the ✓/✗ of what the user has looked at. A session joins them with its first message; changes are made from the current value (`settings_set` `ifRevision`), so clients changing tabs at once keep each other's. |
+| `attachments.retentionDays` | Days after which a file handed to a session that no draft and no transcript names is removed (default 7). |
 | `ui.theme` | The theme (pi's built-in name or a file in `themes/`). |
 | `ui.font.chat`, `ui.font.chrome` | The app's fonts of its two zones: `{ family, size }`, family `jetbrains-mono`, `iosevka-term`, `terminus` or `system` ([app.md](app.md)). |
 | `ui.web.panes` | The app's strip width: `{ left }` in pixels. |

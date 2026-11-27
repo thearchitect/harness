@@ -77,8 +77,19 @@ export type HubOps = {
   dirs_list: { args: { path: string; hidden?: boolean }; result: { path: string; parent: string | undefined; home: string; dirs: DirItem[] } };
   files_get: { args: { path: string }; result: { path: string; base64: string } };
   files_put: { args: { path: string; base64: string }; result: { path: string } };
-  /** A file the operator hands to a session (dropped, shared, picked): kept in the hub's uploads, its path returned for `@path`. */
-  files_upload: { args: { name: string; base64: string }; result: { path: string } };
+  /**
+   * A file the operator hands to a session (pasted, dropped, shared, picked): kept with the
+   * session's attachments by its content, its path returned for `@path` in the draft.
+   */
+  attachments_put: { args: { session: string; name: string; base64: string }; result: { path: string } };
+  /** The user's workspace on this hub: its tabs and their drafts. */
+  workspace_get: { args: Record<string, never>; result: WorkspaceData };
+  /** The tabs as arranged (order, seen, closed ones gone), on the revision they were read at. */
+  workspace_tabs_set: { args: { tabs: WorkspaceTab[]; ifRevision: number }; result: WorkspaceData };
+  /** A session's draft (the last write wins); with it the session joins the tabs, or leaves them (see Workspace). */
+  workspace_draft_set: { args: { tab: { sessionId: string; sessionFile: string; cwd: string }; text: string; keep: boolean }; result: WorkspaceData };
+  /** A tab's session started anew in its place (its file was never written): the tab and its draft go with the new one. */
+  workspace_tab_replace: { args: { sessionId: string; next: { sessionId: string; sessionFile: string } }; result: WorkspaceData };
   /** Speech to text on the hub, with its user's OpenAI login (the app's voice input). */
   transcribe: { args: { base64: string; mime: string }; result: { text: string } };
   /** The hub's event log, newest last. */
@@ -123,6 +134,11 @@ export type NetworkSettings = { enabled: boolean; listen: string; proxy: boolean
 
 export type DeviceInfo = { name: string; created: number; lastSeen?: number; address?: string };
 
+/** A tab of the workspace: its session, what of it was seen (ms), the message being written there. */
+export type WorkspaceTab = { sessionId: string; sessionFile: string; cwd: string; seen?: number; draft?: { text: string; at: number } };
+
+export type WorkspaceData = { revision: number; tabs: WorkspaceTab[] };
+
 /** A pairing code made in the last PAIRING_TTL_MS: open, or `used` by the device it paired. */
 export type PairingInfo = { id: string; expires: number; name?: string; used?: string };
 
@@ -161,7 +177,11 @@ export const HUB_OPS: readonly HubOp[] = [
   "dirs_list",
   "files_get",
   "files_put",
-  "files_upload",
+  "attachments_put",
+  "workspace_get",
+  "workspace_tabs_set",
+  "workspace_draft_set",
+  "workspace_tab_replace",
   "transcribe",
   "logs_tail",
   "settings_get",
@@ -189,7 +209,9 @@ export type HubEvent =
   /** Its shell exited; terminal_open starts another. */
   | { ev: "terminal_exit"; session: string; code: number }
   /** The network access or the devices changed (one paired, connected, was revoked). */
-  | { ev: "hub"; status: HubStatus };
+  | { ev: "hub"; status: HubStatus }
+  /** The workspace changed: a tab opened, moved, closed, seen; a draft written. */
+  | { ev: "workspace"; workspace: WorkspaceData };
 
 /** What a client can draw besides the protocol's typed data: "component-bridge" — ANSI lines of an agent's pi-tui components (terminal clients). */
 export type ClientCapability = "component-bridge";

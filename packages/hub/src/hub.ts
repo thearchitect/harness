@@ -4,14 +4,17 @@
 // to the connections attached to it — the whole stream ("full") or its summary ("summary").
 
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import type { AgentInfo, AttachLevel, ClientFrame, HubEvent, HubFrame, HubHost, HubOp, HubOps, HubStatus, NetworkSettings } from "#protocol/hub.ts";
 import { HubAuth } from "./auth.ts";
 import { HubNetwork, pairingLink, qrModules } from "./network.ts";
+import { Workspace } from "./workspace.ts";
+import { Attachments, ATTACHMENTS_RETENTION_DAYS, readSessionText } from "./attachments.ts";
 import { HUB_OPS } from "#protocol/hub.ts";
 import { settingRevision } from "#protocol/settings.ts";
 import { listDirs } from "./dirs.ts";
@@ -95,6 +98,8 @@ type AgentEntry = {
 /** Idle agents are unloaded after this long; checks run this often; at most this many agents run. */
 export const IDLE_UNLOAD_MS = 30 * 60_000;
 const UNLOAD_CHECK_MS = 60_000;
+/** How often attachments nothing names are looked for. */
+const SWEEP_EVERY_MS = 24 * 3600 * 1000;
 export const MAX_AGENTS = 32;
 
 /** The agent of this checkout or bundle: node running packages/agent/src/main.ts. */
@@ -118,6 +123,9 @@ export class Hub {
   private readonly terminals: Terminals;
   private readonly auth: HubAuth;
   readonly network: HubNetwork;
+  readonly workspace: Workspace;
+  private readonly attachments: Attachments;
+  private sweepTimer: unknown;
   private closing = false;
 
   constructor(config: HubConfig) {
@@ -139,6 +147,31 @@ export class Hub {
       void this.network.apply();
     });
     void this.network.apply();
+    this.workspace = new Workspace(config.dataDir);
+    this.workspace.onChange((workspace) => this.broadcast({ ev: "workspace", workspace }));
+    this.attachments = new Attachments(config.dataDir);
+    this.scheduleSweep(0);
+  }
+
+  /** Attachments nothing names any more go (at start, then daily). */
+  private scheduleSweep(delay: number): void {
+    this.sweepTimer = this.clock.setTimeout(() => {
+      void this.sweepAttachments().finally(() => (this.closing ? undefined : this.scheduleSweep(SWEEP_EVERY_MS)));
+    }, delay);
+  }
+
+  private async sweepAttachments(): Promise<void> {
+    const days = this.settings.read()["attachments.retentionDays"];
+    const drafts = this.workspace.read().tabs.flatMap((tab) => (tab.draft !== undefined ? [tab.draft.text] : []));
+    const sessions = new Map((await listSessions(this.config.dataDir).catch(() => [])).map((session) => [session.id, session.path]));
+    const removed = await this.attachments
+      .sweep(typeof days === "number" && days > 0 ? days : ATTACHMENTS_RETENTION_DAYS, this.clock.now(), drafts, (session) => readSessionText(sessions.get(session)))
+      .catch(() => []);
+    if (removed.length > 0) {
+      this.telemetry.log({ event: "attachments_removed", count: removed.length });
+    } else {
+      // nothing to remove
+    }
   }
 
   /* ----- network access and devices ----- */
@@ -382,14 +415,23 @@ export class Hub {
         await writeFile(full, Buffer.from(base64, "base64"));
         return { path: full } as HubOps[K]["result"];
       }
-      case "files_upload": {
-        const { name, base64 } = args as HubOps["files_upload"]["args"];
-        // the name only: no directories from the client
-        const safe = basename(name).replace(/[^\w.@+-]/g, "_") || "file";
-        const full = join(this.config.dataDir, "uploads", `${new Date().toISOString().replace(/[:.]/g, "-")}-${safe}`);
-        await mkdir(dirname(full), { recursive: true });
-        await writeFile(full, Buffer.from(base64, "base64"));
-        return { path: full } as HubOps[K]["result"];
+      case "attachments_put": {
+        const { session, name, base64 } = args as HubOps["attachments_put"]["args"];
+        return { path: await this.attachments.put(session, name, Buffer.from(base64, "base64")) } as HubOps[K]["result"];
+      }
+      case "workspace_get":
+        return this.workspace.read() as HubOps[K]["result"];
+      case "workspace_tabs_set": {
+        const { tabs, ifRevision } = args as HubOps["workspace_tabs_set"]["args"];
+        return this.workspace.setTabs(tabs, ifRevision) as HubOps[K]["result"];
+      }
+      case "workspace_draft_set": {
+        const { tab, text, keep } = args as HubOps["workspace_draft_set"]["args"];
+        return this.workspace.setDraft(tab, text, keep, this.clock.now()) as HubOps[K]["result"];
+      }
+      case "workspace_tab_replace": {
+        const { sessionId, next } = args as HubOps["workspace_tab_replace"]["args"];
+        return this.workspace.replaceSession(sessionId, next) as HubOps[K]["result"];
       }
       case "settings_get":
         return { settings: this.settings.read() } as HubOps[K]["result"];
@@ -571,6 +613,9 @@ export class Hub {
     const max = this.config.maxAgents ?? MAX_AGENTS;
     if (served !== undefined) {
       return { ...served.info, summary: served.summary.current };
+    } else if (sessionFile !== undefined && !existsSync(sessionFile)) {
+      // pi would start another session (another id) in its place: the tab asking for it would wait forever
+      throw new HarnessError("not_found", `no session file ${sessionFile}: the session has no message yet, or it was removed`);
     } else if (this.agents.size >= max) {
       // the oldest idle agent makes room; with none idle the start is refused
       const oldest = [...this.agents.values()].filter((entry) => this.idle(entry)).sort((a, b) => a.idleSince(this.clock.now()) - b.idleSince(this.clock.now()))[0];
@@ -864,6 +909,7 @@ export class Hub {
     this.closing = true;
     this.telemetry.log({ event: "hub_stop" });
     this.clock.clearTimeout(this.unloadTimer);
+    this.clock.clearTimeout(this.sweepTimer);
     await this.network.close();
     await Promise.all([...this.agents.values()].map((entry) => entry.link.stop()));
     this.terminals.closeAll();

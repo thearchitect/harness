@@ -200,14 +200,49 @@ A theme's colors as hex for clients that draw it themselves, with the names of t
 |---|---|---|---|
 | `name` | string |  | A theme name; the user's ui.theme, else dark, when absent |
 
-### `files_upload`
+### `attachments_put`
 
-A file the operator hands to a session (dropped, shared, picked), kept in the hub's ~/.harness/uploads. → { path }
+A file the operator hands to a session (pasted, dropped, shared, picked), kept with its attachments by content (~/.harness/attachments/<session>/<sha256>.<ext>). → { path }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `name` | string | yes | The file's name |
+| `session` | string | yes | The session's id |
+| `name` | string | yes | The file's name (its extension is kept) |
 | `base64` | string | yes |  |
+
+### `workspace_get`
+
+The user's workspace on this hub: its tabs (session, file, directory, seen, draft) in order, and its revision. → { revision, tabs }
+
+No fields.
+
+### `workspace_tabs_set`
+
+Arranges the tabs: order, seen, closed ones gone. → { revision, tabs }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `tabs` | any | yes | WorkspaceTab[]: the tabs as arranged; their drafts are kept from the hub's |
+| `ifRevision` | integer | yes | The revision they were read at: another one is refused (conflict) |
+
+### `workspace_draft_set`
+
+A session's draft, the last write winning: the session joins the tabs when it differs from a new one, and leaves them when it does not and has no message on disk. → { revision, tabs }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `tab` | any | yes | { sessionId, sessionFile, cwd } |
+| `text` | string | yes | The message being written |
+| `keep` | boolean | yes | The session differs from a new one besides its draft (a message, a name) |
+
+### `workspace_tab_replace`
+
+A tab's session started anew in its place (its file was never written). → { revision, tabs }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `sessionId` | string | yes |  |
+| `next` | any | yes | { sessionId, sessionFile } |
 
 ### `transcribe`
 
@@ -272,7 +307,7 @@ No fields.
 
 ### `settings_get`
 
-The user's UI settings (ui.tabs, ui.theme, …): the hub user's. → { settings }
+The user's UI settings (ui.theme, hub.network, …). → { settings }
 
 No fields.
 
@@ -397,3 +432,12 @@ The network access or the devices changed (one paired, connected, was revoked).
 |---|---|---|---|
 | `ev` | `"hub"` | yes |  |
 | `status` | any | yes | HubStatus |
+
+### `workspace`
+
+The workspace changed: a tab opened, moved, closed, seen; a draft written.
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `ev` | `"workspace"` | yes |  |
+| `workspace` | any | yes | { revision, tabs } |

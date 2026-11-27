@@ -366,7 +366,7 @@ export const scenario = defineScenario({
     {
       name: "a new session: Ctrl+T chooses its folder in the chat zone by typing alone; the tab is the window's until its first message; Esc cancels",
       async run({ stand, clients: { tui } }) {
-        const shared = (): { sessionId: string }[] => (tui.client.settings["ui.tabs"] as { sessionId: string }[] | undefined) ?? [];
+        const shared = (): { sessionId: string }[] => tui.client.workspaces.get(tui.client.home ?? "")?.tabs ?? [];
         await tui.press("\x14"); // Ctrl+T
         await tui.waitForText((screen) => screen.includes("folder ⇒") && screen.includes("new session"));
         assert.equal(tui.screen().input, "newSession");

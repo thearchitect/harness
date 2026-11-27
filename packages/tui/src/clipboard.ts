@@ -1,12 +1,12 @@
 // Ctrl+V as in pi (handleClipboardPaste of its interactive mode): copied files paste their paths, an
 // image pastes the path of a file holding it, anything else pastes as text. pi writes the image to
-// its own temp directory; here every file goes to the session's hub when the session runs on
-// another machine (files_upload), so the path in the message is one its agent can read.
+// its own temp directory; here an image goes to the session's attachments on its hub
+// (attachments_put), so the draft naming it lasts across restarts and devices; copied files go there
+// too when the session runs on another machine, so the path is one its agent can read.
 
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { readFile } from "node:fs/promises";
+import { basename } from "node:path";
 
 export type Clipboard = {
   filePaths(): Promise<string[] | null>;
@@ -15,8 +15,8 @@ export type Clipboard = {
   extensionOf(mimeType: string): string | undefined;
 };
 
-/** Where the session runs: on this machine, or on a hub that takes files through files_upload. */
-export type PasteTarget = { local: true } | { local: false; upload(name: string, base64: string): Promise<string> };
+/** Where the session runs (`local`: this machine, whose paths its agent reads) and how its hub keeps a file. */
+export type PasteTarget = { local: boolean; upload(name: string, base64: string): Promise<string> };
 
 /** pi's quoting of a path in a shell command (`!` messages). */
 function quoteIfNeeded(value: string): string {
@@ -40,13 +40,7 @@ export async function clipboardInsert(clipboard: Clipboard, target: PasteTarget,
     const image = await clipboard.image();
     if (image !== null) {
       const name = `pi-clipboard-${randomUUID()}.${clipboard.extensionOf(image.mimeType) ?? "png"}`;
-      if (target.local) {
-        const path = join(tmpdir(), name);
-        await writeFile(path, image.bytes);
-        return { text: path, paths: false };
-      } else {
-        return { text: await target.upload(name, Buffer.from(image.bytes).toString("base64")), paths: false };
-      }
+      return { text: await target.upload(name, Buffer.from(image.bytes).toString("base64")), paths: false };
     } else {
       const text = await clipboard.text();
       return text !== null && text !== "" ? { text, paths: false } : undefined;

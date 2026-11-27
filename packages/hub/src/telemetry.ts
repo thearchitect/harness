@@ -28,7 +28,8 @@ export type TelemetryEvent =
   | { event: "device_refused"; address: string; reason: string }
   | { event: "device_renamed"; device: string; to: string }
   | { event: "device_revoked"; device: string }
-  | { event: "idle_exit"; minutes: number };
+  | { event: "idle_exit"; minutes: number }
+  | { event: "attachments_removed"; count: number };
 
 export class Telemetry {
   private readonly path: string;

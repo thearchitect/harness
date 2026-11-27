@@ -36,21 +36,17 @@ describe("clients at the same time", () => {
     assert.equal((await first.request("agents_list", {})).agents.filter((candidate) => candidate.sessionFile === agent.sessionFile).length, 1);
   });
 
-  test("two clients changing the tab set at once keep both changes", async () => {
+  test("two clients changing the tabs at once keep both changes", async () => {
     const stand = await createStand();
     stands.push(stand);
     const clients = [new ClientModel(), new ClientModel()];
     for (const client of clients) {
-      await client.addEndpoint(() => stand.connect("unix"), { home: true });
+      await client.addEndpoint(() => stand.connect("unix"), { home: true, name: "local" });
     }
-    const tab = (id: string) => ({ node: "test", sessionId: id, cwd: stand.project });
-    await Promise.all(
-      clients.flatMap((client, index) =>
-        [0, 1, 2].map((n) => client.updateSetting<unknown[]>("ui.tabs", (current) => [...(current ?? []), tab(`s${index}-${n}`)])),
-      ),
-    );
-    const { settings } = await (await stand.connect()).request("settings_get", {});
-    const ids = (settings["ui.tabs"] as { sessionId: string }[]).map((record) => record.sessionId).sort();
+    const tab = (id: string) => ({ sessionId: id, sessionFile: `/s/${id}.jsonl`, cwd: stand.project });
+    await Promise.all(clients.flatMap((client, index) => [0, 1, 2].map((n) => client.updateWorkspace("local", (current) => [...current, tab(`s${index}-${n}`)]))));
+    const { tabs } = await (await stand.connect()).request("workspace_get", {});
+    const ids = tabs.map((record) => record.sessionId).sort();
     assert.deepEqual(ids, ["s0-0", "s0-1", "s0-2", "s1-0", "s1-1", "s1-2"]);
     for (const client of clients) {
       client.dispose();

@@ -1,5 +1,5 @@
-// The UI settings of a user, kept by the hub the user's clients come through: themes, fonts, the
-// open tabs (ui.tabs), task defaults. Stored in ~/.harness/ui-settings.json, apart from pi's
+// The UI settings of a user, kept by the hub the user's clients come through: themes, fonts, task
+// defaults, the hub's network access. Stored in ~/.harness/ui-settings.json, apart from pi's
 // settings.json, which agents write themselves. Changes reach every client of the user.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -28,7 +28,7 @@ export class SettingsStore {
     }
   }
 
-  /** Sets one key (dotted keys are flat: "ui.tabs"), replacing the file atomically. */
+  /** Sets one key (dotted keys are flat: "ui.theme"), replacing the file atomically. */
   set(key: string, value: unknown): Settings {
     const next = { ...this.read(), [key]: value };
     if (value === undefined) {

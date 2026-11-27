@@ -1,6 +1,6 @@
 // The workbench every UI draws: the tabs of open sessions (left), the items of the active session
 // (right: the session itself, its background tasks, its subagents), what the main area shows, and
-// the one glyph each row carries. The tab set lives in the user's settings (`ui.tabs`), shared by
+// the one glyph each row carries. Each hub keeps its tabs and their drafts (its workspace), shared by
 // all the user's UIs; which tab is active and which item is selected are this client's own.
 
 import { systemClock, type Clock } from "#protocol/clock.ts";
@@ -8,7 +8,8 @@ import type { BridgedComponent, ComponentMouse, LoginProvider, SubagentProfileVi
 import { familyRefs } from "#protocol/model-ref.ts";
 import { modeOfText } from "#protocol/modes.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
-import type { AgentInfo, AgentSummary } from "#protocol/hub.ts";
+import type { AgentInfo, AgentSummary, WorkspaceTab } from "#protocol/hub.ts";
+import { RequestError } from "../connection.ts";
 import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#protocol/state.ts";
 import type { ActionId } from "../keymap.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
@@ -226,7 +227,7 @@ export type UpdateHook = {
 /** One row glyph, by priority: unavailable, waiting for the operator, failed (unseen), running, done (unseen), nothing. */
 export type Glyph = "⊘" | "◆" | "✗" | "●" | "✓" | " ";
 
-/** A tab as `ui.tabs` stores it. `seen`: the last activity the user has seen (ms), which clears ✓ and ✗. */
+/** A tab of a hub's workspace, with the hub. `seen`: the last activity the user has seen (ms), which clears ✓ and ✗. */
 export type TabRecord = { hub: string; sessionId: string; sessionFile?: string; cwd: string; seen?: number };
 
 export type Tab = TabRecord & {
@@ -352,10 +353,21 @@ function duration(ms: number): string {
   return seconds < 60 ? `${seconds}s` : seconds < 3600 ? `${Math.floor(seconds / 60)}m` : `${Math.floor(seconds / 3600)}h`;
 }
 
-export function tabRecords(settings: Record<string, unknown>): TabRecord[] {
-  const tabs = settings["ui.tabs"];
-  return Array.isArray(tabs) ? (tabs.filter((tab) => typeof tab === "object" && tab !== null && typeof (tab as TabRecord).sessionId === "string" && typeof (tab as TabRecord).hub === "string") as TabRecord[]) : [];
+/** The workspace tabs of every hub the client knows, the home hub's first, as records naming their hub. */
+export function tabRecords(client: ClientModel): TabRecord[] {
+  const hubs = [...client.workspaces.keys()].sort((a, b) => (a === client.home ? -1 : b === client.home ? 1 : 0));
+  return hubs.flatMap((hub) =>
+    (client.workspaces.get(hub)?.tabs ?? []).map((tab): TabRecord => ({ hub, sessionId: tab.sessionId, sessionFile: tab.sessionFile, cwd: tab.cwd, ...(tab.seen !== undefined ? { seen: tab.seen } : {}) })),
+  );
 }
+
+/** A record as its hub's workspace keeps it (the hub is the workspace's own). */
+function workspaceTab(record: TabRecord): WorkspaceTab {
+  return { sessionId: record.sessionId, sessionFile: record.sessionFile ?? "", cwd: record.cwd, ...(record.seen !== undefined ? { seen: record.seen } : {}) };
+}
+
+/** How long a draft being typed waits before it goes to its hub (and on leaving its tab at once). */
+const DRAFT_SAVE_MS = 1000;
 
 /** What names a tab: its session on its hub. */
 export type TabKey = { hub: string; sessionId: string };
@@ -400,8 +412,8 @@ export class Workbench {
   /** The last active tab of each hub (choosing a hub opens it again). */
   private readonly lastActive = new Map<string, string>();
   /**
-   * Tabs of sessions without a message yet: this window's alone (pi writes no file for them); the
-   * first message puts them in the shared tab set (ui.tabs).
+   * Tabs of sessions that are new ones still (no message, no draft, no name): this window's alone;
+   * once they differ they join their hub's workspace (writeDraft, joinTalked).
    */
   private drafts: TabRecord[] = [];
   /** Choosing where a new session starts. */
@@ -466,6 +478,8 @@ export class Workbench {
     } else {
       this.prefetch = undefined;
     }
+    // a window's own session joins the workspace once its transcript has a message
+    client.onChange(() => this.joinTalked());
   }
 
   private readonly prefetch: Prefetch | undefined;
@@ -516,11 +530,10 @@ export class Workbench {
     const active = this.activeTab();
     const hub = this.chosenHub;
     return {
-      version: 1,
+      version: 2,
       tabs: Object.fromEntries(tabs.filter((tab) => !tab.draft).flatMap((tab) => (this.views.has(`${tab.hub}/${tab.sessionId}`) ? [[`${tab.hub}/${tab.sessionId}`, this.view(tab)]] : []))),
       ...(active !== undefined && !active.draft ? { active: { hub: active.hub, sessionId: active.sessionId } } : {}),
       ...(hub !== undefined ? { hub } : {}),
-      drafts: tabs.filter((tab) => tab.draft && this.view(tab).draft !== "").map((tab) => ({ hub: tab.hub, cwd: tab.cwd, draft: this.view(tab).draft })),
     };
   }
 
@@ -548,8 +561,7 @@ export class Workbench {
   }
 
   /**
-   * The window as it was: the tabs' views, the active tab and the hub; each draft of a session
-   * without a message becomes a new session in its folder with the draft. Call once the hubs are
+   * The window as it was: the tabs' views, the active tab and the hub. Call once the hubs are
    * connected, before the UI starts.
    */
   async restoreViews(): Promise<void> {
@@ -573,18 +585,6 @@ export class Workbench {
         this.chosenHub = state.hub;
       } else {
         // the hub is gone: the active tab's or the home hub
-      }
-      for (const draft of state.drafts) {
-        if (this.client.connections.has(draft.hub)) {
-          const tab = await this.newTab(draft.hub, draft.cwd).catch(() => undefined);
-          if (tab !== undefined) {
-            this.updateView(tab, { draft: draft.draft });
-          } else {
-            // the folder is gone
-          }
-        } else {
-          // its hub is not here: the draft goes
-        }
       }
       this.client.changed();
     }
@@ -1095,7 +1095,7 @@ export class Workbench {
     }
     if (tab?.unavailable !== undefined) {
       lines.push({ level: "warning", text: `⊘ ${tab.unavailable}` });
-    } else if (tab !== undefined && tab.agent === undefined && !tab.draft) {
+    } else if (tab !== undefined && tab.agent === undefined && this.starting.has(`${tab.hub}/${tab.sessionId}`)) {
       lines.push({ level: "info", text: "starting…" }); // shown from its file meanwhile
     } else {
       // available, its agent up
@@ -1835,12 +1835,9 @@ export class Workbench {
         } else if (task !== undefined) {
           await api.call(tab.agent.id, { type: "harness_task_input", taskId: task.id, data: `${text}\n` });
         } else {
+          // the draft is sent: the tab keeps an empty one (a window's own session joins the workspace with its first message)
           await api.call(tab.agent.id, { type: "harness_prompt", text, mode });
-          if (tab.draft) {
-            await this.keepDraft(tab);
-          } else {
-            // a kept session already
-          }
+          this.setDraft(tab, "");
         }
       } catch (error) {
         this.notify("error", error instanceof Error ? error.message : String(error));
@@ -1849,7 +1846,7 @@ export class Workbench {
   }
 
   tabs(): Tab[] {
-    const shared = tabRecords(this.client.settings);
+    const shared = tabRecords(this.client);
     const drafts = this.drafts.filter((draft) => !shared.some((record) => sameTab(record, draft)));
     return [...shared, ...drafts].map((record, index) => {
       const agent = [...this.client.agents.values()].find((candidate) => candidate.hub === record.hub && candidate.sessionId === record.sessionId);
@@ -1934,9 +1931,11 @@ export class Workbench {
     this.client.changed();
   }
 
-  /** Activates a tab and marks what it shows as seen (shared through ui.tabs). */
+  /** Activates a tab and marks what it shows as seen (shared through its hub's workspace). */
   async activate(index: number): Promise<void> {
     const tabs = this.tabs();
+    // the draft of the tab left goes to its hub now
+    void this.flushDrafts();
     if (tabs.length === 0) {
       this.activeKey = undefined;
     } else {
@@ -1954,7 +1953,8 @@ export class Workbench {
         await this.client.follow(tab.hub, tab.agent.id);
         await this.markSeen(tab);
       } else {
-        // the tab's agent is not running: opening it starts one (openTab)
+        // its agent is not running: it starts, the tab shows from what was loaded meanwhile
+        void this.ensureAgent(tab);
       }
     }
     this.client.changed();
@@ -1962,22 +1962,111 @@ export class Workbench {
 
   async markSeen(tab: Tab): Promise<void> {
     const activity = tab.agent?.summary.lastActivity;
-    if (activity !== undefined && (tab.seen ?? 0) < activity) {
-      await this.updateTabs((records) => records.map((record) => (sameTab(record, tab) ? { ...record, seen: Math.max(record.seen ?? 0, activity) } : record)));
+    if (activity !== undefined && (tab.seen ?? 0) < activity && !tab.draft) {
+      await this.updateTabs(tab.hub, (records) => records.map((record) => (record.sessionId === tab.sessionId ? { ...record, seen: Math.max(record.seen ?? 0, activity) } : record)));
     } else {
-      // nothing new
+      // nothing new, or a window's own tab
     }
   }
 
-  /** Changes the tab set from its current value: another client's change at the same time is kept (ifRevision). */
-  async updateTabs(change: (records: TabRecord[]) => TabRecord[]): Promise<void> {
-    await this.client.updateSetting<unknown>("ui.tabs", (current) => change(tabRecords({ "ui.tabs": current })));
+  /** Changes a hub's tabs from their current value: another client's change at the same time is kept (ifRevision). */
+  async updateTabs(hub: string, change: (records: TabRecord[]) => TabRecord[]): Promise<void> {
+    await this.client.updateWorkspace(hub, (tabs) => change(tabs.map((tab) => ({ hub, ...tab }))).map(workspaceTab));
   }
 
   /** The index of a tab in the current set. */
   private tabIndex(tab: TabKey): number {
-    return tabRecords(this.client.settings).findIndex((record) => sameTab(record, tab));
+    return tabRecords(this.client).findIndex((record) => sameTab(record, tab));
   }
+
+  /* ----- drafts: the message being written in each tab, the hub's (shared by every device) ----- */
+
+  /** Drafts typed here and not on their hub yet, by `hub/sessionId`. */
+  private readonly draftsPending = new Map<string, { tab: Tab; text: string }>();
+  private draftTimer: unknown;
+
+  /** A tab's draft: what is typed here and not sent yet, else its hub's. */
+  draftText(tab: TabKey): string {
+    const key = `${tab.hub}/${tab.sessionId}`;
+    return this.draftsPending.get(key)?.text ?? this.client.workspaces.get(tab.hub)?.tabs.find((candidate) => candidate.sessionId === tab.sessionId)?.draft?.text ?? "";
+  }
+
+  /** The draft as typed: to its hub at most once per DRAFT_SAVE_MS, and at once on leaving the tab. */
+  setDraft(tab: Tab, text: string): void {
+    if (text === this.draftText(tab)) {
+      return; // as it is
+    } else {
+      this.draftsPending.set(`${tab.hub}/${tab.sessionId}`, { tab, text });
+      if (this.draftTimer === undefined) {
+        this.draftTimer = this.clock.setTimeout(() => {
+          this.draftTimer = undefined;
+          void this.flushDrafts();
+        }, DRAFT_SAVE_MS);
+      } else {
+        // a write is coming
+      }
+    }
+  }
+
+  /** The drafts typed here go to their hubs now (leaving a tab, quitting). */
+  async flushDrafts(): Promise<void> {
+    if (this.draftTimer !== undefined) {
+      this.clock.clearTimeout(this.draftTimer);
+      this.draftTimer = undefined;
+    } else {
+      // no write pending
+    }
+    const pending = [...this.draftsPending.values()];
+    this.draftsPending.clear();
+    await Promise.all(pending.map(({ tab, text }) => this.writeDraft(tab, text)));
+  }
+
+  /**
+   * Whether a session differs from a new one besides its draft: a message in its transcript, or a
+   * name. (A new session takes the current defaults of model, thinking and modes: changing them there
+   * changes the defaults, so they never tell it apart.)
+   */
+  private differs(tab: TabKey & { agent: AgentInfo | undefined }): boolean {
+    const model = tab.agent !== undefined ? this.client.full.get(agentKey(tab.hub, tab.agent.id)) : undefined;
+    const named = (model?.session?.sessionName ?? tab.agent?.name ?? "") !== "";
+    const talked = model?.items.some((item) => item.kind === "message" && (item.message.role === "user" || item.message.role === "assistant")) ?? false;
+    return named || talked;
+  }
+
+  /** A draft to its hub: the session joins the workspace when it differs from a new one, and leaves it when wiped back to one. */
+  private async writeDraft(tab: Tab, text: string): Promise<void> {
+    const file = tab.agent?.sessionFile ?? tab.sessionFile;
+    if (file === undefined || !this.client.connections.has(tab.hub)) {
+      this.notify("warning", `the draft of ${tab.title} was not kept: hub ${tab.hub} is not connected`);
+    } else {
+      try {
+        const workspace = await this.client.connection(tab.hub).request("workspace_draft_set", { tab: { sessionId: tab.sessionId, sessionFile: file, cwd: tab.cwd }, text, keep: this.differs(tab) });
+        this.client.applyWorkspace(tab.hub, workspace);
+        const shared = workspace.tabs.some((candidate) => candidate.sessionId === tab.sessionId);
+        const record: TabRecord = { hub: tab.hub, sessionId: tab.sessionId, sessionFile: file, cwd: tab.cwd };
+        // joined: every client has it; left: this window's own again
+        this.drafts = shared ? this.drafts.filter((draft) => !sameTab(draft, record)) : this.drafts.some((draft) => sameTab(draft, record)) ? this.drafts : [...this.drafts, record];
+      } catch (error) {
+        this.notify("warning", `the draft of ${tab.title} was not kept: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    this.client.changed();
+  }
+
+  /** A window's own session whose transcript got a message joins the workspace (its draft with it). */
+  private joinTalked(): void {
+    for (const tab of this.tabs().filter((candidate) => candidate.draft && candidate.agent !== undefined)) {
+      const key = `${tab.hub}/${tab.sessionId}`;
+      if (!this.joining.has(key) && this.differs(tab)) {
+        this.joining.add(key);
+        void this.writeDraft(tab, this.draftText(tab)).finally(() => this.joining.delete(key));
+      } else {
+        // joining already, or still a new session
+      }
+    }
+  }
+
+  private readonly joining = new Set<string>();
 
   /** Starts an agent for a new session on the hub and opens it as the last tab. */
   /**
@@ -1993,36 +2082,69 @@ export class Workbench {
     return this.activeTab();
   }
 
-  /** A draft's first message is sent: it joins the shared tab set (every client of the user sees it). */
-  private async keepDraft(tab: Tab): Promise<void> {
-    const record: TabRecord = { hub: tab.hub, sessionId: tab.sessionId, sessionFile: tab.agent?.sessionFile ?? tab.sessionFile, cwd: tab.cwd };
-    await this.updateTabs((records) => (records.some((candidate) => sameTab(candidate, record)) ? records : [...records, record]));
-    this.drafts = this.drafts.filter((draft) => !sameTab(draft, record));
-  }
-
   /** Opens a stored session: an agent for it (the hub's, if one runs already), then a tab. */
   async openSession(hub: string, session: { id: string; path: string; cwd: string }): Promise<void> {
-    const records = tabRecords(this.client.settings);
-    const index = records.findIndex((record) => record.hub === hub && record.sessionId === session.id);
+    const index = this.tabs().findIndex((tab) => tab.hub === hub && tab.sessionId === session.id);
     if (index !== -1) {
-      await this.ensureAgent(this.tabs()[index]);
       await this.activate(index);
     } else {
       const { agent } = await this.client.connection(hub).request("agent_start", { cwd: session.cwd, sessionFile: session.path });
       this.client.agents.set(agentKey(hub, agent.id), agent);
       const record: TabRecord = { hub, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
-      await this.updateTabs((current) => (current.some((candidate) => sameTab(candidate, record)) ? current : [...current, record]));
+      await this.updateTabs(hub, (current) => (current.some((candidate) => sameTab(candidate, record)) ? current : [...current, record]));
       await this.activate(this.tabIndex(record));
     }
   }
 
-  /** A tab whose agent is not running gets one, on its session file. */
+  /** Tabs whose agent is starting now (`hub/sessionId`): `starting…` shows only for them. */
+  private readonly starting = new Set<string>();
+
+  /**
+   * A tab whose agent is not running gets one, on its session file. A file never written (a session
+   * with a draft and no message) starts a new session in its folder in the tab's place, the draft
+   * going with it; a file that is gone takes its tab with it, and the status line says so.
+   */
   async ensureAgent(tab: Tab | undefined): Promise<void> {
-    if (tab === undefined || tab.agent !== undefined || tab.unavailable !== undefined) {
-      return;
+    const key = tab !== undefined ? `${tab.hub}/${tab.sessionId}` : "";
+    if (tab === undefined || tab.agent !== undefined || tab.unavailable !== undefined || this.starting.has(key)) {
+      return; // nothing to start, or starting already
     } else {
-      const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd, sessionFile: tab.sessionFile });
-      this.client.agents.set(agentKey(tab.hub, agent.id), agent);
+      this.starting.add(key);
+      this.client.changed();
+      try {
+        const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd, sessionFile: tab.sessionFile });
+        this.client.agents.set(agentKey(tab.hub, agent.id), agent);
+      } catch (error) {
+        if (error instanceof RequestError && error.code === "not_found" && this.draftText(tab) !== "") {
+          const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd });
+          this.client.agents.set(agentKey(tab.hub, agent.id), agent);
+          this.client.applyWorkspace(tab.hub, await this.client.connection(tab.hub).request("workspace_tab_replace", { sessionId: tab.sessionId, next: { sessionId: agent.sessionId, sessionFile: agent.sessionFile ?? "" } }));
+          this.retarget(tab, { hub: tab.hub, sessionId: agent.sessionId });
+        } else if (error instanceof RequestError && error.code === "not_found") {
+          await this.updateTabs(tab.hub, (records) => records.filter((record) => record.sessionId !== tab.sessionId));
+          this.notify("warning", `tab ${tab.title}: its session file is gone, the tab was removed`);
+        } else {
+          this.notify("error", `tab ${tab.title}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      } finally {
+        this.starting.delete(key);
+        this.client.changed();
+      }
+    }
+  }
+
+  /** A tab's session was replaced: what this window kept of it (view, active) follows the new one. */
+  private retarget(from: TabKey, to: TabKey): void {
+    const view = this.views.get(`${from.hub}/${from.sessionId}`);
+    if (view !== undefined) {
+      this.views.set(`${to.hub}/${to.sessionId}`, view);
+    } else {
+      // nothing kept of it
+    }
+    if (this.activeKey !== undefined && sameTab(this.activeKey, from)) {
+      this.activeKey = to;
+    } else {
+      // another tab is active
     }
   }
 
@@ -2034,6 +2156,7 @@ export class Workbench {
       return; // no such tab
     } else if (closed.draft) {
       this.drafts = this.drafts.filter((draft) => !sameTab(draft, closed));
+      this.draftsPending.delete(`${closed.hub}/${closed.sessionId}`);
       if (closed.agent !== undefined) {
         await this.client
           .connection(closed.hub)
@@ -2043,7 +2166,8 @@ export class Workbench {
         // no agent to stop
       }
     } else {
-      await this.updateTabs((records) => records.filter((record) => !sameTab(record, closed)));
+      this.draftsPending.delete(`${closed.hub}/${closed.sessionId}`);
+      await this.updateTabs(closed.hub, (records) => records.filter((record) => !sameTab(record, closed)));
     }
     const left = this.tabs().filter((tab) => tab.hub === closed.hub);
     const next = left[Math.min(left.length - 1, this.nodeTabIndexBefore(closed, left))];
@@ -2061,16 +2185,20 @@ export class Workbench {
     return Math.max(0, Math.min(before, left.length - 1));
   }
 
+  /** Moves a tab (indexes among all tabs) to another place among its hub's. */
   async moveTab(from: number, to: number): Promise<void> {
-    const moved = tabRecords(this.client.settings)[from];
-    if (moved !== undefined) {
-      await this.updateTabs((records) => {
-        const rest = records.filter((record) => !sameTab(record, moved));
-        return [...rest.slice(0, to), moved, ...rest.slice(to)];
+    const records = tabRecords(this.client);
+    const moved = records[from];
+    const target = records[to];
+    if (moved !== undefined && target !== undefined && target.hub === moved.hub) {
+      const place = records.filter((record) => record.hub === moved.hub).findIndex((record) => sameTab(record, target));
+      await this.updateTabs(moved.hub, (current) => {
+        const rest = current.filter((record) => !sameTab(record, moved));
+        return [...rest.slice(0, place), moved, ...rest.slice(place)];
       });
       this.client.changed();
     } else {
-      // no such tab
+      // no such tab, or another hub's place
     }
   }
 }

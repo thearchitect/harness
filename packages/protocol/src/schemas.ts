@@ -94,7 +94,24 @@ export const OP_SCHEMAS: Record<HubOp, TSchema> = {
   files_get: Obj({ path: Str("A file under the hub user's home") }, "Reads a file. → { path, base64 }"),
   files_put: Obj({ path: Str("A file under the hub user's home"), base64: Str("The content") }, "Writes a file (directories are created). → { path }"),
   theme_get: Obj({ name: Opt(Str("A theme name; the user's ui.theme, else dark, when absent")) }, "A theme's colors as hex for clients that draw it themselves, with the names of the themes there are. → { name, appearance, colors, names }"),
-  files_upload: Obj({ name: Str("The file's name"), base64: Str() }, "A file the operator hands to a session (dropped, shared, picked), kept in the hub's ~/.harness/uploads. → { path }"),
+  attachments_put: Obj(
+    { session: Str("The session's id"), name: Str("The file's name (its extension is kept)"), base64: Str() },
+    "A file the operator hands to a session (pasted, dropped, shared, picked), kept with its attachments by content (~/.harness/attachments/<session>/<sha256>.<ext>). → { path }",
+  ),
+  workspace_get: Obj({}, "The user's workspace on this hub: its tabs (session, file, directory, seen, draft) in order, and its revision. → { revision, tabs }"),
+  workspace_tabs_set: Obj(
+    { tabs: Any("WorkspaceTab[]: the tabs as arranged; their drafts are kept from the hub's"), ifRevision: Type.Integer({ description: "The revision they were read at: another one is refused (conflict)" }) },
+    "Arranges the tabs: order, seen, closed ones gone. → { revision, tabs }",
+  ),
+  workspace_draft_set: Obj(
+    {
+      tab: Any("{ sessionId, sessionFile, cwd }"),
+      text: Str("The message being written"),
+      keep: Type.Boolean({ description: "The session differs from a new one besides its draft (a message, a name)" }),
+    },
+    "A session's draft, the last write winning: the session joins the tabs when it differs from a new one, and leaves them when it does not and has no message on disk. → { revision, tabs }",
+  ),
+  workspace_tab_replace: Obj({ sessionId: Str(), next: Any("{ sessionId, sessionFile }") }, "A tab's session started anew in its place (its file was never written). → { revision, tabs }"),
   transcribe: Obj({ base64: Str("The recording"), mime: Str("Its type, e.g. audio/webm") }, "Speech to text on the hub with its user's OpenAI login (gpt-4o-transcribe). → { text }"),
   logs_tail: Obj({ lines: Opt(Type.Integer({ minimum: 1, maximum: 2000 })) }, "The hub's event log, newest last. → { lines }"),
   terminal_open: Obj(
@@ -105,7 +122,7 @@ export const OP_SCHEMAS: Record<HubOp, TSchema> = {
   terminal_resize: Obj({ session: Str(), cols: Int(), rows: Int() }, "The terminal's size (the last client's wins). → {}"),
   terminal_detach: Obj({ session: Str() }, "Hides the terminal from this client; the shell runs on. → {}"),
   hub_restart: Obj({}, "Stops every agent and its processes and starts the hub again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}"),
-  settings_get: Obj({}, "The user's UI settings (ui.tabs, ui.theme, …): the hub user's. → { settings }"),
+  settings_get: Obj({}, "The user's UI settings (ui.theme, hub.network, …). → { settings }"),
   settings_set: Obj(
     {
       key: Str("A setting key"),
@@ -232,6 +249,7 @@ export const HUB_EVENT_SCHEMAS = {
   terminal_output: Obj({ ev: Type.Literal("terminal_output"), session: Str(), data: Str("Bytes of the shell as text") }, "Output of a session's terminal this client shows."),
   terminal_exit: Obj({ ev: Type.Literal("terminal_exit"), session: Str(), code: Type.Integer() }, "A session's terminal shell exited; terminal_open starts another."),
   hub: Obj({ ev: Type.Literal("hub"), status: Any("HubStatus") }, "The network access or the devices changed (one paired, connected, was revoked)."),
+  workspace: Obj({ ev: Type.Literal("workspace"), workspace: Any("{ revision, tabs }") }, "The workspace changed: a tab opened, moved, closed, seen; a draft written."),
 } as const;
 
 export const HAP_EVENT_SCHEMAS = {

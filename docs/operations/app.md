@@ -57,7 +57,7 @@ The same in the TUI and the app:
 - A file an agent sends (`send_file`) shows with its comment and a Download button; it comes from
   the session's hub.
 - `+` next to the editor picks files (and dropping them on the window does the same): they go to
-  the session's hub (`~/.harness/uploads/`) and into the message as `@path`.
+  the session's hub (`~/.harness/attachments/<session>/`) and into the message as `@path`.
 - `●` records a voice message; the session's hub transcribes it with its user's OpenAI login
   (`gpt-4o-transcribe`; `/login` there first) and the text goes into the message.
 - The panel (`Ctrl+\`) has the logs of the hub you came in through.
@@ -77,7 +77,8 @@ pasting goes to it. When the shell exits, Enter starts another. On a phone the s
 - The address names the active session and its item (`#/<hub>/<session>[/<item>]`):
   bookmarks and back/forward move between them.
 - Files dropped on the window or pasted (images) go to the session's hub
-  (`~/.harness/uploads/`) and into the message as `@path`.
+  (`~/.harness/attachments/<session>/`) and into the message as `@path`; the draft naming them
+  lasts across restarts and devices.
 - Notifications (off by default, `/settings`) when a session starts waiting or finishes and the
   window is not in front.
 - The strip's width changes by dragging its edge (`ui.web.panes`); tabs reorder by dragging

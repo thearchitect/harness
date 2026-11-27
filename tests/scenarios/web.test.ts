@@ -71,7 +71,7 @@ export const scenario = defineScenario({
         const field = web.page.getByRole("textbox", { name: "Message" });
         await web.page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement | null)?.value.includes("@") === true);
         const path = /@(\S+)/.exec(await field.inputValue())?.[1] ?? "";
-        assert.ok(path.startsWith(join(stand.dataDir, "uploads")), path);
+        assert.ok(path.startsWith(join(stand.dataDir, "attachments")), path);
         assert.equal(readFileSync(path, "utf8"), "dropped text");
         await field.fill("");
         // a pasted image goes the same way
@@ -80,7 +80,8 @@ export const scenario = defineScenario({
           transfer.items.add(new File([new Uint8Array([137, 80, 78, 71])], "image.png", { type: "image/png" }));
           document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer }));
         });
-        await web.page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement | null)?.value.includes("pasted-1.png") === true);
+        // kept by its content: the attachment's name is its hash
+        await web.page.waitForFunction(() => /\/attachments\/[^/]+\/[0-9a-f]{64}\.png/.test((document.querySelector("textarea") as HTMLTextAreaElement | null)?.value ?? ""));
         await field.fill("");
       },
     },
@@ -221,11 +222,11 @@ export const scenario = defineScenario({
         await web.submit();
         await web.page.getByText("in sub").waitFor({ timeout: 15_000 });
         for (let tries = 0; ; tries += 1) {
-          const { settings } = await tui.client.homeRequest("settings_get", {});
-          if ((settings["ui.tabs"] as { cwd: string }[]).some((tab) => tab.cwd === join(stand.project, "sub"))) {
+          const { tabs } = await tui.client.homeRequest("workspace_get", {});
+          if (tabs.some((tab) => tab.cwd === join(stand.project, "sub"))) {
             break; // the session runs in the chosen folder, among the user's tabs
           } else {
-            assert.ok(tries < 100, `the session in sub never joined the user's tabs: ${JSON.stringify(settings["ui.tabs"])}`);
+            assert.ok(tries < 100, `the session in sub never joined the user's tabs: ${JSON.stringify(tabs)}`);
             await web.page.waitForTimeout(50);
           }
         }
