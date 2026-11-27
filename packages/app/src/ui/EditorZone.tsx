@@ -1,7 +1,8 @@
 // The editor's zone (plan A25): the editor, or in its place an interaction or a list to choose from.
 // Above it, on the editor's width: the queue and the completions of `/commands` and `@files`.
 
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ComponentRef, type ReactNode } from "react";
+import { keepScrollOff } from "./web-events";
 import { Pressable, TextInput, View, type TextInputKeyPressEvent } from "react-native";
 import { pickerHints, type EditorZone as Zone, type KeyHint, type Picker, type Zones } from "#client/workbench/workbench.ts";
 import type { BridgedComponent } from "#protocol/hap.ts";
@@ -10,7 +11,7 @@ import { fontOf, useTheme } from "../theme/theme.tsx";
 import { InteractionBlock } from "./Interactions.tsx";
 import { HubDialogBlock } from "./HubDialog.tsx";
 import type { DeviceActions } from "./Shell.tsx";
-import { Button, Frame, ListRow, T } from "./primitives.tsx";
+import { Button, Dialog, Frame, ListRow, T, TitledLine } from "./primitives.tsx";
 
 export type Completion = { value: string; label: string; description?: string };
 
@@ -116,8 +117,11 @@ function Editor(props: {
   onComplete: (completion: Completion) => void;
   placeholder: string;
   device: DeviceActions;
+  /** Lines kept above and below the cursor while the text goes on (`ui.scrollOff.vertical`). */
+  scrollOff: number;
 }) {
   const theme = useTheme();
+  const field = useRef<ComponentRef<typeof TextInput>>(null);
   const onKeyPress = (event: KeyEvent): void => {
     const key = event.nativeEvent;
     if (key.key === "Enter" && (key.ctrlKey === true || key.metaKey === true || key.altKey === true)) {
@@ -133,21 +137,28 @@ function Editor(props: {
   return (
     <View style={{ gap: 2 }}>
       {props.completions.length > 0 ? (
-        <View accessibilityRole="list" accessibilityLabel="completions" style={{ borderWidth: 1, borderColor: theme.colors.borderMuted, maxHeight: 200, overflow: "scroll" as never }}>
-          {props.completions.slice(0, 50).map((completion) => (
-            <ListRow key={completion.value} label={completion.label} onPress={() => props.onComplete(completion)}>
-              <T lines={1}>{completion.label}</T>
-              {completion.description !== undefined ? (
-                <T color="dim" lines={1} style={{ marginLeft: 12, flexShrink: 1 }}>
-                  {completion.description}
-                </T>
-              ) : null}
-            </ListRow>
-          ))}
+        // above the field, which keeps the focus: one top line with the block's name, the list, its keys
+        <View>
+          <TitledLine title={props.text.startsWith("/") ? "commands" : /@\S*$/.test(props.text) ? "files" : "completions"} />
+          <View accessibilityRole="list" accessibilityLabel="completions" style={{ maxHeight: 200, overflow: "scroll" as never }}>
+            {props.completions.slice(0, 50).map((completion, index) => (
+              <ListRow key={completion.value} label={completion.label} selected={index === 0} onPress={() => props.onComplete(completion)}>
+                <T lines={1}>{completion.label}</T>
+                {completion.description !== undefined ? (
+                  <T color="dim" lines={1} style={{ marginLeft: 12, flexShrink: 1 }}>
+                    {completion.description}
+                  </T>
+                ) : null}
+              </ListRow>
+            ))}
+          </View>
+          <HintLine hints={[{ key: "tab", does: "insert" }, { key: "click", does: "choose" }]} />
         </View>
       ) : null}
       <View style={{ flexDirection: "row", alignItems: "flex-end", gap: 6, borderWidth: 1, borderRadius: 2, borderColor: MODE_COLOR_HEX[props.mode], paddingVertical: 4 }}>
         <TextInput
+          ref={field}
+          onSelectionChange={() => keepScrollOff(field.current, { lines: props.scrollOff, columns: 0 })}
           accessibilityLabel="Message"
           testID="message"
           autoFocus
@@ -192,6 +203,8 @@ export function EditorZoneView(props: {
   component: (component: BridgedComponent) => ReactNode;
   placeholder: string;
   device: DeviceActions;
+  /** Lines kept above and below the message's cursor (`ui.scrollOff.vertical`). */
+  scrollOff: number;
 }) {
   const zone = props.zone;
   return (
@@ -207,11 +220,27 @@ export function EditorZoneView(props: {
       {(() => {
         switch (zone.kind) {
           case "editor":
-            return <Editor text={props.text} onText={props.onText} onSubmit={props.onSubmit} mode={zone.mode} completions={props.completions} onComplete={props.onComplete} placeholder={props.placeholder} device={props.device} />;
+            return (
+              <Editor
+                text={props.text}
+                onText={props.onText}
+                onSubmit={props.onSubmit}
+                mode={zone.mode}
+                completions={props.completions}
+                onComplete={props.onComplete}
+                placeholder={props.placeholder}
+                device={props.device}
+                scrollOff={props.scrollOff}
+              />
+            );
           case "interaction":
             return <InteractionBlock request={zone.request} from={zone.from} answer={(value) => props.onAnswer(zone.request.id, value)} notify={props.onNotify} />;
           case "picker":
-            return <PickerBlock key={zone.picker.id} picker={zone.picker} onClose={props.onClosePicker} onScope={props.onPickerScope} />;
+            return (
+              <Dialog title={zone.picker.title}>
+                <PickerBlock key={zone.picker.id} picker={zone.picker} onClose={props.onClosePicker} onScope={props.onPickerScope} />
+              </Dialog>
+            );
           case "hint":
             return (
               <T color="dim" lines={1}>
@@ -219,9 +248,14 @@ export function EditorZoneView(props: {
               </T>
             );
           case "component":
-            return props.component(zone.component);
+            // in our frame, its own lines inside
+            return <Dialog title="extension">{props.component(zone.component)}</Dialog>;
           case "hub":
-            return <HubDialogBlock dialog={zone.dialog} />;
+            return (
+              <Dialog title={zone.dialog.title()}>
+                <HubDialogBlock dialog={zone.dialog} />
+              </Dialog>
+            );
           default:
             throw new Error(`unknown editor zone: ${JSON.stringify(zone satisfies never)}`);
         }

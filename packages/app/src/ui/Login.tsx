@@ -28,9 +28,7 @@ export function Login({ request, answer, notify }: { request: Extract<Interactio
   const initial = loginInitialRow(rows);
   return (
     <View ref={ref} accessibilityLabel={label} style={{ gap: 2 }}>
-      <T color="accent" bold>
-        {payload.title}
-      </T>
+      {/* the title is on the dialogs' frame (InteractionBlock) */}
       {payload.url !== undefined ? (
         <T color="accent" selectable>
           {payload.url}

@@ -26,6 +26,10 @@ export const scenario = defineScenario({
         await tui.type("hello");
         await tui.submit();
         await web.waitForScreen((screen) => screen.tabs.length > 0);
+        // the web window, without tabs, chose a new session's folder; Esc goes to the session there now
+        assert.equal((await web.screen()).editor, "hint");
+        await web.page.keyboard.press("Escape");
+        await web.waitForScreen((screen) => screen.active === 0 && screen.editor === "editor");
       },
     },
     {

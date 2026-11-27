@@ -1,5 +1,5 @@
-// A list in the editor's place (Workbench pickers: models, sessions, the tree, settings, logins): its
-// title, the scopes to switch between (the model's Favorites | All, as pi's model selector shows
+// A list in the editor's place (Workbench pickers: models, sessions, the tree, settings, logins), in
+// the dialogs' frame which carries its title: the scopes to switch between (the model's Favorites | All, as pi's model selector shows
 // them), a filter field, the list, and a hint line naming every key with what it does.
 //
 // Keys: typing filters, ↑/↓ select, Tab the next scope, Enter chooses (the typed text itself where the
@@ -38,7 +38,7 @@ export class PickerView extends Container implements Focusable {
     this.list.onSelect = (item) => void picker.choose(item.value);
     this.list.onCancel = () => this.onCancel();
 
-    this.addChild(new Text(t.fg("accent", t.bold(` ${picker.title}`)), 0, 0));
+    // the title is on the frame's line (DialogFrame)
     if (picker.scopes !== undefined && picker.scopes.length > 1) {
       const shown = picker.scope ?? 0;
       const scopes = picker.scopes.map((scope, index) => (index === shown ? t.fg("accent", scope.title) : t.fg("muted", scope.title))).join(t.fg("muted", " | "));

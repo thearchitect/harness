@@ -355,12 +355,9 @@ function Main({ screen, workbench, onLoadOlder, device }: { screen: Screen; work
           onDownload={device.download}
         />
       ) : (
-        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 8 }}>
-          <T color="muted">No session here.</T>
-          <View style={{ flexDirection: "row", gap: 6 }}>
-            <Button label="New session" kbd="Ctrl/Alt+N" onPress={() => void workbench.act("tabs.new")} />
-            <Button label="Open a session" kbd="Ctrl/Alt+O" onPress={() => void workbench.act("tabs.open")} />
-          </View>
+        // a session starting (its tab is there, its agent not yet)
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+          <T color="muted">starting…</T>
         </View>
       );
     case "task":
@@ -478,6 +475,7 @@ export function Shell(props: {
         <Main screen={screen} workbench={workbench} onLoadOlder={props.onLoadOlder} device={props.device} />
         <View style={{ paddingHorizontal: 8, paddingBottom: 4, gap: 2 }}>
           <EditorZoneView
+            scrollOff={workbench.scrollOff().vertical}
             zone={screen.zones.editor}
             aboveEditor={screen.zones.aboveEditor}
             text={props.editorText}

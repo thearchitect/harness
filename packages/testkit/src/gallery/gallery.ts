@@ -8,6 +8,8 @@ import { Container, CURSOR_MARKER, TuiAltScreen, type Component, type TUI } from
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { GateDialog } from "#extension/presentation/tui/gate.ts";
+import { DialogFrame } from "#extension/presentation/tui/dialog-frame.ts";
+import { interactionTitle } from "#client/workbench/dialogs.ts";
 import { AskUserView } from "#tui/ask-user.ts";
 import { LoginView } from "#tui/login.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
@@ -54,7 +56,12 @@ function interaction(tui: TUI, request: InteractionRequest): Component {
 export function exhibits(): Exhibit[] {
   const theme = () => getTheme();
   return [
-    ...Object.entries(INTERACTIONS).map(([name, request]) => ({ name: `interaction-${name}`, width: 100, component: (tui: TUI) => interaction(tui, request) })),
+    // in the dialogs' frame, as the editor's place shows them
+    ...Object.entries(INTERACTIONS).map(([name, request]) => ({
+      name: `interaction-${name}`,
+      width: 100,
+      component: (tui: TUI) => new DialogFrame(theme, () => interactionTitle(request), interaction(tui, request)),
+    })),
     {
       // the strip's three blocks: hubs, sessions (every glyph), the active session's items
       name: "strip-all-glyphs",

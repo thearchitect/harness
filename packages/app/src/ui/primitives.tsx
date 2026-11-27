@@ -2,7 +2,7 @@
 // a row, real buttons with their key, frames of 1px token borders, the braille spinner. Dense, no
 // shadows, no gradients, radius at most 2.
 
-import { useEffect, useRef, useState, type ComponentRef, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ComponentRef, type ReactNode } from "react";
 import { useRowEvents, type RowEvents } from "./web-events";
 import { Pressable, Text, View, type StyleProp, type TextStyle, type ViewStyle } from "react-native";
 import type { Glyph } from "#client/workbench/workbench.ts";
@@ -98,10 +98,16 @@ export function Button(props: { label: string; kbd?: string; onPress: () => void
   );
 }
 
-/** A group: a 1px border in a token's color, with a title. */
+/** Inside a Dialog: a Frame there is the dialog's body (the dialog's frame carries the title and the lines). */
+const InDialog = createContext(false);
+
+/** A group: a 1px border in a token's color, with a title; inside a Dialog, the dialog's body alone. */
 export function Frame(props: { title?: string; tone?: Token; children: ReactNode; style?: StyleProp<ViewStyle> }) {
   const theme = useTheme();
-  return (
+  const inDialog = useContext(InDialog);
+  return inDialog ? (
+    <View style={[{ gap: 4 }, props.style]}>{props.children}</View>
+  ) : (
     <View style={[{ borderWidth: 1, borderRadius: 2, borderColor: theme.colors[props.tone ?? "borderMuted"], padding: 6, gap: 4 }, props.style]}>
       {props.title !== undefined ? (
         <T color={props.tone ?? "muted"} bold>
@@ -109,6 +115,40 @@ export function Frame(props: { title?: string; tone?: Token; children: ReactNode
         </T>
       ) : null}
       {props.children}
+    </View>
+  );
+}
+
+/**
+ * A line in the theme's `border` color with a name on it (`── title ───…`): the top of a dialog
+ * and of the completions' block, as the TUI draws them.
+ */
+export function TitledLine({ title }: { title: string }) {
+  const theme = useTheme();
+  const line = { height: 1, backgroundColor: theme.colors.border };
+  return (
+    <View style={{ flexDirection: "row", alignItems: "center" }}>
+      <View style={[line, { width: 14 }]} />
+      {title !== "" ? (
+        <T color="accent" bold lines={1} style={{ flexShrink: 1 }}>
+          {` ${title} `}
+        </T>
+      ) : null}
+      <View style={[line, { flex: 1 }]} />
+    </View>
+  );
+}
+
+/**
+ * The one frame of every dialog in the editor's place (the TUI's DialogFrame): a `border` line with
+ * the title above, one below, nothing on the sides, so what is in it copies without padding.
+ */
+export function Dialog(props: { title: string; children: ReactNode }) {
+  const theme = useTheme();
+  return (
+    <View accessibilityRole="none" style={{ gap: 4, borderBottomWidth: 1, borderColor: theme.colors.border, paddingBottom: 2 }}>
+      <TitledLine title={props.title} />
+      <InDialog.Provider value={true}>{props.children}</InDialog.Provider>
     </View>
   );
 }

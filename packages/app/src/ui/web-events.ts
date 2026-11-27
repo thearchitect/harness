@@ -20,6 +20,11 @@ export function useStepKeys(_ref: RefObject<unknown>, _onBack: () => void): void
   // nothing to listen to
 }
 
+/** A phone's field scrolls as the system scrolls it. */
+export function keepScrollOff(_node: unknown, _off: { lines: number; columns: number }): void {
+  // the system's own
+}
+
 /** Phones close a dialog by its Close button. */
 export function useDialogEscape(_onEscape: () => void): void {
   // nothing to listen to

@@ -131,8 +131,7 @@ export class HubDialogView implements Component, Focusable {
     };
     this.syncField();
 
-    add(theme.fg("borderAccent", "─".repeat(width)));
-    add(theme.fg("accent", theme.bold(truncateToWidth(dialog.title(), width))));
+    // the frame's lines and the title are the dialogs' frame's (DialogFrame)
     const screen = dialog.screen;
     if (screen.kind === "pairing") {
       const { pairing } = screen;
@@ -197,7 +196,6 @@ export class HubDialogView implements Component, Focusable {
       // nothing failed
     }
     add(theme.fg("dim", truncateToWidth(dialog.hint(), width)));
-    add(theme.fg("borderAccent", "─".repeat(width)));
     this.lineRows = lines.map((entry) => entry.row);
     return lines.map((entry) => entry.line);
   }

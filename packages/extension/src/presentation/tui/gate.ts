@@ -28,20 +28,6 @@ export function selectListTheme(theme: Theme): EditorTheme["selectList"] {
   };
 }
 
-export function topBorder(theme: Theme, width: number, title: string): string {
-  const inner = Math.max(1, width - 2);
-  const label = ` ${title} `;
-  if (inner < label.length + 2) {
-    return theme.fg("accent", `╭${"─".repeat(inner)}╮`);
-  } else {
-    return theme.fg("accent", "╭─") + theme.fg("dim", theme.bold(label)) + theme.fg("accent", `${"─".repeat(Math.max(0, inner - 1 - label.length))}╮`);
-  }
-}
-
-export function bottomBorder(theme: Theme, width: number): string {
-  return theme.fg("accent", `╰${"─".repeat(Math.max(1, width - 2))}╯`);
-}
-
 export function padLine(line: string, width: number): string {
   const used = visibleWidth(line);
   return used >= width ? line : line + " ".repeat(width - used);
@@ -168,11 +154,11 @@ export class GateDialog implements Component {
   }
 
   render(width: number): string[] {
+    // the frame's lines and the title (who asks what) are the dialogs' frame's (DialogFrame)
     const theme = this.theme;
-    const by = this.payload.by !== undefined ? ` — ${this.payload.by}` : "";
-    const lines: string[] = [topBorder(theme, width, `${this.payload.title}${by}`)];
+    const lines: string[] = [];
     for (const detail of this.payload.detail) {
-      lines.push(padLine(truncateToWidth(theme.fg("muted", detail), width - 2, "", false), width));
+      lines.push(padLine(truncateToWidth(theme.fg("muted", detail), width, "", false), width));
     }
     lines.push("");
 
@@ -198,8 +184,7 @@ export class GateDialog implements Component {
       this.warning ??
       (this.zone === "comment" ? `submit: ${target} · Enter newline · Ctrl+Enter submit · Tab/Esc → options` : "↑/↓ choose · Enter submit · Tab → comment · Esc = Stop");
     const zone = theme.fg("accent", this.zone === "comment" ? "▸ comment" : "▸ options");
-    lines.push(padLine(truncateToWidth(`${zone} ${this.warning !== undefined ? theme.fg("warning", status) : theme.fg("dim", status)}`, width - 2, "", false), width));
-    lines.push(bottomBorder(theme, width));
+    lines.push(padLine(truncateToWidth(`${zone} ${this.warning !== undefined ? theme.fg("warning", status) : theme.fg("dim", status)}`, width, "", false), width));
     return lines;
   }
 }

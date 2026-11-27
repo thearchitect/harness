@@ -21,7 +21,7 @@ export class Footer implements Component {
     const theme = this.theme();
     const model = this.model;
     if (model?.session === undefined) {
-      return [theme.fg("dim", truncateToWidth(" no session — Ctrl/Alt+N new · Ctrl/Alt+O open", width))];
+      return []; // the choice of a new session's folder, or a session starting: nothing of a session to tell
     } else {
       const session = model.session;
       const home = process.env.HOME ?? "";

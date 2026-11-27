@@ -52,6 +52,23 @@ test("at the right edge the text does not jump: a column stays for the cursor", 
   assert.equal(shown(field, width), "234567890| ", "nine characters and the cursor's cell");
 });
 
+test("the cursor keeps its columns from the edges while the text goes on, and comes to the edge at its ends", () => {
+  const field = new LineField({ scrollOff: () => 3 });
+  field.focused = true;
+  for (const key of "abcdefghijklmnopqrstuvwxyz0123") field.handleInput(key);
+  // at the end: the text's last twenty columns, the cursor at the edge
+  assert.equal(shown(field, 21), "klmnopqrstuvwxyz0123| ");
+  // moving left inside the window: the text stays
+  for (let step = 0; step < 5; step += 1) field.handleInput("\x1b[D");
+  assert.equal(shown(field, 21), "klmnopqrstuvwxy|z0123 ");
+  // nearing the left edge: three columns stay before the cursor
+  for (let step = 0; step < 13; step += 1) field.handleInput("\x1b[D");
+  assert.equal(shown(field, 21), "jkl|mnopqrstuvwxyz0123");
+  // at the start: the cursor comes to the edge
+  field.handleInput("\x1b[H");
+  assert.equal(shown(field, 21), "|abcdefghijklmnopqrstu");
+});
+
 test("a value from outside puts the cursor at its end; unfocused there is no marker", () => {
   const field = new LineField({ placeholder: "title" });
   field.value = "name";

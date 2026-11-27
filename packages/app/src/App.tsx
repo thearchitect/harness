@@ -65,8 +65,13 @@ async function connect(endpoint: Endpoint): Promise<Connected> {
         .then((file) => saveFile(path.split("/").at(-1) ?? "file", file.base64))
         .catch((reason: unknown) => workbench.notify("error", `download: ${reason instanceof Error ? reason.message : String(reason)}`)),
   });
-  // the window as it was on this device
+  // the window as it was on this device; without tabs, the choice of a new session's folder
   await workbench.restoreViews();
+  if (workbench.tabs().length === 0 && client.home !== undefined) {
+    workbench.openNewSession(client.home);
+  } else {
+    // the window's tabs: the active one shows
+  }
   return { client, workbench, endpoint, themeNames };
 }
 

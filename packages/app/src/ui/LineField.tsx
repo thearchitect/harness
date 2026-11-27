@@ -3,9 +3,10 @@
 // does not overwrite what is typed. In a list it is a row: ↑/↓ leave it for the rows around it
 // (web-events: data-list-row).
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ComponentRef } from "react";
 import { TextInput } from "react-native";
 import { fontOf, useTheme } from "../theme/theme.tsx";
+import { keepScrollOff } from "./web-events";
 
 export function LineField(props: {
   label: string;
@@ -18,10 +19,13 @@ export function LineField(props: {
   onSubmit?: (value: string) => void;
   onBlur?: () => void;
   onEscape?: () => void;
+  /** Characters kept on either side of the cursor while the text goes on (`ui.scrollOff.horizontal`). */
+  scrollOff?: number;
 }) {
   const theme = useTheme();
   const [draft, setDraft] = useState(props.value);
   const focused = useRef(false);
+  const field = useRef<ComponentRef<typeof TextInput>>(null);
   useEffect(() => {
     if (!focused.current) {
       setDraft(props.value);
@@ -32,7 +36,9 @@ export function LineField(props: {
 
   return (
     <TextInput
+      ref={field}
       accessibilityLabel={props.label}
+      onSelectionChange={() => keepScrollOff(field.current, { lines: 0, columns: props.scrollOff ?? 10 })}
       // react-native-web turns dataSet into data-* attributes; native ignores it
       {...({ dataSet: { listRow: "field" } } as object)}
       value={draft}

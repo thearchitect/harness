@@ -56,9 +56,7 @@ export function HubDialogBlock({ dialog }: { dialog: HubDialog }) {
   const firstDevice = rows.findIndex((row) => row.kind === "device");
   return (
     <View ref={ref} accessibilityLabel={label} style={{ gap: 2 }}>
-      <T color="accent" bold>
-        {dialog.title()}
-      </T>
+      {/* the title is on the dialogs' frame (EditorZone) */}
       {screen.kind === "pairing" ? (
         state?.kind === "open" ? (
           <View style={{ gap: 4 }}>

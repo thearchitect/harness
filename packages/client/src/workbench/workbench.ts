@@ -682,8 +682,12 @@ export class Workbench {
         await this.newTab(node, path);
       },
       cancel: () => {
-        this.newSessionChoice = undefined;
-        this.client.changed();
+        if (this.activeTab() !== undefined) {
+          this.newSessionChoice = undefined;
+          this.client.changed();
+        } else {
+          // no session to go back to: the choice stays, the window has nothing else to show
+        }
       },
       changed: () => this.client.changed(),
       now: () => this.clock.now(),
@@ -1343,6 +1347,19 @@ export class Workbench {
         .map((action) => ({ kind: "action" as const, id: `action:${action.id}` as const, label: action.description.split(" (")[0]?.split(":")[0] ?? action.id, hint: action.keys })),
     };
     return [...mode, harness, actions];
+  }
+
+  /**
+   * How far from a field's edges its cursor stays while the text goes on (`ui.scrollOff.vertical`,
+   * lines, 2 by default; `ui.scrollOff.horizontal`, characters, 10): the chat's field and every
+   * single-line one.
+   */
+  scrollOff(): { vertical: number; horizontal: number } {
+    const number = (key: string, fallback: number): number => {
+      const value = this.client.settings[key];
+      return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : fallback;
+    };
+    return { vertical: number("ui.scrollOff.vertical", 2), horizontal: number("ui.scrollOff.horizontal", 10) };
   }
 
   /** How the UI acts on an action chosen in the panel (its own act: quitting, sending, the strip, the rest the workbench's). */
@@ -2192,8 +2209,9 @@ export class Workbench {
     if (next !== undefined) {
       await this.activate(next.index);
     } else {
+      // the window shows a session or the choice of a new one's folder, never a field without a session
       this.activeKey = undefined;
-      this.client.changed();
+      this.openNewSession(closed.hub);
     }
   }
 

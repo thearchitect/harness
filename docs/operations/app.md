@@ -49,8 +49,18 @@ The same in the TUI and the app:
   `self` or a subagent profile in turn, for this session only) and HARNESS (update, dependencies,
   subagents, logs, restart hub — actions that close it). `↑`/`↓`, `Space`/`Enter` apply, `Esc` or
   `Ctrl+\` close (a name being typed applies); a click applies a row.
-- Lists in the editor's place (`Ctrl+L` models, sessions, `/tree`, `/settings`) name each key in
+- Lists in the editor's place (`Ctrl/Alt+L` models, sessions, `/tree`, `/settings`) name each key in
   their hint line; the model list has Favorites (pi's `enabledModels`) and All, `Tab` switches.
+- A window shows a session (its transcript and the message field) or the choice of a new session's
+  folder, never a field without a session: closing the last tab, or starting without tabs, opens
+  the choice; `Esc` there goes back to a session if there is one.
+- Every dialog in the field's place — a question, an edit to approve, a login, a secret, a list,
+  `/hub`, an extension's component — has one frame: a line in the theme's border color with its
+  title above, one below, nothing on the sides. Completion of `/commands` and `@files` shows above
+  the field, which keeps the keyboard, under one such line naming it.
+- The cursor of the message field keeps `ui.scrollOff.vertical` lines (2) above and below it, of a
+  single-line field `ui.scrollOff.horizontal` characters (10) on either side, while the text goes
+  on; at the text's ends it comes to the edge.
 
 ## Files, voice, logs
 
@@ -96,7 +106,7 @@ JetBrains Mono, Iosevka Term, Terminus or the system's monospace font with a siz
 notifications. They live in your settings on the hub you came in through
 ([settings.md](settings.md)), so every app of yours looks the same.
 
-## What it cannot show
+## On a phone
 
-Dialogs that extensions draw as terminal components (`ctx.ui.custom()`) exist only in terminals:
-the app says so in the editor's place; answer them in the TUI.
+Phones type into extensions' terminal components (`ctx.ui.custom()`) through a strip of keys and
+a field; their mouse is a tap.

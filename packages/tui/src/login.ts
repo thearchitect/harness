@@ -171,8 +171,7 @@ export class LoginView implements Component, Focusable {
       }
     };
 
-    add([theme.fg("borderAccent", "─".repeat(width))]);
-    add([theme.fg("accent", theme.bold(truncateToWidth(payload.title, width)))]);
+    // the frame's lines and the title are the dialogs' frame's (DialogFrame)
     if (payload.url !== undefined) {
       add(linkLines(payload.url, width, (piece) => theme.fg("accent", piece)));
     } else {
@@ -212,7 +211,6 @@ export class LoginView implements Component, Focusable {
     });
 
     add([truncateToWidth(hintLine(theme, loginHints(this.rows)).trimStart(), width)]);
-    add([theme.fg("borderAccent", "─".repeat(width))]);
     this.lineRows = lines.map((entry) => entry.row);
     return lines.map((entry) => entry.line);
   }

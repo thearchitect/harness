@@ -9,7 +9,8 @@ import { AskUser } from "./AskUser.tsx";
 import { Login } from "./Login.tsx";
 import { secretValueProblem } from "#protocol/interactions.ts";
 import { fontOf, useTheme } from "../theme/theme.tsx";
-import { Button, Frame, T } from "./primitives.tsx";
+import { Button, Dialog, Frame, T } from "./primitives.tsx";
+import { interactionTitle } from "#client/workbench/dialogs.ts";
 
 type Answer = (value: unknown) => void;
 
@@ -172,10 +173,10 @@ export function InteractionBlock({ request, from, answer, notify }: { request: I
         throw new Error(`unknown interaction: ${JSON.stringify(request satisfies never)}`);
     }
   })();
+  // the one frame of dialogs, its title saying what is asked and who asks
   return (
-    <View accessibilityRole="none" accessibilityLabel={`interaction ${request.kind}`} style={{ gap: 2 }}>
-      {from !== undefined && !(request.kind === "gate" && request.payload.by === from) ? <T color="warning">{`subagent ${from} asks:`}</T> : null}
-      {body}
+    <View accessibilityRole="none" accessibilityLabel={`interaction ${request.kind}`}>
+      <Dialog title={interactionTitle(request, from !== undefined && !(request.kind === "gate" && request.payload.by === from) ? from : undefined)}>{body}</Dialog>
     </View>
   );
 }

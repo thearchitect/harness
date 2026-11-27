@@ -49,21 +49,15 @@ export class SecretDialog implements Component, Focusable {
   }
 
   render(width: number): string[] {
+    // the frame's lines and the title (the secret's name) are the dialogs' frame's; no side padding
     const theme = this.theme;
-    const inner = Math.max(1, width - 2);
-    const title = ` secret for the agent: ${this.payload.name} `;
     return [
-      theme.fg("accent", "──") + theme.fg("dim", theme.bold(title)) + theme.fg("accent", "─".repeat(Math.max(0, width - title.length - 2))),
-      ...wrapTextWithAnsi(this.payload.description, inner).map((line) => ` ${line}`),
-      ...wrapTextWithAnsi(
-        theme.fg("dim", `Kept in memory for this session only; bash commands get it as $${this.payload.name}, tool results show it masked.`),
-        inner,
-      ).map((line) => ` ${line}`),
-      ...(this.payload.replaces ? [` ${theme.fg("warning", `Replaces the value of $${this.payload.name} given earlier.`)}`] : []),
-      ...this.input.render(inner).map((line) => ` ${line}`),
-      ...(this.problem !== undefined ? [` ${theme.fg("error", this.problem)}`] : []),
-      ` ${theme.fg("dim", "Enter store · Esc cancel")}`,
-      theme.fg("accent", "─".repeat(width)),
+      ...wrapTextWithAnsi(this.payload.description, width),
+      ...wrapTextWithAnsi(theme.fg("dim", `Kept in memory for this session only; bash commands get it as $${this.payload.name}, tool results show it masked.`), width),
+      ...(this.payload.replaces ? [theme.fg("warning", `Replaces the value of $${this.payload.name} given earlier.`)] : []),
+      ...this.input.render(width),
+      ...(this.problem !== undefined ? [theme.fg("error", this.problem)] : []),
+      theme.fg("dim", "Enter store · Esc cancel"),
     ].map((line) => truncateToWidth(line, width));
   }
 }

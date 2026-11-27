@@ -57,6 +57,10 @@ import { MainScroll, MainSlot } from "./main-area.ts";
 import { TerminalView } from "./terminal-view.ts";
 import { LoginCallback } from "./login-callback.ts";
 import { RemoteAutocompleteProvider } from "./remote-complete.ts";
+import { ChatEditor } from "./chat-editor.ts";
+import { DialogFrame } from "#extension/presentation/tui/dialog-frame.ts";
+import { setLineFieldScrollOff } from "#extension/presentation/tui/line-field.ts";
+import { interactionTitle } from "#client/workbench/dialogs.ts";
 import { AskUserView } from "./ask-user.ts";
 import { TranscriptView, type TranscriptOptions } from "./transcript.ts";
 import { clipboardInsert, spaced, type Clipboard, type PasteTarget } from "./clipboard.ts";
@@ -386,7 +390,11 @@ export class App {
   }
 
   private newEditor(): Editor {
-    return new Editor(this.tui, { borderColor: (text) => modeColor(this.editorMode(), getTheme().getColorMode(), text), selectList: selectListTheme(getTheme()) }, { paddingX: 0 });
+    return new ChatEditor(
+      this.tui,
+      { borderColor: (text) => modeColor(this.editorMode(), getTheme().getColorMode(), text), selectList: selectListTheme(getTheme()) },
+      { border: (text) => getTheme().fg("border", text), dim: (text) => getTheme().fg("dim", text), scrollOff: () => this.workbench.scrollOff().vertical },
+    );
   }
 
   /**
@@ -579,6 +587,7 @@ export class App {
     };
     this.footer.model = screen.zones.footer.agent;
     this.footer.hub = screen.zones.footer.hub;
+    setLineFieldScrollOff(this.workbench.scrollOff().horizontal);
 
     this.drawMain(screen);
     this.drawAboveEditor(screen);
@@ -811,35 +820,21 @@ export class App {
           this.tui.setFocus(this.editor);
           break;
         case "interaction": {
-          this.editorComponent = this.interactionView(zone.request);
-          if (zone.from !== undefined) {
-            this.editorZone.addChild(new Text(getTheme().fg("warning", ` subagent ${zone.from} asks:`), 0, 0));
-          } else {
-            // the session itself asks
-          }
-          this.editorZone.addChild(this.editorComponent);
-          this.tui.setFocus(this.editorComponent);
+          const title = interactionTitle(zone.request, zone.from);
+          this.showDialog(this.interactionView(zone.request), () => title);
           break;
         }
-        case "component": {
-          const componentId = zone.component.componentId;
-          this.editorComponent = this.bridgedView(componentId);
-          this.editorZone.addChild(this.editorComponent);
-          this.tui.setFocus(this.editorComponent);
+        case "component":
+          this.showDialog(this.bridgedView(zone.component.componentId), () => "extension");
           break;
-        }
         case "picker": {
-          const view = new PickerView(zone.picker, getTheme, { scope: () => this.workbench.nextPickerScope(), cancel: () => this.workbench.closePicker() });
-          this.editorComponent = view;
-          this.editorZone.addChild(view);
-          this.tui.setFocus(view);
+          const title = zone.picker.title;
+          this.showDialog(new PickerView(zone.picker, getTheme, { scope: () => this.workbench.nextPickerScope(), cancel: () => this.workbench.closePicker() }), () => title);
           break;
         }
         case "hub": {
-          const view = new HubDialogView(this.tui, getTheme, zone.dialog);
-          this.editorComponent = view;
-          this.editorZone.addChild(view);
-          this.tui.setFocus(view);
+          const dialog = zone.dialog;
+          this.showDialog(new HubDialogView(this.tui, getTheme, dialog), () => dialog.title());
           break;
         }
         case "hint": {
@@ -858,6 +853,13 @@ export class App {
           throw new Error(`unknown editor zone: ${JSON.stringify(zone satisfies never)}`);
       }
     }
+  }
+
+  /** A dialog in the editor's place, in the one frame of dialogs; it takes the keys. */
+  private showDialog(dialog: Component, title: () => string): void {
+    this.editorComponent = dialog;
+    this.editorZone.addChild(new DialogFrame(getTheme, title, dialog));
+    this.tui.setFocus(dialog);
   }
 
   private interactionView(request: InteractionRequest): Component {

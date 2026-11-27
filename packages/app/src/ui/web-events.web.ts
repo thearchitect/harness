@@ -104,6 +104,45 @@ export function useDialogEscape(onEscape: () => void): void {
   }, [onEscape]);
 }
 
+/**
+ * A field's scroll so that its cursor keeps `lines` lines (a multi-line field) or `columns`
+ * characters (a single-line one) from the edges while the text goes on; at the text's ends it comes
+ * to the edge. Called when the cursor moves; the field's font is monospace.
+ */
+export function keepScrollOff(node: unknown, off: { lines: number; columns: number }): void {
+  const field = node as HTMLInputElement | HTMLTextAreaElement | null;
+  if (field === null || typeof field.selectionStart !== "number") {
+    return; // not a DOM field
+  } else {
+    const caret = field.selectionStart ?? 0;
+    const style = getComputedStyle(field);
+    if (field instanceof HTMLTextAreaElement) {
+      const lineHeight = Number.parseFloat(style.lineHeight) || Number.parseFloat(style.fontSize) * 1.2;
+      const line = field.value.slice(0, caret).split("\n").length - 1;
+      const top = (line - off.lines) * lineHeight;
+      const bottom = (line + 1 + off.lines) * lineHeight;
+      if (top < field.scrollTop) {
+        field.scrollTop = Math.max(0, top);
+      } else if (bottom > field.scrollTop + field.clientHeight) {
+        field.scrollTop = bottom - field.clientHeight;
+      } else {
+        // the cursor has its lines around it
+      }
+    } else {
+      const column = field.value.length > 0 ? field.scrollWidth / Math.max(field.value.length + 1, 1) : 0;
+      const left = (caret - off.columns) * column;
+      const right = (caret + 1 + off.columns) * column;
+      if (left < field.scrollLeft) {
+        field.scrollLeft = Math.max(0, left);
+      } else if (right > field.scrollLeft + field.clientWidth) {
+        field.scrollLeft = right - field.clientWidth;
+      } else {
+        // the cursor has its columns around it
+      }
+    }
+  }
+}
+
 /** The keyboard into a list (by its accessible name): on its selected row, else its first. */
 export function focusList(label: string): boolean {
   const list = document.querySelector<HTMLElement>(`[aria-label="${label}"]`);
