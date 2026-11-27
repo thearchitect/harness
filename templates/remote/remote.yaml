@@ -3,8 +3,8 @@
 #
 # The user's home is on the volume (/data/home/<name>) and the hub runs as their uid. Devices
 # are paired on the machine:
-#   fly ssh console -C "su alice -c 'harness hub device add --name laptop'"
-# and on the device: harness remote add <name> wss://<fly app>.fly.dev (the code is asked for).
+#   fly ssh console -C "s6-setuidgid alice env HOME=/data/home/alice harness hub device add --name laptop"
+# and on the device: open the link it prints, scan its QR code, or harness connect <link>.
 user:
   name: alice
   uid: 1001

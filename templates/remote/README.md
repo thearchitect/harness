@@ -33,7 +33,7 @@ Inside `nix develop` (flyctl, skopeo, cage):
 5. **Deploy.** `cage run @root - ./deploy.sh` (or push).
 6. **Devices.** Pair the first device on the machine (the code lasts ten minutes, once):
    ```bash
-   flyctl ssh console -a <app> -C "su alice -c 'harness hub device add --name laptop'"
+   flyctl ssh console -a <app> -C "s6-setuidgid alice env HOME=/data/home/alice harness hub device add --name laptop"
    ```
    It prints a link and its QR code: open it in a browser (it is the app, paired at once), scan it
    with the app, or on a terminal `harness connect <link>`. Later devices: `/hub`, add device, in any
