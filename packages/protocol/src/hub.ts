@@ -26,9 +26,9 @@ export type AgentSummary = {
   costUsd: number;
 };
 
+/** An agent as its hub tells of it; which hub it is, the client knows by the connection it came over. */
 export type AgentInfo = {
   id: string;
-  hub: string;
   sessionId: string;
   sessionFile?: string;
   cwd: string;

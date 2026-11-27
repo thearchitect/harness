@@ -8,12 +8,12 @@ import type { BridgedComponent, ComponentMouse, LoginProvider, SubagentProfileVi
 import { familyRefs } from "#protocol/model-ref.ts";
 import { modeOfText } from "#protocol/modes.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
-import type { AgentInfo, AgentSummary, WorkspaceTab } from "#protocol/hub.ts";
+import type { AgentSummary, WorkspaceTab } from "#protocol/hub.ts";
 import { RequestError } from "../connection.ts";
 import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#protocol/state.ts";
 import { actionList, type ActionId } from "../input/actions.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
-import { agentKey, type ClientModel, type HubApi } from "../model/client-model.ts";
+import { agentKey, type ClientModel, type HubAgent, type HubApi } from "../model/client-model.ts";
 import { HubDialog } from "./hub-dialog.ts";
 import type { TerminalModel } from "../model/terminal-model.ts";
 import { Prefetch, PREFETCH_RECHECK_MS, prefetchMode, type PrefetchTarget } from "../model/prefetch.ts";
@@ -231,7 +231,7 @@ export type Glyph = "⊘" | "◆" | "✗" | "●" | "✓" | " ";
 export type TabRecord = { hub: string; sessionId: string; sessionFile?: string; cwd: string; seen?: number };
 
 export type Tab = TabRecord & {
-  agent: AgentInfo | undefined;
+  agent: HubAgent | undefined;
   glyph: Glyph;
   title: string;
   mode: RunMode;
@@ -1057,7 +1057,7 @@ export class Workbench {
   }
 
   /** The agents of a session's subagents on its hub, subagents of subagents included. */
-  private descendants(node: string, agentId: string): AgentInfo[] {
+  private descendants(node: string, agentId: string): HubAgent[] {
     const children = [...this.client.agents.values()].filter((candidate) => candidate.hub === node && candidate.parent === agentId);
     return children.flatMap((child) => [child, ...this.descendants(node, child.id)]);
   }
@@ -2110,7 +2110,7 @@ export class Workbench {
    * name. (A new session takes the current defaults of model, thinking and modes: changing them there
    * changes the defaults, so they never tell it apart.)
    */
-  private differs(tab: TabKey & { agent: AgentInfo | undefined }): boolean {
+  private differs(tab: TabKey & { agent: HubAgent | undefined }): boolean {
     const model = tab.agent !== undefined ? this.client.full.get(agentKey(tab.hub, tab.agent.id)) : undefined;
     const named = (model?.session?.sessionName ?? tab.agent?.name ?? "") !== "";
     const talked = model?.items.some((item) => item.kind === "message" && (item.message.role === "user" || item.message.role === "assistant")) ?? false;
@@ -2160,9 +2160,10 @@ export class Workbench {
    */
   async newTab(hub: string, cwd: string): Promise<Tab | undefined> {
     const { agent } = await this.client.connection(hub).request("agent_start", { cwd });
-    this.client.agents.set(agentKey(hub, agent.id), agent);
+    this.client.noteAgent(hub, agent);
     const record: TabRecord = { hub, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
     this.drafts = [...this.drafts, record];
+    this.expectAgent(record, agent.id);
     await this.activate(this.tabs().findIndex((tab) => sameTab(tab, record)));
     return this.activeTab();
   }
@@ -2174,10 +2175,26 @@ export class Workbench {
       await this.activate(index);
     } else {
       const { agent } = await this.client.connection(hub).request("agent_start", { cwd: session.cwd, sessionFile: session.path });
-      this.client.agents.set(agentKey(hub, agent.id), agent);
+      this.client.noteAgent(hub, agent);
       const record: TabRecord = { hub, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
       await this.updateTabs(hub, (current) => (current.some((candidate) => sameTab(candidate, record)) ? current : [...current, record]));
+      this.expectAgent(record, agent.id);
       await this.activate(this.tabIndex(record));
+    }
+  }
+
+  /**
+   * A tab whose agent was started must find it: a tab that does not is a window that shows a session
+   * no agent serves, which the log and the status line say at once (never an empty window).
+   */
+  private expectAgent(tab: TabKey, agentId: string): void {
+    const found = this.tabs().find((candidate) => sameTab(candidate, tab))?.agent;
+    if (found?.id === agentId) {
+      // the tab is served
+    } else {
+      const known = this.client.agents.get(agentKey(tab.hub, agentId));
+      this.client.log.error("tab_agent_unmatched", { hub: tab.hub, session: tab.sessionId, agent: agentId, agentHub: known?.hub, agentSession: known?.sessionId, found: found?.id });
+      this.notify("error", `the session ${tab.sessionId.slice(0, 8)} started, but its tab does not find its agent ${agentId}`);
     }
   }
 
@@ -2199,13 +2216,14 @@ export class Workbench {
       this.client.log.info("tab_start", { hub: tab.hub, session: tab.sessionId, file: tab.sessionFile, cwd: tab.cwd });
       try {
         const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd, sessionFile: tab.sessionFile });
-        this.client.agents.set(agentKey(tab.hub, agent.id), agent);
+        this.client.noteAgent(tab.hub, agent);
         this.client.log.info("tab_started", { hub: tab.hub, session: tab.sessionId, agent: agent.id, opened: agent.sessionId });
+        this.expectAgent(tab, agent.id);
       } catch (error) {
         this.client.log.warn("tab_start_failed", { hub: tab.hub, session: tab.sessionId, error: error instanceof Error ? error.message : String(error) });
         if (error instanceof RequestError && error.code === "not_found" && this.draftText(tab) !== "") {
           const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd });
-          this.client.agents.set(agentKey(tab.hub, agent.id), agent);
+          this.client.noteAgent(tab.hub, agent);
           this.client.applyWorkspace(tab.hub, await this.client.connection(tab.hub).request("workspace_tab_replace", { sessionId: tab.sessionId, next: { sessionId: agent.sessionId, sessionFile: agent.sessionFile ?? "" } }));
           this.retarget(tab, { hub: tab.hub, sessionId: agent.sessionId });
         } else if (error instanceof RequestError && error.code === "not_found") {

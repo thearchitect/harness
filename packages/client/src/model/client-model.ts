@@ -4,6 +4,9 @@
 
 import { SNAPSHOT_ENTRIES, type HapRecord, type SnapshotData } from "#protocol/hap.ts";
 import type { AgentInfo, AgentSummary, HubEvent, HubOp, HubOps, HubStatus, SessionListItem, WorkspaceData, WorkspaceTab } from "#protocol/hub.ts";
+
+/** An agent as this client knows it: its hub's account of it, and which of this client's hubs it is. */
+export type HubAgent = AgentInfo & { hub: string };
 import { errorFields, Logger } from "#protocol/log.ts";
 import { RequestError, type HubConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
@@ -63,8 +66,22 @@ export class ClientModel {
   /** The client's log (client-log.ts); nothing is kept until the UI gives it one. */
   log: Logger = new Logger("tui", () => undefined);
   private homeConnection: HubConnection | undefined;
-  readonly agents = new Map<AgentKey, AgentInfo>();
+  private readonly known = new Map<AgentKey, HubAgent>();
+  /** Every hub's agents, by `hub/agent`: each one named by the connection it came over (noteAgent). */
+  get agents(): ReadonlyMap<AgentKey, HubAgent> {
+    return this.known;
+  }
   readonly full = new Map<AgentKey, AgentModel>();
+
+  /**
+   * The one way an agent becomes known: as its hub `hub` (this client's name of the connection)
+   * told of it, named by that connection — never by anything the hub says of itself.
+   */
+  noteAgent(hub: string, info: AgentInfo): HubAgent {
+    const agent: HubAgent = { ...info, hub };
+    this.known.set(agentKey(hub, info.id), agent);
+    return agent;
+  }
   /** Most recently used first; the head is the active one. */
   private recent: AgentKey[] = [];
   settings: Record<string, unknown> = {};
@@ -182,7 +199,7 @@ export class ClientModel {
     this.workspaces.set(api.hub, await api.request("workspace_get", {}));
     const { agents } = await api.request("agents_list", {});
     for (const agent of agents) {
-      this.agents.set(agentKey(api.hub, agent.id), agent);
+      this.noteAgent(api.hub, agent);
       await api.request("agent_attach", { agent: agent.id, level: "summary" });
     }
   }
@@ -192,7 +209,7 @@ export class ClientModel {
     this.offline.set(node, reason);
     for (const key of [...this.agents.keys()]) {
       if (key.startsWith(`${node}/`)) {
-        this.agents.delete(key);
+        this.known.delete(key);
         this.full.delete(key);
       } else {
         // another hub's agent
@@ -220,11 +237,11 @@ export class ClientModel {
           } else {
             // followed already
           }
-          this.agents.set(key, agent);
+          this.noteAgent(node, agent);
         }
         for (const key of [...this.agents.keys()]) {
           if (key.startsWith(`${node}/`) && !present.has(key)) {
-            this.agents.delete(key);
+            this.known.delete(key);
             this.full.delete(key);
           } else {
             // still there, or another hub's
@@ -236,14 +253,14 @@ export class ClientModel {
         const key = agentKey(node, event.agent);
         const agent = this.agents.get(key);
         if (agent !== undefined) {
-          this.agents.set(key, { ...agent, summary: event.summary });
+          this.known.set(key, { ...agent, summary: event.summary });
         } else {
           // a summary of an agent this client does not list yet
         }
         break;
       }
       case "agent_exited":
-        this.agents.delete(agentKey(node, event.agent));
+        this.known.delete(agentKey(node, event.agent));
         this.full.delete(agentKey(node, event.agent));
         break;
       case "settings":

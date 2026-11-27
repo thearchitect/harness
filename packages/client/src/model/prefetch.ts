@@ -71,7 +71,7 @@ export class Prefetch {
 
   private async pass(): Promise<void> {
     for (const target of this.tabs()) {
-      await this.load(target);
+      await this.loadOne(target);
     }
     const now = this.now();
     if (prefetchMode(this.client.settings) === "all" && now - this.listedAt >= PREFETCH_RECHECK_MS) {
@@ -80,7 +80,7 @@ export class Prefetch {
         if (this.stopped) {
           return;
         } else {
-          await this.load(target);
+          await this.loadOne(target);
         }
       }
     } else {
@@ -99,6 +99,15 @@ export class Prefetch {
       .flat()
       .sort((a, b) => b.session.modified - a.session.modified)
       .map(({ hub, session }) => ({ hub, agent: session.agent, file: session.path }));
+  }
+
+  /** One session: a failure is its own (logged), the pass goes on with the others. */
+  private async loadOne(target: PrefetchTarget): Promise<void> {
+    try {
+      await this.load(target);
+    } catch (error) {
+      this.client.log.warn("prefetch_failed", { hub: target.hub, agent: target.agent, file: target.file, error: error instanceof Error ? error.message : String(error) });
+    }
   }
 
   private async load(target: PrefetchTarget): Promise<void> {

@@ -722,7 +722,7 @@ export class Hub {
             // records before hello: none are expected
           }
         });
-        link.onExit((code, error) => reject(new HarnessError("agent_failed", `the agent exited before it started (${error ?? `exit ${code}`}); its log: ${join(this.config.dataDir, "log", "agents", `${id}.log`)}`)));
+        link.onExit((code, error) => reject(new HarnessError("agent_failed", `the agent exited before it started (${error ?? `exit ${code}`}); its log: ${join(this.config.dataDir, "log", "agents", `${id}.stderr`)}`)));
       });
       const session = hello.session as { sessionId: string; sessionFile?: string; sessionName?: string; cwd: string };
       try {
@@ -735,7 +735,6 @@ export class Hub {
       const entry: AgentEntry = {
         info: {
           id,
-          hub: this.config.name,
           sessionId: session.sessionId,
           sessionFile: session.sessionFile,
           cwd: session.cwd,

@@ -287,7 +287,7 @@ async function runTui(args: string[]): Promise<void> {
       last = { host: welcome.host, pid: welcome.pid };
       // before the client model drops the hub's agents: how many were working when it went away
       connection.onClose(() => {
-        interrupted = [...client.agents.values()].filter((agent) => agent.hub === welcome.hub && agent.summary.status !== "idle").length;
+        interrupted = [...client.agents.values()].filter((agent) => agent.hub === LOCAL_HUB && agent.summary.status !== "idle").length;
       });
       return connection;
     }
