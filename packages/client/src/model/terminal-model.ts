@@ -5,6 +5,7 @@
 
 import * as headless from "@xterm/headless";
 import type { HubApi } from "./client-model.ts";
+import type { KeyModes } from "../terminal-keys.ts";
 
 /**
  * The package is CommonJS marked __esModule: Node's ESM puts it under `default`, Metro's interop
@@ -64,6 +65,32 @@ export class TerminalModel {
     this.api = api;
     this.changed = changed;
     this.term = new xterm.Terminal({ cols: 80, rows: 24, scrollback: SCROLLBACK, allowProposedApi: true });
+    // the kitty keyboard protocol the program pushes (CSI > flags u), sets (CSI = flags u) and pops
+    // (CSI < n u); its keys then come whole (terminal-keys.ts)
+    const first = (params: (number | number[])[]): number => {
+      const value = params[0];
+      return typeof value === "number" ? value : (value?.[0] ?? 0);
+    };
+    this.term.parser.registerCsiHandler({ prefix: ">", final: "u" }, (params) => {
+      this.kittyFlags.push(first(params));
+      return true;
+    });
+    this.term.parser.registerCsiHandler({ prefix: "=", final: "u" }, (params) => {
+      this.kittyFlags[this.kittyFlags.length - 1] = first(params);
+      return true;
+    });
+    this.term.parser.registerCsiHandler({ prefix: "<", final: "u" }, (params) => {
+      this.kittyFlags.splice(-Math.max(1, first(params)));
+      return true;
+    });
+  }
+
+  /** The kitty protocol's flags the program pushed, the current last (the base entry: none). */
+  private kittyFlags: number[] = [0];
+
+  /** What the program asked of the keyboard: the cursor keys' mode, the kitty protocol. */
+  get keyModes(): KeyModes {
+    return { applicationCursor: this.term.modes.applicationCursorKeysMode, kitty: (this.kittyFlags.at(-1) ?? 0) > 0 };
   }
 
   get cols(): number {
@@ -91,6 +118,7 @@ export class TerminalModel {
         this.send(data);
       }
       this.term.reset();
+      this.kittyFlags = [0];
       this.scrolled = 0;
       this.term.write(screen, () => this.changed());
     }
@@ -164,11 +192,6 @@ export class TerminalModel {
   /** Whether the program in it takes pasted text bracketed. */
   get bracketedPaste(): boolean {
     return this.term.modes.bracketedPasteMode;
-  }
-
-  /** Whether the program asked for application cursor keys (arrows as ESC O A). */
-  get applicationCursor(): boolean {
-    return this.term.modes.applicationCursorKeysMode;
   }
 
   /**

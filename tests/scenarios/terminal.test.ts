@@ -51,6 +51,18 @@ test("the session's terminal: shown and hidden by its key, the shell runs on, Ta
   await tui.type("\r");
   await tui.waitForText((text) => text.includes("hello") && text.includes("tabbed-file.txt"));
 
+  // an arrow in every form this terminal reports it (a repeat among them) reaches the program as the
+  // arrow; Ctrl+C ends it
+  await tui.type("cat -v\r");
+  await tui.press("\x1b[1;1:2A");
+  await tui.press("\x1b[1;1A");
+  await tui.press("\x1b[1;5D");
+  await tui.type("\r");
+  await tui.waitForText((text) => text.includes("^[[A^[[A^[[1;5D"));
+  await tui.press("\x1b[99;5u");
+  await tui.type("echo after-$((2*3))\r");
+  await tui.waitForText((text) => text.includes("after-6"));
+
   // the workbench's keys are the shell's too: Ctrl+\ and Ctrl+N open neither the panel nor a session
   const tabs = tui.workbench.tabs().length;
   await tui.press("\x1c");

@@ -1,58 +1,38 @@
 // The session's terminal over the main area (plan polish-3 F): a frame `╭─╮` in the accent border
 // color, its title naming the directory and the key that hides it; inside, the hub's shell as the
 // client's terminal model draws it, the terminal's own cursor where the shell's stands. While it is
-// shown every key goes to the shell as a terminal sends it (Tab, Ctrl+C, Esc too) but the one that
-// hides it; keys this terminal reports by the kitty protocol go on as legacy bytes, which a shell
-// reads. The wheel scrolls the history unless the program asked for the mouse; Shift+PgUp/PgDn
-// always do. When the shell exited, Enter starts another.
+// shown every key goes to the shell (Tab, Ctrl+C, Esc too) but the one that hides it: whatever form
+// this terminal reports it in (legacy bytes, the kitty protocol, a repeat) it becomes one key, and
+// the key the bytes the program inside asked for (terminal-keys.ts); releases are dropped, pasted
+// text is bracketed only where the program asked. The wheel scrolls the history unless the program
+// asked for the mouse; Shift+PgUp/PgDn always do. When the shell exited, Enter starts another.
 
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, decodeKittyPrintable, matchesKey, parseKey, truncateToWidth, visibleWidth, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { CURSOR_MARKER, decodeKittyPrintable, isKeyRelease, matchesKey, parseKey, truncateToWidth, visibleWidth, type Component, type Focusable, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { TerminalModel } from "#client/model/terminal-model.ts";
-import { terminalKey, type KeyPress } from "#client/terminal-keys.ts";
+import { encodeKey, keyFromId, type KeyModes } from "#client/terminal-keys.ts";
 
-const KEY_NAMES: Record<string, string> = {
-  up: "ArrowUp",
-  down: "ArrowDown",
-  left: "ArrowLeft",
-  right: "ArrowRight",
-  enter: "Enter",
-  return: "Enter",
-  escape: "Escape",
-  tab: "Tab",
-  backspace: "Backspace",
-  delete: "Delete",
-  home: "Home",
-  end: "End",
-  pageUp: "PageUp",
-  pageDown: "PageDown",
-  insert: "Insert",
-  space: " ",
-};
+const PASTE = /^\x1b\[200~([\s\S]*)\x1b\[201~$/;
 
-/** A key as the shell reads it: kitty-protocol reports become legacy bytes; anything else goes as it came. */
-export function shellBytes(data: string, applicationCursor: boolean): string {
-  let bytes = data;
-  if (/^\x1b\[[0-9:;]+u$/.test(data)) {
-    const printable = decodeKittyPrintable(data);
-    const id = parseKey(data);
-    if (printable !== undefined) {
-      bytes = printable;
-    } else if (id !== undefined) {
-      const parts = id.split("+");
-      const name = parts[parts.length - 1] ?? "";
-      const press: KeyPress = { key: KEY_NAMES[name] ?? name, ctrl: parts.includes("ctrl"), alt: parts.includes("alt"), shift: parts.includes("shift") };
-      bytes = terminalKey(press) ?? "";
-    } else {
-      bytes = ""; // a key the shell has no bytes for
-    }
+/** What this terminal reported, as the program inside reads it; "" for nothing it reads. */
+export function shellBytes(data: string, modes: KeyModes & { bracketedPaste: boolean }): string {
+  const pasted = PASTE.exec(data);
+  const printable = decodeKittyPrintable(data);
+  const id = parseKey(data);
+  if (pasted !== null) {
+    return modes.bracketedPaste ? data : (pasted[1] ?? "");
+  } else if (isKeyRelease(data)) {
+    return ""; // only presses (and repeats) type
+  } else if (printable !== undefined) {
+    return printable;
+  } else if (/^[^\x00-\x1f\x7f]+$/.test(data)) {
+    return data; // text as it came: characters are themselves
+  } else if (id !== undefined) {
+    return encodeKey(keyFromId(id), modes) ?? "";
+  } else if (!data.startsWith("\x1b")) {
+    return data; // text as it came (several characters, a character pi-tui has no name for)
   } else {
-    // legacy bytes already
-  }
-  if (applicationCursor && /^\x1b\[[ABCD]$/.test(bytes)) {
-    return `\x1bO${bytes.slice(2)}`;
-  } else {
-    return bytes;
+    return ""; // a sequence no key: nothing the program reads
   }
 }
 
@@ -86,7 +66,7 @@ export class TerminalView implements Component, Focusable {
       model.scroll(matchesKey(data, "shift+pageUp") ? model.rows - 1 : -(model.rows - 1));
     } else if (model.state !== "exited") {
       // while the shell starts its keys wait in the model, in order
-      const bytes = shellBytes(data, model.applicationCursor);
+      const bytes = shellBytes(data, { ...model.keyModes, bracketedPaste: model.bracketedPaste });
       if (bytes !== "") {
         model.input(bytes);
       } else {

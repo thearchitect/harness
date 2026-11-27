@@ -8,7 +8,7 @@ import type { ActionId } from "#client/input/actions.ts";
 import { domKeyName } from "#client/input/keys.ts";
 import { modeOf, type Capture, type ModeInputs } from "#client/input/modes.ts";
 import { route } from "#client/input/policy.ts";
-import { bracketedPaste, terminalKey } from "#client/terminal-keys.ts";
+import { bracketedPaste, LEGACY, terminalKey, type KeyModes } from "#client/terminal-keys.ts";
 
 /** The message field's own keys: sending and new lines are its handlers'. */
 const FIELD_OWN = new Set<ActionId>(["editor.submit", "editor.newline"]);
@@ -47,12 +47,13 @@ export function listenKeys(act: (action: ActionId) => void, inputs: () => Omit<M
 
 /**
  * While a captor (an extension's component, the session's terminal) is open every key is its own,
- * as terminal bytes, but its way out (listenKeys acts on that); pasted text arrives as bracketed
- * paste where `bracketed` says the program takes it.
+ * as terminal bytes in the modes the program asked for (`modes`: the cursor keys' mode, the kitty
+ * protocol), but its way out (listenKeys acts on that); pasted text arrives as bracketed paste where
+ * `bracketed` says the program takes it.
  */
-export function listenComponentKeys(send: (bytes: string) => void, owner: Capture, bracketed: () => boolean = () => true): () => void {
+export function listenComponentKeys(send: (bytes: string) => void, owner: Capture, bracketed: () => boolean = () => true, modes: () => KeyModes = () => LEGACY): () => void {
   const onKey = (event: KeyboardEvent): void => {
-    const bytes = terminalKey({ key: event.key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey });
+    const bytes = terminalKey({ key: event.key, ctrl: event.ctrlKey, alt: event.altKey, shift: event.shiftKey, meta: event.metaKey }, modes());
     if (route({ kind: "capture", owner }, domKeyName(event)).kind === "action" || bytes === undefined) {
       return; // the way out, or no key a terminal sends
     } else {

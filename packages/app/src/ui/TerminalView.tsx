@@ -39,6 +39,7 @@ export function TerminalView({ terminal, client, onHide }: { terminal: TerminalM
         (bytes) => (terminal.state === "exited" && bytes === "\r" ? void terminal.open(terminal.cols, terminal.rows) : terminal.input(bytes)),
         "terminal",
         () => terminal.bracketedPaste,
+        () => terminal.keyModes,
       ),
     [terminal],
   );
