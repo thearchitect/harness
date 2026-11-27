@@ -529,11 +529,13 @@ export class App {
     for (const tab of this.workbench.tabs()) {
       const key = `${tab.hub}/${tab.sessionId}`;
       const editor = this.editors.get(key);
-      const text = this.workbench.draftText(tab);
-      if (key !== shown && editor !== undefined && editor.getText() !== text) {
+      const edited = this.workbench.takeEditedDraft(tab);
+      const text = edited ?? this.workbench.draftText(tab);
+      if ((key !== shown || edited !== undefined) && editor !== undefined && editor.getText() !== text) {
+        // another device's draft, or the prompt editor's text for this one
         editor.setText(text);
       } else {
-        // shown, not made yet, or as it is
+        // shown and typed in here, not made yet, or as it is
       }
     }
   }
@@ -1103,8 +1105,8 @@ export class App {
       input: this.screen?.input ?? "editor",
       panel: this.overlayHandles.has("panel"),
       strip: this.stripFocused && this.strip.focused,
-      terminal: this.terminalOverlay !== undefined,
-      prompt: false,
+      terminal: this.terminalOverlay !== undefined && this.terminalOverlay.view.terminal.program.kind === "shell",
+      prompt: this.terminalOverlay !== undefined && this.terminalOverlay.view.terminal.program.kind === "prompt",
     });
     const routed = route(mode, keyNameOf(data));
     if (routed.kind === "owner" || routed.action === "editor.newline") {

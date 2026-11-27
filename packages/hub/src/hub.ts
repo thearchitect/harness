@@ -5,7 +5,7 @@
 
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -471,6 +471,10 @@ export class Hub {
         const { session, cwd, cols, rows } = args as HubOps["terminal_open"]["args"];
         return (await this.terminals.open(connection, session, this.expandHome(cwd), cols, rows)) as HubOps[K]["result"];
       }
+      case "editor_open": {
+        const { session, cwd, text, cols, rows } = args as HubOps["editor_open"]["args"];
+        return (await this.openEditor(connection, session, this.expandHome(cwd), text, cols, rows)) as HubOps[K]["result"];
+      }
       case "terminal_input": {
         const { session, data } = args as HubOps["terminal_input"]["args"];
         this.terminals.input(session, data);
@@ -526,6 +530,42 @@ export class Hub {
       }
       default:
         throw new HarnessError("invalid_record", `unknown operation ${String(op satisfies never)}`);
+    }
+  }
+
+  /**
+   * A session's draft in the prompt editor: the draft goes into a file among the session's
+   * attachments, `$HARNESS_EDITOR` (or the bundle's micro) runs on it in the terminal
+   * `prompt:<session>`; when it exits, the file's text is the draft — kept in the workspace when the
+   * session is there, and to every client (editor_closed) — and the file goes. Open already: its
+   * screen, nothing starts again.
+   */
+  private async openEditor(connection: Connection, session: string, cwd: string, text: string, cols: number, rows: number): Promise<{ screen: string }> {
+    const command = process.env.HARNESS_EDITOR ?? process.env.HARNESS_BUNDLED_EDITOR ?? "micro";
+    const file = join(this.attachments.dir, session.replace(/[^A-Za-z0-9_.-]/g, "_"), `prompt-${randomUUID()}.md`);
+    if (this.terminals.editing(session)) {
+      return this.terminals.openEditor(connection, session, cwd, cols, rows, command, file, () => undefined);
+    } else {
+      await mkdir(dirname(file), { recursive: true });
+      await writeFile(file, text, { mode: 0o600 });
+      this.telemetry.log({ event: "prompt_editor_opened", session, command });
+      return this.terminals.openEditor(connection, session, cwd, cols, rows, command, file, (code) => {
+        void readFile(file, "utf8")
+          .catch(() => text)
+          .then(async (written) => {
+            // an editor saves with a final newline: the draft has none
+            const draft = written.replace(/\n$/, "");
+            const tab = this.workspace.read().tabs.find((candidate) => candidate.sessionId === session);
+            if (tab !== undefined) {
+              this.workspace.setDraft(tab, draft, true, this.clock.now());
+            } else {
+              // a window's own session: its client keeps the draft (editor_closed)
+            }
+            this.telemetry.log({ event: "prompt_editor_closed", session, code });
+            this.broadcast({ ev: "editor_closed", session, text: draft });
+            await rm(file, { force: true });
+          });
+      });
     }
   }
 

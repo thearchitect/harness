@@ -81,6 +81,14 @@ While it is shown every key is the shell's but its way out, Ctrl/Alt+/ (the pane
 and the rest go to the shell); pasting goes to it. When the shell exits, Enter starts another. On a phone the status line's
 `terminal` button shows it, with a strip of keys (↑ ↓ ⏎ Esc Tab Ctrl+C) and a field for typing.
 
+## The prompt editor
+
+Ctrl/Alt+G writes the message in an editor in the same frame as the terminal: the hub runs
+`$HARNESS_EDITOR` (set where the hub runs; a command with arguments is fine) or the bundle's
+`micro` on a file with the draft, in the session's directory. Every key is the editor's; Ctrl/Alt+G
+again does nothing; when the editor exits, the file's text is the draft — on the hub, so every
+device has it.
+
 ## What the browser adds
 
 - The page title and icon show `◆ N` while N sessions wait for you.

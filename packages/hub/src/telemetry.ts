@@ -18,6 +18,8 @@ export type TelemetryEvent =
   | { event: "agent_exit"; agent: string; code: number | null; error?: string }
   | { event: "agent_unload"; agent: string }
   | { event: "terminal_started"; session: string; cwd: string; pid: number }
+  | { event: "prompt_editor_opened"; session: string; command: string }
+  | { event: "prompt_editor_closed"; session: string; code: number }
   | { event: "terminal_exited"; session: string; code: number }
   | { event: "network_started"; listen: string; proxy: boolean }
   | { event: "network_stopped" }

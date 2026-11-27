@@ -33,6 +33,7 @@
   pnpm,
   ripgrep,
   fd,
+  micro,
   cage,
   bun,
   ffmpeg-headless,
@@ -425,6 +426,8 @@ let
     export HARNESS_APP_WEB="''${HARNESS_APP_WEB:-${appBuild.web}}"
     export PI_SKIP_VERSION_CHECK=1
     export PI_TELEMETRY="''${PI_TELEMETRY-0}"
+    # the prompt editor (Ctrl/Alt+G) when $HARNESS_EDITOR names none: kept off the PATH
+    export HARNESS_BUNDLED_EDITOR=${lib.getExe micro}
     export PATH="${
       lib.makeBinPath [
         ripgrep

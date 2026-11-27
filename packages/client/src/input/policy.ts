@@ -28,8 +28,9 @@ export function route(mode: Mode, key: string | undefined): Route {
   const chat = key !== undefined ? CHAT_KEYS.get(key) : undefined;
   switch (mode.kind) {
     case "capture":
-      // everything is the captor's but the terminal's own way out
-      return mode.owner === "terminal" && global === "terminal.toggle" ? { kind: "action", action: global } : { kind: "owner" };
+      // everything is the captor's but the terminal's way out, and the prompt editor's own key
+      // (taken, and nothing happens: only the editor's exit closes it)
+      return (mode.owner === "terminal" && global === "terminal.toggle") || (mode.owner === "prompt" && global === "prompt.edit") ? { kind: "action", action: global } : { kind: "owner" };
     case "chat":
       return global !== undefined ? { kind: "action", action: global } : chat !== undefined ? { kind: "action", action: chat } : { kind: "owner" };
     case "dialog":

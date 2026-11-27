@@ -35,12 +35,14 @@ test("global actions act with Ctrl and with Alt in the chat, dialogs and the pan
   assert.deepEqual(route(CHAT, undefined), { kind: "owner" });
 });
 
-test("captors keep every key; the terminal leaves by its own key", () => {
+test("captors keep every key; the terminal leaves by its own key; the prompt editor's key is taken", () => {
   for (const owner of ["terminal", "prompt", "component"] as const) {
     const mode: Mode = { kind: "capture", owner };
     for (const key of routedKeys()) {
       const leaves = owner === "terminal" && (key === "ctrl+/" || key === "alt+/");
-      assert.deepEqual(route(mode, key), leaves ? { kind: "action", action: "terminal.toggle" } : { kind: "owner" }, `${owner}: ${key}`);
+      const again = owner === "prompt" && (key === "ctrl+g" || key === "alt+g");
+      const expected = leaves ? { kind: "action", action: "terminal.toggle" } : again ? { kind: "action", action: "prompt.edit" } : { kind: "owner" };
+      assert.deepEqual(route(mode, key), expected, `${owner}: ${key}`);
     }
   }
 });

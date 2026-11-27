@@ -104,7 +104,7 @@ export class TerminalView implements Component, Focusable {
     }
 
     const border = (text: string): string => theme.fg("borderAccent", text);
-    const title = ` terminal · ${model.cwd} · ${this.hideKey()} hide `;
+    const title = model.program.kind === "prompt" ? " message · the editor's exit puts it back " : ` terminal · ${model.cwd} · ${this.hideKey()} hide `;
     const shown = truncateToWidth(title, Math.max(0, inner - 2), "…");
     const top = border(`╭─${shown}${"─".repeat(Math.max(0, inner - 1 - visibleWidth(shown)))}╮`);
     const bottom = border(`╰${"─".repeat(inner)}╯`);

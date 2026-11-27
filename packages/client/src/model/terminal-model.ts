@@ -44,10 +44,18 @@ function sgr(cell: Cell): string {
 
 export type TerminalState = "closed" | "opening" | "open" | "exited";
 
+/**
+ * What runs in it: the session's shell, or its prompt editor on the draft (`prompt:<session>` on the
+ * hub; editor_open with the draft as it is when it shows).
+ */
+export type TerminalProgram = { kind: "shell" } | { kind: "prompt"; draft: () => string };
+
 export class TerminalModel {
   readonly hub: string;
+  /** The terminal's id on its hub: the session's id, or `prompt:<session id>`. */
   readonly session: string;
   readonly cwd: string;
+  readonly program: TerminalProgram;
   private readonly api: () => HubApi;
   private readonly term: InstanceType<typeof xterm.Terminal>;
   private readonly changed: () => void;
@@ -58,10 +66,11 @@ export class TerminalModel {
   /** Input typed before the shell runs (shown, not opened yet, or starting): sent, in order, once it runs. */
   private held: string[] = [];
 
-  constructor(node: string, session: string, cwd: string, api: () => HubApi, changed: () => void) {
+  constructor(node: string, session: string, cwd: string, api: () => HubApi, changed: () => void, program: TerminalProgram = { kind: "shell" }) {
     this.hub = node;
-    this.session = session;
+    this.session = program.kind === "prompt" ? `prompt:${session}` : session;
     this.cwd = cwd;
+    this.program = program;
     this.api = api;
     this.changed = changed;
     this.term = new xterm.Terminal({ cols: 80, rows: 24, scrollback: SCROLLBACK, allowProposedApi: true });
@@ -109,7 +118,12 @@ export class TerminalModel {
       this.state = "opening";
       this.exitCode = undefined;
       this.term.resize(Math.max(2, cols), Math.max(1, rows));
-      const { screen } = await this.api().request("terminal_open", { session: this.session, cwd: this.cwd, cols: this.term.cols, rows: this.term.rows });
+      const size = { cwd: this.cwd, cols: this.term.cols, rows: this.term.rows };
+      const program = this.program;
+      const { screen } =
+        program.kind === "prompt"
+          ? await this.api().request("editor_open", { session: this.session.slice("prompt:".length), text: program.draft(), ...size })
+          : await this.api().request("terminal_open", { session: this.session, ...size });
       // open from here on: what was typed meanwhile goes first, in order, then typing goes straight
       this.state = this.state === "opening" ? "open" : this.state;
       const held = this.held;

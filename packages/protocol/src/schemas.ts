@@ -121,6 +121,10 @@ export const OP_SCHEMAS: Record<HubOp, TSchema> = {
   terminal_input: Obj({ session: Str(), data: Str("Bytes for the shell, as a terminal sends them") }, "Input to a session's terminal. → {}"),
   terminal_resize: Obj({ session: Str(), cols: Int(), rows: Int() }, "The terminal's size (the last client's wins). → {}"),
   terminal_detach: Obj({ session: Str() }, "Hides the terminal from this client; the shell runs on. → {}"),
+  editor_open: Obj(
+    { session: Str("The session's id"), cwd: Str("Its directory"), text: Str("The draft as it is"), cols: Int(), rows: Int() },
+    "Writes a session's draft in an editor ($HARNESS_EDITOR on the hub, else the bundle's micro) in a terminal `prompt:<session>` (terminal_input, terminal_resize, terminal_detach and terminal_output as a session's terminal); open already, it shows as it is. When the editor exits the file's text comes as editor_closed. → { screen }",
+  ),
   hub_restart: Obj({}, "Stops every agent and its processes and starts the hub again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}"),
   settings_get: Obj({}, "The user's UI settings (ui.theme, hub.network, …). → { settings }"),
   settings_set: Obj(
@@ -248,6 +252,7 @@ export const HUB_EVENT_SCHEMAS = {
   settings: Obj({ ev: Type.Literal("settings"), settings: Any("The user's settings") }, "The user's settings changed."),
   terminal_output: Obj({ ev: Type.Literal("terminal_output"), session: Str(), data: Str("Bytes of the shell as text") }, "Output of a session's terminal this client shows."),
   terminal_exit: Obj({ ev: Type.Literal("terminal_exit"), session: Str(), code: Type.Integer() }, "A session's terminal shell exited; terminal_open starts another."),
+  editor_closed: Obj({ ev: Type.Literal("editor_closed"), session: Str(), text: Str("The file's text: the draft now") }, "A session's prompt editor exited (to every client of the user)."),
   hub: Obj({ ev: Type.Literal("hub"), status: Any("HubStatus") }, "The network access or the devices changed (one paired, connected, was revoked)."),
   workspace: Obj({ ev: Type.Literal("workspace"), workspace: Any("{ revision, tabs }") }, "The workspace changed: a tab opened, moved, closed, seen; a draft written."),
 } as const;

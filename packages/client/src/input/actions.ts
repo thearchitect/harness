@@ -19,6 +19,7 @@ export const GLOBAL_ACTIONS = {
   "strip.tabs": { key: "s", description: "The keyboard into the strip: hubs, sessions, items; again or Esc: back" },
   "terminal.toggle": { key: "/", description: "The session's terminal over the main area, in its directory" },
   "panel.toggle": { key: "\\", description: "The panel: modes, the session, harness, every action" },
+  "prompt.edit": { key: "g", description: "Write the message in an editor ($HARNESS_EDITOR, else micro); its exit puts the text back" },
   "model.select": { key: "l", description: "Choose the model" },
   "model.cycle": { key: "p", description: "Next model" },
   "tools.expand": { key: "e", description: "Expand or collapse tool output" },

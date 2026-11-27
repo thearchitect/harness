@@ -105,3 +105,25 @@ test("the session's terminal: shown and hidden by its key, the shell runs on, Ta
   await tui.press(ALT_SLASH);
   await tui.waitForText((text) => !framed(text));
 });
+
+test("the prompt editor: Ctrl+G opens the draft in $HARNESS_EDITOR in a terminal's frame, again does nothing, its exit puts the text in the message", async () => {
+  // an editor that shows the draft and replaces it with the line typed
+  process.env.HARNESS_EDITOR = `sh -c 'cat "$0"; echo; IFS= read -r line; printf "%s\\n" "$line" > "$0"'`;
+  const stand = await createStand({});
+  stands.push(stand);
+  const tui = await TuiDriver.start(() => HubConnection.open(inProcessTransport(stand.hub), "tui", undefined, ["component-bridge"]), { cwd: stand.project });
+  drivers.push(tui);
+  const framed = (text: string): boolean => text.includes("╭─ message · ");
+  setKittyProtocolActive(false);
+
+  await tui.type("the first words");
+  await tui.press("\x07"); // Ctrl+G
+  await tui.waitForText((text) => framed(text) && text.includes("the first words"));
+  await tui.press("\x1bg"); // Alt+G again: nothing (the editor has the key; it is no way out)
+  assert.ok(framed(tui.text()));
+  await tui.type("words from the editor\r");
+  await tui.waitForText((text) => !framed(text));
+  await tui.waitForText((text) => text.includes("words from the editor"));
+  assert.equal(tui.app.editorText(), "words from the editor");
+  delete process.env.HARNESS_EDITOR;
+});

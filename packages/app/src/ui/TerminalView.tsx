@@ -37,7 +37,7 @@ export function TerminalView({ terminal, client, onHide }: { terminal: TerminalM
     () =>
       listenComponentKeys(
         (bytes) => (terminal.state === "exited" && bytes === "\r" ? void terminal.open(terminal.cols, terminal.rows) : terminal.input(bytes)),
-        "terminal",
+        terminal.program.kind === "prompt" ? "prompt" : "terminal",
         () => terminal.bracketedPaste,
         () => terminal.keyModes,
       ),
@@ -66,7 +66,9 @@ export function TerminalView({ terminal, client, onHide }: { terminal: TerminalM
   const key = (bytes: string) => () => terminal.input(bytes);
   return (
     <View accessibilityLabel="terminal" style={{ flex: 1, borderWidth: 1, borderColor: theme.colors.borderAccent, backgroundColor: theme.colors.pageBg }}>
-      <T color="borderAccent" lines={1}>{` terminal · ${terminal.cwd} · ${Platform.OS === "web" ? "Ctrl/Alt+/ hide" : "terminal hides"} `}</T>
+      <T color="borderAccent" lines={1}>
+        {terminal.program.kind === "prompt" ? " message · the editor's exit puts it back " : ` terminal · ${terminal.cwd} · ${Platform.OS === "web" ? "Ctrl/Alt+/ hide" : "terminal hides"} `}
+      </T>
       <View onLayout={onLayout} style={{ flex: 1, paddingHorizontal: 2, overflow: "hidden" }}>
         {view.lines.map((raw, index) => {
           const line = parseAnsiLine(raw);

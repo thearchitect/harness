@@ -111,6 +111,12 @@ export type HubOps = {
   terminal_resize: { args: { session: string; cols: number; rows: number }; result: Record<string, never> };
   /** Hides it from this client: the shell runs on. */
   terminal_detach: { args: { session: string }; result: Record<string, never> };
+  /**
+   * Writes a session's draft in an editor in a terminal `prompt:<session>` (the terminal_* operations
+   * and events as a session's terminal); open already, it shows as it is. Its exit brings
+   * editor_closed with the file's text.
+   */
+  editor_open: { args: { session: string; cwd: string; text: string; cols: number; rows: number }; result: { screen: string } };
   /** The hub's network access and paired devices (the /hub dialog). */
   hub_status: { args: Record<string, never>; result: HubStatus };
   /** Changes the network access (kept in the user's settings, `hub.network`); refused when the service's configuration sets it. */
@@ -192,6 +198,7 @@ export const HUB_OPS: readonly HubOp[] = [
   "terminal_input",
   "terminal_resize",
   "terminal_detach",
+  "editor_open",
   "hub_status",
   "hub_network_set",
   "device_pair",
@@ -208,6 +215,8 @@ export type HubEvent =
   | { ev: "terminal_output"; session: string; data: string }
   /** Its shell exited; terminal_open starts another. */
   | { ev: "terminal_exit"; session: string; code: number }
+  /** A session's prompt editor exited: the file's text is its draft now. */
+  | { ev: "editor_closed"; session: string; text: string }
   /** The network access or the devices changed (one paired, connected, was revoked). */
   | { ev: "hub"; status: HubStatus }
   /** The workspace changed: a tab opened, moved, closed, seen; a draft written. */

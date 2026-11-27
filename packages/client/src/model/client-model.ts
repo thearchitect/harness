@@ -244,6 +244,9 @@ export class ClientModel {
       case "terminal_output":
         this.terminals.get(`${node}\u0000${event.session}`)?.output(event.data);
         return; // the terminal tells when its screen has it
+      case "editor_closed":
+        this.onEditorClosed?.(node, event.session, event.text);
+        break;
       case "terminal_exit":
         this.terminals.get(`${node}\u0000${event.session}`)?.exited(event.code);
         return;
@@ -278,6 +281,22 @@ export class ClientModel {
       return made;
     }
   }
+
+  /** A session's prompt editor on its hub, `draft` the text it opens on (made at its first show, anew after it closed). */
+  promptEditor(node: string, session: string, cwd: string, draft: () => string): TerminalModel {
+    const key = `${node}\u0000prompt:${session}`;
+    const known = this.terminals.get(key);
+    if (known !== undefined && known.state !== "exited") {
+      return known;
+    } else {
+      const made = new TerminalModel(node, session, cwd, () => this.connection(node), () => this.changed(), { kind: "prompt", draft });
+      this.terminals.set(key, made);
+      return made;
+    }
+  }
+
+  /** Who hears that a session's prompt editor closed with the draft's text (the workbench). */
+  onEditorClosed: ((hub: string, session: string, text: string) => void) | undefined;
 
   private onHap(node: string, agent: string, record: HapRecord): void {
     const model = this.full.get(agentKey(node, agent));

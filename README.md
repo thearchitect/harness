@@ -69,7 +69,9 @@ playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools)
   does not reach harness — a browser keeps Ctrl+N, a Mac terminal prints Option+N — the other
   does): N a new session, O an existing one, W closes the tab (its agent keeps running), 1…9 and
   PgUp/PgDn switch tabs, S the strip, \ the panel (every action is listed there), / a terminal in
-  the session's directory on its hub (the shell runs on while hidden), F searches the transcript,
+  the session's directory on its hub (the shell runs on while hidden), G writes the message in an
+  editor in the same frame (`$HARNESS_EDITOR`, else the bundle's micro; its exit puts the text
+  back, from any client), F searches the transcript,
   L chooses the model, E expands tool output, C clears the message, V pastes, Q quits. The message
   is edited by arrows, Home/End, Ctrl/Alt with ←/→, Backspace and Delete (words), Ctrl/Alt+Z undo;
   keys are named by their place, so they work in any keyboard layout. One mode owns the keyboard at

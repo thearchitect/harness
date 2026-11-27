@@ -299,6 +299,18 @@ Hides the terminal from this client; the shell runs on. → {}
 |---|---|---|---|
 | `session` | string | yes |  |
 
+### `editor_open`
+
+Writes a session's draft in an editor ($HARNESS_EDITOR on the hub, else the bundle's micro) in a terminal `prompt:<session>` (terminal_input, terminal_resize, terminal_detach and terminal_output as a session's terminal); open already, it shows as it is. When the editor exits the file's text comes as editor_closed. → { screen }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `session` | string | yes | The session's id |
+| `cwd` | string | yes | Its directory |
+| `text` | string | yes | The draft as it is |
+| `cols` | integer | yes |  |
+| `rows` | integer | yes |  |
+
 ### `hub_restart`
 
 Stops every agent and its processes and starts the hub again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}
@@ -423,6 +435,16 @@ A session's terminal shell exited; terminal_open starts another.
 | `ev` | `"terminal_exit"` | yes |  |
 | `session` | string | yes |  |
 | `code` | integer | yes |  |
+
+### `editor_closed`
+
+A session's prompt editor exited (to every client of the user).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `ev` | `"editor_closed"` | yes |  |
+| `session` | string | yes |  |
+| `text` | string | yes | The file's text: the draft now |
 
 ### `hub`
 

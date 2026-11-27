@@ -246,6 +246,15 @@ function WorkbenchApp() {
     // the tab's draft as its hub has it (begun on another device, maybe); typing here then owns it
     setEditorText(screen?.tab !== undefined ? (connected?.workbench.draftText(screen.tab) ?? "") : "");
   }, [shownTab]);
+  // the prompt editor's text, when it closes, is the message
+  useEffect(() => {
+    const edited = screen?.tab !== undefined ? connected?.workbench.takeEditedDraft(screen.tab) : undefined;
+    if (edited !== undefined) {
+      setEditorText(edited);
+    } else {
+      // nothing came back from the editor
+    }
+  });
   useEffect(() => {
     const tab = connected?.workbench.activeTab();
     if (tab !== undefined && `${tab.hub}/${tab.sessionId}` === shownTab && connected?.workbench.draftText(tab) !== editorText) {
@@ -501,8 +510,8 @@ function WorkbenchApp() {
       listenKeys(act, () => ({
         input: screenRef.current?.input ?? "editor",
         panel: screenRef.current?.zones.overlays.includes("panel") === true,
-        terminal: screenRef.current?.terminal !== undefined,
-        prompt: false,
+        terminal: screenRef.current?.terminal?.program.kind === "shell",
+        prompt: screenRef.current?.terminal?.program.kind === "prompt",
       })),
     [act],
   );

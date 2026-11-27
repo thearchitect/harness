@@ -17,9 +17,14 @@ type TerminalEvent = Extract<HubEvent, { ev: "terminal_output" | "terminal_exit"
 /** Who gets a terminal's events: a client connection (by identity). */
 export type Viewer = object;
 
+/** What runs in a terminal: the user's shell, or the prompt editor on a draft's file. */
+type Program = { kind: "shell" } | { kind: "editor"; command: string; file: string; closed: (code: number) => void };
+
 type Term = {
+  /** The session's id, or `prompt:<session id>` for its prompt editor. */
   session: string;
   cwd: string;
+  program: Program;
   pty: nodePty.IPty | undefined;
   mirror: InstanceType<typeof xterm.Terminal>;
   serializer: InstanceType<typeof serialize.SerializeAddon>;
@@ -53,9 +58,9 @@ export class Terminals {
    * A client shows a session's terminal: it starts (again, after its shell exited) and the client
    * gets the screen as it is; the stream follows.
    */
-  async open(viewer: Viewer, session: string, cwd: string, cols: number, rows: number): Promise<{ screen: string }> {
+  async open(viewer: Viewer, session: string, cwd: string, cols: number, rows: number, program: Program = { kind: "shell" }): Promise<{ screen: string }> {
     const known = this.terms.get(session);
-    const term = known ?? this.made(session, cwd, cols, rows);
+    const term = known ?? this.made(session, cwd, cols, rows, program);
     if (term.pty === undefined) {
       this.start(term, cols, rows);
     } else {
@@ -112,18 +117,35 @@ export class Terminals {
     this.terms.clear();
   }
 
-  private made(session: string, cwd: string, cols: number, rows: number): Term {
+  /**
+   * A session's prompt editor (`prompt:<session>`): `command` on the draft's file in a terminal like
+   * the session's own; when it exits the terminal goes and `closed` reads the file. Open already:
+   * the client gets its screen, nothing starts again.
+   */
+  async openEditor(viewer: Viewer, session: string, cwd: string, cols: number, rows: number, command: string, file: string, closed: (code: number) => void): Promise<{ screen: string }> {
+    return this.open(viewer, `prompt:${session}`, cwd, cols, rows, { kind: "editor", command, file, closed });
+  }
+
+  /** Whether a session's prompt editor runs. */
+  editing(session: string): boolean {
+    return this.terms.get(`prompt:${session}`)?.pty !== undefined;
+  }
+
+  private made(session: string, cwd: string, cols: number, rows: number, program: Program): Term {
     const mirror = new xterm.Terminal({ cols: Math.max(2, cols), rows: Math.max(1, rows), scrollback: TERMINAL_SCROLLBACK, allowProposedApi: true });
     const serializer = new serialize.SerializeAddon();
     mirror.loadAddon(serializer as never);
-    const term: Term = { session, cwd, pty: undefined, mirror, serializer, viewers: new Set(), exited: undefined, held: undefined, readyTimer: undefined };
+    const term: Term = { session, cwd, program, pty: undefined, mirror, serializer, viewers: new Set(), exited: undefined, held: undefined, readyTimer: undefined };
     this.terms.set(session, term);
     return term;
   }
 
   private start(term: Term, cols: number, rows: number): void {
     const shell = process.env.SHELL !== undefined && process.env.SHELL !== "" ? process.env.SHELL : "/bin/sh";
-    const pty = nodePty.spawn(shell, [], {
+    const program = term.program;
+    // an editor's command may carry arguments ($HARNESS_EDITOR="code --wait"): the shell runs it on the file
+    const [file, args] = program.kind === "shell" ? [shell, []] : ["/bin/sh", ["-c", `${program.command} "$1"`, "harness-editor", program.file]];
+    const pty = nodePty.spawn(file, args, {
       name: "xterm-256color",
       cols: Math.max(2, cols),
       rows: Math.max(1, rows),
@@ -169,6 +191,14 @@ export class Terminals {
           this.log({ event: "terminal_exited", session: term.session, code: exitCode });
           for (const viewer of term.viewers) {
             this.send(viewer, { ev: "terminal_exit", session: term.session, code: exitCode });
+          }
+          if (program.kind === "editor") {
+            // the editor's terminal ends with it; its file is the draft now
+            term.mirror.dispose();
+            this.terms.delete(term.session);
+            program.closed(exitCode);
+          } else {
+            // a shell's terminal stays: Enter starts another
           }
         } else {
           // a shell started again meanwhile

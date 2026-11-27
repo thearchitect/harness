@@ -483,6 +483,7 @@ export class Workbench {
     }
     // a window's own session joins the workspace once its transcript has a message
     client.onChange(() => this.joinTalked());
+    client.onEditorClosed = (hub, session, text) => this.editorClosed(hub, session, text);
   }
 
   private readonly prefetch: Prefetch | undefined;
@@ -804,7 +805,15 @@ export class Workbench {
 
   /** The active tab's terminal when it is shown; the one shown before (another tab's, a hidden one) stops coming here. */
   private shownTerminal(tab: Tab | undefined): TerminalModel | undefined {
-    const shown = tab !== undefined && tab.unavailable === undefined && this.view(tab).terminal === true ? this.client.terminal(tab.hub, tab.sessionId, tab.cwd) : undefined;
+    const editing = tab !== undefined && this.editing.has(`${tab.hub}/${tab.sessionId}`);
+    const shown =
+      tab === undefined || tab.unavailable !== undefined
+        ? undefined
+        : editing
+          ? this.client.promptEditor(tab.hub, tab.sessionId, tab.cwd, () => this.draftText(tab))
+          : this.view(tab).terminal === true
+            ? this.client.terminal(tab.hub, tab.sessionId, tab.cwd)
+            : undefined;
     if (shown !== this.terminalShown) {
       this.terminalShown?.detach();
       this.terminalShown = shown;
@@ -1608,6 +1617,16 @@ export class Workbench {
           case "panel.toggle":
             this.toggleOverlay("panel");
             break;
+          case "prompt.edit":
+            if (tab !== undefined && !this.editing.has(`${tab.hub}/${tab.sessionId}`)) {
+              // the draft as typed goes first: the editor opens on it
+              await this.flushDrafts();
+              this.editing.add(`${tab.hub}/${tab.sessionId}`);
+              this.client.changed();
+            } else {
+              // no session, or its editor is open: only its exit closes it
+            }
+            break;
           case "terminal.toggle":
             if (tab !== undefined) {
               this.updateView(tab, { terminal: this.view(tab).terminal !== true });
@@ -2015,6 +2034,33 @@ export class Workbench {
   }
 
   /* ----- drafts: the message being written in each tab, the hub's (shared by every device) ----- */
+
+  /** Sessions whose draft this window writes in the prompt editor now (`hub/sessionId`). */
+  private readonly editing = new Set<string>();
+  /** Drafts the prompt editor gave back, for the UI's field (taken once). */
+  private readonly editedDrafts = new Map<string, string>();
+
+  /** A session's prompt editor closed with the draft's text: this window's editor ends, the text is the draft. */
+  private editorClosed(hub: string, session: string, text: string): void {
+    const key = `${hub}/${session}`;
+    const tab = this.tabs().find((candidate) => candidate.hub === hub && candidate.sessionId === session);
+    if (this.editing.delete(key) && tab !== undefined) {
+      this.editedDrafts.set(key, text);
+      this.setDraft(tab, text);
+      void this.flushDrafts();
+    } else {
+      // another window's editor: the workspace brings its draft
+    }
+    this.client.changed();
+  }
+
+  /** The draft the prompt editor gave back for this tab's field, once. */
+  takeEditedDraft(tab: TabKey): string | undefined {
+    const key = `${tab.hub}/${tab.sessionId}`;
+    const text = this.editedDrafts.get(key);
+    this.editedDrafts.delete(key);
+    return text;
+  }
 
   /** Drafts typed here and not on their hub yet, by `hub/sessionId`. */
   private readonly draftsPending = new Map<string, { tab: Tab; text: string }>();
