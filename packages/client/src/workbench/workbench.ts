@@ -1202,6 +1202,7 @@ export class Workbench {
   }
 
   notify(level: "info" | "warning" | "error", message: string): void {
+    this.client.log.log(level === "warning" ? "warn" : level, "status", { message });
     this.notice = { level, message, at: this.clock.now() };
     this.client.changed();
   }
@@ -1555,6 +1556,7 @@ export class Workbench {
 
   async act(action: ActionId): Promise<void> {
     const tab = this.activeTab();
+    this.client.log.info("action", { action, ...(tab !== undefined ? { hub: tab.hub, session: tab.sessionId } : {}) });
     const api = tab !== undefined ? this.client.connections.get(tab.hub) : undefined;
     const agentId = tab?.agent?.id;
     const call = async (record: { type: string; [key: string]: unknown }): Promise<void> => {
@@ -1988,6 +1990,7 @@ export class Workbench {
   /** Activates a tab and marks what it shows as seen (shared through its hub's workspace). */
   async activate(index: number): Promise<void> {
     const tabs = this.tabs();
+    this.client.log.info("tab_activate", { index, ...(tabs[index] !== undefined ? { hub: tabs[index].hub, session: tabs[index].sessionId } : {}) });
     // the draft of the tab left goes to its hub now
     void this.flushDrafts();
     if (tabs.length === 0) {
@@ -2124,6 +2127,7 @@ export class Workbench {
         const workspace = await this.client.connection(tab.hub).request("workspace_draft_set", { tab: { sessionId: tab.sessionId, sessionFile: file, cwd: tab.cwd }, text, keep: this.differs(tab) });
         this.client.applyWorkspace(tab.hub, workspace);
         const shared = workspace.tabs.some((candidate) => candidate.sessionId === tab.sessionId);
+        this.client.log.info("draft_saved", { hub: tab.hub, session: tab.sessionId, text, shared });
         const record: TabRecord = { hub: tab.hub, sessionId: tab.sessionId, sessionFile: file, cwd: tab.cwd };
         // joined: every client has it; left: this window's own again
         this.drafts = shared ? this.drafts.filter((draft) => !sameTab(draft, record)) : this.drafts.some((draft) => sameTab(draft, record)) ? this.drafts : [...this.drafts, record];
@@ -2192,10 +2196,13 @@ export class Workbench {
     } else {
       this.starting.add(key);
       this.client.changed();
+      this.client.log.info("tab_start", { hub: tab.hub, session: tab.sessionId, file: tab.sessionFile, cwd: tab.cwd });
       try {
         const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd, sessionFile: tab.sessionFile });
         this.client.agents.set(agentKey(tab.hub, agent.id), agent);
+        this.client.log.info("tab_started", { hub: tab.hub, session: tab.sessionId, agent: agent.id, opened: agent.sessionId });
       } catch (error) {
+        this.client.log.warn("tab_start_failed", { hub: tab.hub, session: tab.sessionId, error: error instanceof Error ? error.message : String(error) });
         if (error instanceof RequestError && error.code === "not_found" && this.draftText(tab) !== "") {
           const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd });
           this.client.agents.set(agentKey(tab.hub, agent.id), agent);

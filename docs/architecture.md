@@ -4,7 +4,7 @@
 
 - **Agent** (`harness-agent`, `packages/agent`): one pi session with the harness extension, run
   through pi's SDK. It speaks HAP ([protocol/hap.md](protocol/hap.md)) on file descriptor 3 to
-  its hub; its stdout and stderr go to its log (`~/.harness/log/agents/<id>.log`).
+  its hub, its log records too; its stderr goes to `~/.harness/log/agents/<id>.stderr`.
 - **Hub** (`harness hub`, `packages/hub`): one OS user's harness on one machine — it starts the
   user's agents, keeps one agent per session (`~/.harness/run/locks/`), unloads idle ones, keeps the
   user's settings and paired devices, and serves clients on a unix socket

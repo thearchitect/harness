@@ -15,6 +15,7 @@ one hub per machine. To work on another machine, connect to that machine's hub.
 | `harness hub device add [--name N]`, `list`, `rename --name N --to M`, `revoke --name N` | Paired devices: a one-time pairing code (ten minutes), with its link and QR code when the hub knows its address. |
 | `harness connect <address> [--name N] [--command C]` | Another machine's hub, kept in `~/.harness/client/remotes.json` (0600): `ssh://[user@]host[:port]`, or a pairing link `https://hub/#pair=<code>` (or `https://hub` and the code typed). |
 | `harness remote list`, `remove <name>` | The hubs this client connects to. |
+| `harness logs [--since 1h] [--follow] [--source …] [--agent <id>] [--session <id>] [--json]` | This machine's log, every source merged by time ([Logs](#logs)). |
 
 The hub's commands act on the running hub, so a revoked device is disconnected at once. In any
 client, `/hub` (or `hub…` in the panel, `Ctrl+\`) opens the same in a dialog: the network access,
@@ -161,8 +162,27 @@ here, or in the app, paste the address the browser ended on into the field.
 
 ## Logs
 
-The hub logs events to `~/.harness/log/node-default.jsonl` (connections, refusals, agents
-starting, exiting, unloading; the network starting and stopping; pairing codes made and used,
-never the codes; wrong codes with their address; devices refused, renamed, revoked; going to
-sleep) and each agent's output to `~/.harness/log/agents/<id>.log`. Clients show the hub's events
-in the panel (`logs_tail`).
+One log for every part, JSON records a line each `{ at, level, source, event, … }`, a file a day
+per source under `~/.harness/log/<source>/<YYYY-MM-DD>.jsonl`:
+
+- `hub`: connections and refusals, every operation (its id, arguments — long strings by their
+  length —, time and error), every record passed to an agent (the client's id and the one the agent
+  gets), agents starting (the session asked for and the one opened), exiting and unloading,
+  terminals and the prompt editor, the network, pairing codes made and used (never the codes),
+  wrong codes with their address, devices refused, renamed, revoked, going to sleep, the move of
+  `~/.harness`.
+- `agent`: each agent's start (versions, the session, the model, extensions' problems), every
+  request by its id with a prompt's text, each run with its answers (model, stop reason, tokens,
+  cost, text), tools with their results, retries, compactions, questions and answers, errors with
+  their stacks. Agents send it to their hub; their raw stderr goes to `log/agents/<id>.stderr`.
+- `tui`, `app`: the clients' start, connections and why they were lost, every request by its id
+  with its time and error, actions, status lines, tabs starting and failing, drafts kept, the
+  background loading; at `debug` the TUI's raw key bytes. Clients send theirs to their hub
+  (`logs_put`); the app also keeps its own on the device.
+
+One request carries the same id from the client through the hub to the agent. Content is logged;
+secrets' values are masked. `log.level` (`error`, `warn`, `info` by default, `debug`) and
+`log.retentionDays` (3) are settings; old days are removed at the hub's start and hourly.
+
+`harness logs [--since 1h] [--follow] [--source hub,agent,tui,app] [--agent <id>] [--session <id>]
+[--json]` prints them merged by time; the panel's `logs` row shows the last day's.

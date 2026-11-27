@@ -4,6 +4,53 @@
 // dropped on the editor go to the session's machine and into the message as `@path`.
 
 import { windowState, type ViewStateStore } from "#client/workbench/view-state.ts";
+import type { LogStore } from "#client/model/client-log.ts";
+import { maskSecrets } from "#protocol/log.ts";
+
+/** The browser's IndexedDB of the log: one store of records, by time. */
+function logDatabase(): Promise<IDBDatabase> {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open("harness-log", 1);
+    request.onupgradeneeded = () => request.result.createObjectStore("records", { autoIncrement: true }).createIndex("at", "at");
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error ?? new Error("IndexedDB would not open"));
+  });
+}
+
+/** The app's own log (client-log.ts): this browser's IndexedDB, days past the retention removed. */
+export function logStore(): LogStore {
+  const database = typeof indexedDB !== "undefined" ? logDatabase().catch(() => undefined) : Promise.resolve(undefined);
+  return {
+    append: async (records) => {
+      const db = await database;
+      if (db !== undefined) {
+        const store = db.transaction("records", "readwrite").objectStore("records");
+        for (const record of records) {
+          store.add(maskSecrets(record));
+        }
+      } else {
+        // no IndexedDB here (a private window): the hub keeps the log
+      }
+    },
+    sweep: async (days) => {
+      const db = await database;
+      if (db !== undefined) {
+        const oldest = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString();
+        db.transaction("records", "readwrite").objectStore("records").index("at").openCursor(IDBKeyRange.upperBound(oldest, true)).onsuccess = function () {
+          const cursor = this.result;
+          if (cursor !== null) {
+            cursor.delete();
+            cursor.continue();
+          } else {
+            // swept
+          }
+        };
+      } else {
+        // nothing kept here
+      }
+    },
+  };
+}
 
 /** The window's state (view-state.ts): this browser's localStorage. */
 export function viewStore(): ViewStateStore {

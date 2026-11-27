@@ -4,6 +4,7 @@
 
 import { SNAPSHOT_ENTRIES, type HapRecord, type SnapshotData } from "#protocol/hap.ts";
 import type { AgentInfo, AgentSummary, HubEvent, HubOp, HubOps, HubStatus, SessionListItem, WorkspaceData, WorkspaceTab } from "#protocol/hub.ts";
+import { errorFields, Logger } from "#protocol/log.ts";
 import { RequestError, type HubConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
 import { TerminalModel } from "./terminal-model.ts";
@@ -59,6 +60,8 @@ export class ClientModel {
   readonly hubStatus = new Map<string, HubStatus>();
   /** Each hub's workspace (its tabs and drafts); kept while a hub is offline, so its tabs show as such. */
   readonly workspaces = new Map<string, WorkspaceData>();
+  /** The client's log (client-log.ts); nothing is kept until the UI gives it one. */
+  log: Logger = new Logger("tui", () => undefined);
   private homeConnection: HubConnection | undefined;
   readonly agents = new Map<AgentKey, AgentInfo>();
   readonly full = new Map<AgentKey, AgentModel>();
@@ -122,7 +125,12 @@ export class ClientModel {
     let attempt = 0;
     const connect = async (): Promise<string> => {
       const connection = await open();
-      connection.onClose(() => {
+      // its requests in the client's log, by the id the hub and the agent log them under too
+      connection.trace = (trace) =>
+        // the log's own deliveries are not logged (each would bring another)
+        trace.op === "logs_put" ? undefined : this.log.log(trace.error !== undefined ? "warn" : trace.event === "req" ? "debug" : "info", trace.event, { hub: options.name ?? connection.welcome?.hub, ...trace });
+      connection.onClose((reason) => {
+        this.log.warn("disconnected", { hub: options.name ?? connection.welcome?.hub, reason, reconnecting: !this.disposed });
         if (!this.disposed) {
           schedule();
         } else {
@@ -131,6 +139,7 @@ export class ClientModel {
       });
       this.endpoints.add(connection);
       const name = await this.addConnection(connection, options);
+      this.log.info("connected", { hub: name, attempt, harness: connection.welcome?.harness, host: connection.welcome?.host });
       attempt = 0;
       for (const key of [...this.recent].reverse()) {
         const [node, agent] = splitKey(key);
@@ -146,7 +155,10 @@ export class ClientModel {
       const delay = RECONNECT_MS[Math.min(attempt, RECONNECT_MS.length - 1)] ?? 30_000;
       attempt += 1;
       clock.setTimeout(() => {
-        connect().catch(() => (this.disposed ? undefined : schedule()));
+        connect().catch((error: unknown) => {
+          this.log.warn("connect_failed", { hub: options.name, attempt, ...errorFields(error) });
+          return this.disposed ? undefined : schedule();
+        });
       }, delay);
     };
     // a first attempt that fails is retried too; the caller learns why it failed

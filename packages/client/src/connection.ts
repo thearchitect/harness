@@ -30,8 +30,12 @@ export class HubConnection {
   private readonly hapListeners = new Set<(agent: string, record: HapRecord) => void>();
   private readonly closeListeners = new Set<(reason: string) => void>();
   private counter = 0;
+  /** Unique among connections: a request's id is one in the client's, the hub's and the agent's logs. */
+  private readonly tag = Math.random().toString(36).slice(2, 8);
   welcome: Welcome | undefined;
   closed = false;
+  /** What this connection sends and gets back, for the client's log. */
+  trace: ((record: { event: "req" | "res"; req: string; op: string; agent?: string; ms?: number; error?: string }) => void) | undefined;
 
   private constructor(transport: Transport) {
     this.transport = transport;
@@ -121,20 +125,39 @@ export class HubConnection {
 
   request<K extends HubOp>(op: K, args: HubOps[K]["args"]): Promise<HubOps[K]["result"]> {
     this.counter += 1;
-    const id = `r${this.counter}`;
-    return new Promise((resolve, reject) => {
-      this.waiters.set(id, { resolve: (data) => resolve(data as HubOps[K]["result"]), reject });
+    const id = `${this.tag}-r${this.counter}`;
+    return this.traced(id, op, undefined, (resolve, reject) => {
+      this.waiters.set(id, { resolve, reject });
       this.transport.send({ k: "req", id, op, args });
-    });
+    }) as Promise<HubOps[K]["result"]>;
   }
 
   /** Sends a HAP request or pi command to an agent and waits for its answer. */
   call<T = unknown>(agent: string, record: { type: string; [key: string]: unknown }): Promise<T> {
     this.counter += 1;
-    const id = `h${this.counter}`;
-    return new Promise((resolve, reject) => {
-      this.hapWaiters.set(`${agent}.${id}`, { resolve: (data) => resolve(data as T), reject });
+    const id = `${this.tag}-h${this.counter}`;
+    return this.traced(id, record.type, agent, (resolve, reject) => {
+      this.hapWaiters.set(`${agent}.${id}`, { resolve, reject });
       this.transport.send({ k: "hap", agent, rec: { ...record, id } as HapRecord });
+    }) as Promise<T>;
+  }
+
+  /** A request with its trace: sent, then answered (how long, and why not). */
+  private traced(id: string, op: string, agent: string | undefined, send: (resolve: (data: unknown) => void, reject: (error: Error) => void) => void): Promise<unknown> {
+    const started = Date.now();
+    const where = agent !== undefined ? { agent } : {};
+    this.trace?.({ event: "req", req: id, op, ...where });
+    return new Promise((resolve, reject) => {
+      send(
+        (data) => {
+          this.trace?.({ event: "res", req: id, op, ...where, ms: Date.now() - started });
+          resolve(data);
+        },
+        (error) => {
+          this.trace?.({ event: "res", req: id, op, ...where, ms: Date.now() - started, error: error.message });
+          reject(error);
+        },
+      );
     });
   }
 

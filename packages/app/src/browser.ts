@@ -5,7 +5,9 @@
 
 import { AudioModule, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from "expo-audio";
 import * as DocumentPicker from "expo-document-picker";
-import { File, Paths } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
+import { logDay, logLine } from "#protocol/log.ts";
+import type { LogStore } from "#client/model/client-log.ts";
 import * as ImagePicker from "expo-image-picker";
 import * as Linking from "expo-linking";
 import * as Sharing from "expo-sharing";
@@ -24,6 +26,44 @@ export function viewStore(): ViewStateStore {
         // written over
       }
       await file.write(JSON.stringify(state));
+    },
+  };
+}
+
+/** The app's own log (client-log.ts): a file a day among the app's documents, `log/<day>.jsonl`. */
+export function logStore(): LogStore {
+  const dir = new Directory(Paths.document, "log");
+  return {
+    append: async (records) => {
+      if (!dir.exists) {
+        dir.create({ intermediates: true });
+      } else {
+        // there already
+      }
+      const days = new Map<string, string[]>();
+      for (const record of records) {
+        days.set(logDay(record.at), [...(days.get(logDay(record.at)) ?? []), `${logLine(record)}\n`]);
+      }
+      for (const [day, lines] of days) {
+        const file = new File(dir, `${day}.jsonl`);
+        const before = file.exists ? await file.text() : "";
+        if (!file.exists) {
+          file.create();
+        } else {
+          // appended to
+        }
+        await file.write(`${before}${lines.join("")}`);
+      }
+    },
+    sweep: (days) => {
+      const oldest = logDay(Date.now() - days * 24 * 3600 * 1000);
+      for (const entry of dir.exists ? dir.list() : []) {
+        if (entry instanceof File && entry.name.slice(0, 10) < oldest) {
+          entry.delete();
+        } else {
+          // a kept day
+        }
+      }
     },
   };
 }

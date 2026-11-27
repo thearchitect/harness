@@ -30,6 +30,9 @@ import { Workbench } from "#client/workbench/workbench.ts";
 import { wsTransport } from "#client/ws-transport.ts";
 import { readHubConfig } from "#hub/config.ts";
 import { layoutOf } from "#protocol/layout.ts";
+import { errorFields, isLogLevel } from "#protocol/log.ts";
+import { ClientLog } from "#client/model/client-log.ts";
+import { LogFiles, sweepLogs } from "#hub/log-files.ts";
 import { harnessHome, ensureHome } from "#hub/home.ts";
 import { LocalHub, quitQuestion, versionProblem } from "#hub/local.ts";
 import { Hub } from "#hub/hub.ts";
@@ -41,6 +44,7 @@ import { claudeBridge } from "./claude-bridge.ts";
 import { piCommand } from "./pi-command.ts";
 import { canExecUpdate, checkUpdates, detectInstall, execUpdate, updateHint, updateLines, type Install, type UpdateState } from "./update.ts";
 import { addRemote, readRemotes, type Remote } from "./remotes.ts";
+import { logsCommand } from "./logs.ts";
 import { App, clientThemes } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
 import { tuiViewStore } from "#tui/view-store.ts";
@@ -291,6 +295,27 @@ async function runTui(args: string[]): Promise<void> {
 
   // the local hub, then the remote hubs: each reconnects by itself after a loss
   const client = new ClientModel();
+  // this window's log: to its hub (this machine's: ~/.harness/log/tui), kept here itself while there is none
+  const files = new LogFiles(layoutOf(home).log, "tui");
+  const windowLog = new ClientLog({
+    source: "tui",
+    base: { client: `tui-${hostname()}-${process.pid}`, pid: process.pid },
+    local: { store: { append: (records) => files.append(records), sweep: (days) => void sweepLogs(files.root, days) }, mirror: false },
+    upload: () => (client.connections.has(LOCAL_HUB) ? (records) => client.connection(LOCAL_HUB).request("logs_put", { records }) : undefined),
+    level: () => {
+      const level = client.settings["log.level"];
+      return isLogLevel(level) ? level : "info";
+    },
+  });
+  client.log = windowLog.logger;
+  client.log.info("start", { harness: harnessVersion(), argv: process.argv.slice(2), cwd, columns: process.stdout.columns, rows: process.stdout.rows, term: process.env.TERM, program: process.env.TERM_PROGRAM });
+  process.on("uncaughtException", (error) => {
+    client.log.error("uncaught", errorFields(error));
+    void windowLog.flush().finally(() => {
+      process.stderr.write(`harness: ${error.stack ?? error.message}\n`);
+      process.exit(1);
+    });
+  });
   const localHub = await client.addEndpoint(open, { home: true, name: LOCAL_HUB });
   for (const remote of readRemotes(home)) {
     await client
@@ -377,6 +402,8 @@ async function runTui(args: string[]): Promise<void> {
     } else {
       await app?.keepWindow();
       app?.stop();
+      client.log.info("quit");
+      await windowLog.flush();
       client.dispose();
       await local.close();
       process.exit(0);
@@ -427,6 +454,10 @@ async function main(): Promise<void> {
       break;
     case "web-app":
       await runWebApp();
+      break;
+    case "logs":
+      await openHome(harnessHome());
+      await logsCommand(harnessHome(), rest);
       break;
     case "claude-bridge":
       await claudeBridge(rest[0]);

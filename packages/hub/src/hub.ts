@@ -17,6 +17,8 @@ import { Workspace } from "./workspace.ts";
 import { Attachments, ATTACHMENTS_RETENTION_DAYS, readSessionText } from "./attachments.ts";
 import { HUB_OPS } from "#protocol/hub.ts";
 import { settingRevision } from "#protocol/settings.ts";
+import { isLogLevel, LOG_RETENTION_DAYS, type LogRecord } from "#protocol/log.ts";
+import { summarize } from "./telemetry.ts";
 import { listDirs } from "./dirs.ts";
 import { SNAPSHOT_ENTRIES } from "#protocol/hap.ts";
 import { themeColors } from "./themes.ts";
@@ -98,8 +100,8 @@ type AgentEntry = {
 /** Idle agents are unloaded after this long; checks run this often; at most this many agents run. */
 export const IDLE_UNLOAD_MS = 30 * 60_000;
 const UNLOAD_CHECK_MS = 60_000;
-/** How often attachments nothing names are looked for. */
-const SWEEP_EVERY_MS = 24 * 3600 * 1000;
+/** How often old log days and attachments nothing names are looked for. */
+const SWEEP_EVERY_MS = 3600 * 1000;
 export const MAX_AGENTS = 32;
 
 /** The agent of this checkout or bundle: node running packages/agent/src/main.ts. */
@@ -131,7 +133,17 @@ export class Hub {
   constructor(config: HubConfig) {
     this.config = config;
     this.clock = config.clock ?? systemClock;
-    this.telemetry = new Telemetry(config.dataDir, config.name, () => this.clock.now());
+    // the log's level and retention are the user's settings (read when a record is written)
+    this.telemetry = new Telemetry(config.dataDir, () => this.clock.now(), {
+      level: () => {
+        const level = this.settings?.read()["log.level"];
+        return isLogLevel(level) ? level : "info";
+      },
+      retentionDays: () => {
+        const days = this.settings?.read()["log.retentionDays"];
+        return typeof days === "number" && days > 0 ? days : LOG_RETENTION_DAYS;
+      },
+    });
     // the sessions' terminals: their events to the connections that show them
     this.terminals = new Terminals(
       (viewer, event) => (viewer as Connection).send({ k: "evt", event }),
@@ -153,9 +165,10 @@ export class Hub {
     this.scheduleSweep(0);
   }
 
-  /** Attachments nothing names any more go (at start, then daily). */
+  /** Old log days and attachments nothing names any more go (at start, then hourly). */
   private scheduleSweep(delay: number): void {
     this.sweepTimer = this.clock.setTimeout(() => {
+      this.telemetry.sweep();
       void this.sweepAttachments().finally(() => (this.closing ? undefined : this.scheduleSweep(SWEEP_EVERY_MS)));
     }, delay);
   }
@@ -319,15 +332,21 @@ export class Hub {
     if (!HUB_OPS.includes(op)) {
       connection.send({ k: "res", id, ok: false, error: { code: "invalid_record", message: `unknown operation ${String(op)}` } });
     } else {
+      const started = this.clock.now();
+      // a client's own log records are not logged again as the operation that brought them
+      const logged = op === "logs_put" ? { records: (args as { records?: unknown[] }).records?.length ?? 0 } : summarize(args);
       try {
         const data = await this.operate(connection, id, op, (args ?? {}) as never);
+        this.telemetry.log({ event: "op", connection: connection.id, req: id, op, ms: this.clock.now() - started, args: logged });
         if (data !== undefined) {
           connection.send({ k: "res", id, ok: true, data });
         } else {
           // answered later (agent_attach answers with the snapshot)
         }
       } catch (error) {
-        connection.send({ k: "res", id, ok: false, error: toProtocolError(error) });
+        const failure = toProtocolError(error);
+        this.telemetry.log({ event: "op", connection: connection.id, req: id, op, ms: this.clock.now() - started, args: logged, error: `${failure.code}: ${failure.message}` });
+        connection.send({ k: "res", id, ok: false, error: failure });
       }
     }
   }
@@ -450,6 +469,11 @@ export class Hub {
       case "logs_tail": {
         const { lines } = args as HubOps["logs_tail"]["args"];
         return { lines: this.telemetry.tail(lines ?? 200) } as HubOps[K]["result"];
+      }
+      case "logs_put": {
+        const { records } = args as HubOps["logs_put"]["args"];
+        this.telemetry.put(records as LogRecord[], { connection: connection.id, ...(connection.device !== undefined ? { device: connection.device } : {}) });
+        return {} as HubOps[K]["result"];
       }
       case "theme_get": {
         const { name } = args as HubOps["theme_get"]["args"];
@@ -674,8 +698,8 @@ export class Hub {
         sessionFile,
         parentSession: child?.parent.info.sessionFile,
         subagent: child?.launch,
-        env: { ...process.env, HARNESS_HOME: this.config.dataDir, ...this.config.agentEnv },
-        logPath: join(this.config.dataDir, "log", "agents", `${id}.log`),
+        env: { ...process.env, HARNESS_HOME: this.config.dataDir, HARNESS_LOG_LEVEL: this.telemetry.level(), ...this.config.agentEnv },
+        logPath: join(this.config.dataDir, "log", "agents", `${id}.stderr`),
       });
       const summary = new SummaryTracker(this.clock.now());
       // records after hello and before the agent is registered are kept and replayed then
@@ -768,7 +792,8 @@ export class Hub {
         this.broadcast({ ev: "agent_exited", agent: id, code, error });
         this.broadcast({ ev: "agents", agents: this.agentList() });
       });
-      this.telemetry.log({ event: "agent_start", agent: id, session: entry.info.sessionId, cwd: entry.info.cwd });
+      // the session asked for (its file) beside the one the agent opened: a difference is the first sign of a lost tab
+      this.telemetry.log({ event: "agent_start", agent: id, session: entry.info.sessionId, cwd: entry.info.cwd, ...(sessionFile !== undefined ? { requested: sessionFile } : {}) });
       this.broadcast({ ev: "agents", agents: this.agentList() });
       return { ...entry.info, summary: summary.current };
     }
@@ -794,6 +819,9 @@ export class Hub {
   /** A record a client sends to an agent: its id is rewritten so the answer finds its way back. */
   private forward(connection: Connection, agentId: string, record: AgentRecord): void {
     const entry = this.agents.get(agentId);
+    // the client's id of the request and the one the agent gets (made unique among connections)
+    const forwarded = record.id !== undefined ? `${connection.id}.${String(record.id)}` : undefined;
+    this.telemetry.log({ event: "hap", connection: connection.id, agent: agentId, req: String(record.id ?? ""), type: String(record.type), ...(forwarded !== undefined ? { forwarded } : {}) });
     if (entry === undefined) {
       connection.send({ k: "hap", agent: agentId, rec: { type: "harness_response", id: String(record.id ?? ""), ok: false, error: { code: "not_found", message: `no agent ${agentId}` } } });
     } else {
@@ -802,10 +830,9 @@ export class Hub {
       } else {
         // not a prompt
       }
-      if (record.id !== undefined) {
-        const key = `${connection.id}.${String(record.id)}`;
-        entry.requests.set(key, { connection, id: record.id });
-        entry.link.send({ ...record, id: key });
+      if (forwarded !== undefined && record.id !== undefined) {
+        entry.requests.set(forwarded, { connection, id: record.id });
+        entry.link.send({ ...record, id: forwarded });
       } else {
         entry.link.send(record);
       }
@@ -850,6 +877,10 @@ export class Hub {
   private fromAgent(entry: AgentEntry, record: AgentRecord): void {
     if (record.type === "harness_hub") {
       this.agentConnection(entry)(record.frame as ClientFrame);
+      return;
+    } else if (record.type === "harness_log") {
+      // the agent's log: kept here, never sent on
+      this.telemetry.put(record.records as LogRecord[], { agent: entry.info.id, session: entry.info.sessionId });
       return;
     } else {
       // a record of the agent's own stream

@@ -8,6 +8,7 @@ import { join } from "node:path";
 import type { HubConnection } from "#client/connection.ts";
 import type { ActionId } from "#client/input/actions.ts";
 import { ClientModel } from "#client/model/client-model.ts";
+import { ClientLog } from "#client/model/client-log.ts";
 import { Workbench, type Screen } from "#client/workbench/workbench.ts";
 import type { ViewStateStore } from "#client/workbench/view-state.ts";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -22,9 +23,18 @@ export type TuiDriverOptions = {
   cwd: string;
   /** Where the window keeps its state: given, it is restored at the start (a TUI started again). */
   viewStore?: ViewStateStore;
+  /** The window's log, as the TUI keeps it: to its home hub (logs_put). */
+  log?: boolean;
 };
 
 export class TuiDriver {
+  private static readonly logs = new WeakMap<ClientModel, ClientLog>();
+
+  /** What the window logged goes to its hub now. */
+  async flushLog(): Promise<void> {
+    await TuiDriver.logs.get(this.client)?.flush();
+  }
+
   readonly terminal: VirtualTerminal;
   readonly client: ClientModel;
   readonly workbench: Workbench;
@@ -46,6 +56,18 @@ export class TuiDriver {
   static async start(open: () => Promise<HubConnection>, options: TuiDriverOptions): Promise<TuiDriver> {
     const terminal = new VirtualTerminal(options.columns ?? 140, options.rows ?? 40);
     const client = new ClientModel();
+    if (options.log === true) {
+      const log = new ClientLog({
+        source: "tui",
+        base: { client: "tui-driver" },
+        upload: () => (client.home !== undefined && client.connections.has(client.home) ? (records) => client.homeRequest("logs_put", { records }) : undefined),
+        level: () => "info",
+      });
+      client.log = log.logger;
+      TuiDriver.logs.set(client, log);
+    } else {
+      // no log
+    }
     const node = await client.addEndpoint(open, { home: true });
     const outside = { opened: [] as string[], copied: [] as string[] };
     const workbench = new Workbench(client, {

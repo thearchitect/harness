@@ -18,6 +18,8 @@ import { ensureTheme, createUiContext } from "./ui-context.ts";
 import { ComponentBridge } from "./component-bridge.ts";
 import { getTheme } from "./theme.ts";
 import { branchPage } from "#protocol/entries.ts";
+import type { Logger } from "#protocol/log.ts";
+import { logSessionEvent } from "./agent-log.ts";
 
 /** Entries of a claude subagent's transcript a snapshot or a page carries. */
 const CLAUDE_PAGE = 200;
@@ -34,6 +36,8 @@ export type HapServerOptions = {
   output: Output;
   /** A frame of the agent's own client connection to its hub. */
   onNodeFrame(frame: unknown): void;
+  /** The agent's log (agent-log.ts). */
+  log: Logger;
 };
 
 export class HapServer {
@@ -53,11 +57,14 @@ export class HapServer {
   /** harness_prompt requests in their order of arrival (each one taken before the next sets its mode). */
   private prompts: Promise<unknown> = Promise.resolve();
 
+  private readonly log: Logger;
+
   constructor(options: HapServerOptions) {
     this.runtime = options.runtime;
     this.controller = options.controller;
     this.hub = options.hub;
     this.harnessVersion = options.harnessVersion;
+    this.log = options.log;
     this.onNodeFrame = options.onNodeFrame;
     this.output = options.output;
     this.bridge = new ComponentBridge((event) => this.emit(event), getTheme);
@@ -104,7 +111,10 @@ export class HapServer {
     this.partialMessage = undefined;
     this.tools.clear();
     const session = this.session;
-    this.unsubscribe = session.subscribe((event) => this.onSessionEvent(event));
+    this.unsubscribe = session.subscribe((event) => {
+      logSessionEvent(this.log, event);
+      this.onSessionEvent(event);
+    });
     await session.bindExtensions({
       uiContext: createUiContext(this.hub, (event) => this.emit(event), getTheme, this.bridge),
       // harness always has the operator's interface: extensions draw for a terminal (the bridge)
@@ -235,10 +245,14 @@ export class HapServer {
         } else {
           // a well-formed request
         }
+        // the request by the id the client and the hub log it under; a prompt with its text
+        this.log.info("request", { req: request.id, type: request.type, ...(request.type === "harness_prompt" ? { text: request.text, mode: request.mode } : {}) });
         const data = await this.handleHarness(request);
         this.output({ type: "harness_response", id: request.id, ok: true, data });
       } catch (error) {
-        this.output({ type: "harness_response", id: request.id, ok: false, error: toProtocolError(error) });
+        const failure = toProtocolError(error);
+        this.log.warn("request_failed", { req: request.id, type: request.type, error: `${failure.code}: ${failure.message}` });
+        this.output({ type: "harness_response", id: request.id, ok: false, error: failure });
       }
     } else if (record.type === "harness_hub") {
       this.onNodeFrame(record.frame);
@@ -246,6 +260,7 @@ export class HapServer {
       this.bridge.setClients(Number(record.componentBridge ?? 0));
     } else {
       const command = record as unknown as RpcCommand;
+      this.log.info("command", { req: command.id, type: command.type, ...(command.type === "prompt" || command.type === "steer" || command.type === "follow_up" ? { text: (command as { message?: unknown }).message } : {}) });
       try {
         const response = await this.handlePi(command);
         if (response !== undefined) {

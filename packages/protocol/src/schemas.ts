@@ -113,7 +113,11 @@ export const OP_SCHEMAS: Record<HubOp, TSchema> = {
   ),
   workspace_tab_replace: Obj({ sessionId: Str(), next: Any("{ sessionId, sessionFile }") }, "A tab's session started anew in its place (its file was never written). → { revision, tabs }"),
   transcribe: Obj({ base64: Str("The recording"), mime: Str("Its type, e.g. audio/webm") }, "Speech to text on the hub with its user's OpenAI login (gpt-4o-transcribe). → { text }"),
-  logs_tail: Obj({ lines: Opt(Type.Integer({ minimum: 1, maximum: 2000 })) }, "The hub's event log, newest last. → { lines }"),
+  logs_tail: Obj({ lines: Opt(Type.Integer({ minimum: 1, maximum: 2000 })) }, "The last day's log of every source (the hub, its agents, the clients), merged by time, newest last, as lines. → { lines }"),
+  logs_put: Obj(
+    { records: Type.Array(Any("{ at, level, source: tui | app, event, … }"), { maxItems: 5000 }) },
+    "A client's log records, kept with the hub's under their source (the hub adds the connection and the device). → {}",
+  ),
   terminal_open: Obj(
     { session: Str("The session's id"), cwd: Str("Its directory"), cols: Int(), rows: Int() },
     "Shows a session's terminal to this client: a shell in its directory on this hub, started at the first show (and again after it exited); the stream follows as terminal_output events. → { screen } (its screen with history as ANSI)",

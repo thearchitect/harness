@@ -73,6 +73,7 @@ test("a flat home moves to its layout, with a backup; a second run does nothing"
   assert.deepEqual(JSON.parse(readFileSync(layout.remotes, "utf8")), [{ name: "fly", url: "wss://fly", token: "t" }]);
   assert.deepEqual(readdirSync(layout.hub).sort(), ["defaults.json", "devices.json", "sessions", "settings.json", "workspace.json"]);
   assert.ok(migration.notes.some((note) => /users\/ removed/.test(note)));
+  assert.ok(!existsSync(join(layout.log, "node-default.jsonl")), "the old event log goes");
 
   assert.equal(needsMigration(home), false);
   assert.deepEqual(migrateHome(home, false), { moved: [], notes: [] });

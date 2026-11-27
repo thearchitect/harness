@@ -7,6 +7,7 @@
 import type { InteractionCloseReason, InteractionRequest } from "./interactions.ts";
 import type { HarnessState, RunMode, Variant } from "./state.ts";
 import type { ProtocolError } from "./errors.ts";
+import type { LogRecord } from "./log.ts";
 
 /** A pi RPC command, response, session event or extension_ui record. */
 export type PiRecord = { type: string; id?: string; [field: string]: unknown };
@@ -164,7 +165,10 @@ export type HapEvent =
  */
 export type HubToAgentRecord = { type: "harness_clients"; componentBridge: number } | { type: "harness_hub"; frame: unknown };
 
-/** Agent → node: a frame of the agent's own client connection to its node (node.ts ClientFrame). */
-export type AgentToHubRecord = { type: "harness_hub"; frame: unknown };
+/**
+ * Agent → hub: a frame of the agent's own client connection to its hub (hub.ts ClientFrame); the
+ * agent's log records (protocol/log.ts), which the hub keeps under `agent` (never sent on).
+ */
+export type AgentToHubRecord = { type: "harness_hub"; frame: unknown } | { type: "harness_log"; records: LogRecord[] };
 
 export type HapRecord = HapRequest | HapEvent | AgentToHubRecord | HubToAgentRecord | PiRecord;

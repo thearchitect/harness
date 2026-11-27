@@ -10,6 +10,8 @@ import { parseArgs } from "node:util";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
 import type { HapEvent } from "#protocol/hap.ts";
 import { layoutOf } from "#protocol/layout.ts";
+import { errorFields } from "#protocol/log.ts";
+import { agentLogger } from "./agent-log.ts";
 import type { HarnessState, SubagentLaunch } from "#protocol/state.ts";
 import { HubChildren } from "./children.ts";
 import { createHarnessExtension } from "#extension/index.ts";
@@ -47,6 +49,16 @@ async function main(): Promise<void> {
     }
   };
 
+  const log = agentLogger(write);
+  // an error nothing caught ends the agent as before; the log has it first, with its stack
+  const fatal = (event: string, error: unknown): void => {
+    log.error(event, errorFields(error));
+    process.stderr.write(`[harness-agent] ${error instanceof Error ? (error.stack ?? error.message) : String(error)}\n`);
+    process.exit(1);
+  };
+  process.on("uncaughtException", (error) => fatal("uncaught", error));
+  process.on("unhandledRejection", (reason) => fatal("unhandled_rejection", reason));
+
   let server: HapServer | undefined;
   const pending: HapEvent[] = [];
   const emit = (event: HapEvent): void => {
@@ -57,7 +69,7 @@ async function main(): Promise<void> {
     }
   };
 
-  const hub = new InteractionHub(emit);
+  const hub = new InteractionHub(emit, log);
   const children = new HubChildren((frame) => write({ type: "harness_hub", frame }));
   const { factory, controller } = createHarnessExtension({
     interactions: hub,
@@ -82,9 +94,21 @@ async function main(): Promise<void> {
   });
   for (const diagnostic of runtime.takeUnreportedDiagnostics()) {
     process.stderr.write(`[harness-agent] ${diagnostic.type}: ${diagnostic.message}\n`);
+    log.log(diagnostic.type === "error" ? "error" : "warn", "diagnostic", { kind: diagnostic.type, message: diagnostic.message });
   }
+  const session = runtime.session;
+  log.info("agent_start", {
+    harness: bundle.version,
+    node: process.version,
+    pid: process.pid,
+    cwd,
+    sessionFile: session.sessionFile,
+    sessionId: session.sessionId,
+    model: session.model !== undefined ? `${session.model.provider}/${session.model.id}` : undefined,
+    extensions: bundle.extensionPaths.length,
+  });
 
-  server = new HapServer({ runtime, controller, hub, harnessVersion: bundle.version, output: write, onNodeFrame: (frame) => children.receive(frame) });
+  server = new HapServer({ runtime, controller, hub, harnessVersion: bundle.version, output: write, onNodeFrame: (frame) => children.receive(frame), log });
   await server.start();
   for (const event of pending.splice(0)) {
     server.emit(event);

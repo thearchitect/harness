@@ -31,8 +31,11 @@ import {
   saveFile,
   showAttention,
   viewStore,
+  logStore,
   VOICE_SUPPORTED,
 } from "./browser";
+import { ClientLog } from "#client/model/client-log.ts";
+import { isLogLevel, LOG_RETENTION_DAYS } from "#protocol/log.ts";
 import { appSettings } from "./settings.ts";
 import { loadFonts } from "./theme/fonts";
 import { charWidth, DEFAULT_THEME, ThemeContext, zoneOf, type Colors, type Theme } from "./theme/theme.tsx";
@@ -44,10 +47,24 @@ import { Shell, type DeviceActions } from "./ui/Shell.tsx";
 import { focusList } from "./ui/web-events";
 
 /** `themeNames`: the themes the home hub has (theme_get), for /settings. */
-type Connected = { client: ClientModel; workbench: Workbench; endpoint: Endpoint; themeNames: string[] };
+type Connected = { client: ClientModel; workbench: Workbench; endpoint: Endpoint; themeNames: string[]; log: ClientLog };
 
 async function connect(endpoint: Endpoint): Promise<Connected> {
   const client = new ClientModel();
+  // the app's log: kept on this device (IndexedDB, a phone's files) and on its hub
+  const store = logStore();
+  const log = new ClientLog({
+    source: "app",
+    base: { client: `app-${Platform.OS}-${Math.random().toString(36).slice(2, 8)}`, platform: Platform.OS },
+    local: { store, mirror: true },
+    upload: () => (client.home !== undefined && client.connections.has(client.home) ? (records) => client.homeRequest("logs_put", { records }) : undefined),
+    level: () => {
+      const level = client.settings["log.level"];
+      return isLogLevel(level) ? level : "info";
+    },
+  });
+  client.log = log.logger;
+  client.log.info("start", { url: endpoint.url, platform: Platform.OS });
   // extensions' components show here as a remote terminal (ComponentView)
   await client.addEndpoint(async () => HubConnection.open(await wsTransport(endpoint.url), "app", endpoint.token, ["component-bridge"]), { home: true });
   const themeNames: string[] = [];
@@ -72,7 +89,10 @@ async function connect(endpoint: Endpoint): Promise<Connected> {
   } else {
     // the window's tabs: the active one shows
   }
-  return { client, workbench, endpoint, themeNames };
+  // days of this device's log past the retention go
+  const days = client.settings["log.retentionDays"];
+  void Promise.resolve(store.sweep(typeof days === "number" && days > 0 ? days : LOG_RETENTION_DAYS)).catch(() => undefined);
+  return { client, workbench, endpoint, themeNames, log };
 }
 
 /** The user's theme and fonts from the home node: theme_get for the colors, ui.font.* for the zones. */
@@ -236,7 +256,7 @@ function WorkbenchApp() {
 
   // the page or the app going to the background: what is typed goes to the hub now
   useEffect(() => {
-    const subscription = AppState.addEventListener("change", (state) => (state !== "active" ? void connected?.workbench.flushDrafts() : undefined));
+    const subscription = AppState.addEventListener("change", (state) => (state !== "active" ? void Promise.all([connected?.workbench.flushDrafts(), connected?.log.flush()]) : undefined));
     return () => subscription.remove();
   }, [connected]);
 

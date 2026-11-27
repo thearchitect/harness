@@ -5,6 +5,7 @@
 
 import type { ProtocolError } from "./errors.ts";
 import type { HapRecord, SnapshotData } from "./hap.ts";
+import type { LogRecord } from "./log.ts";
 import type { RunMode, SubagentLaunch } from "./state.ts";
 
 /** How much of an agent a client follows: the whole stream, or its summary only. */
@@ -111,6 +112,8 @@ export type HubOps = {
   terminal_resize: { args: { session: string; cols: number; rows: number }; result: Record<string, never> };
   /** Hides it from this client: the shell runs on. */
   terminal_detach: { args: { session: string }; result: Record<string, never> };
+  /** A client's log records (protocol/log.ts), kept with the hub's under their source (tui, app). */
+  logs_put: { args: { records: LogRecord[] }; result: Record<string, never> };
   /**
    * Writes a session's draft in an editor in a terminal `prompt:<session>` (the terminal_* operations
    * and events as a session's terminal); open already, it shows as it is. Its exit brings
@@ -199,6 +202,7 @@ export const HUB_OPS: readonly HubOp[] = [
   "terminal_resize",
   "terminal_detach",
   "editor_open",
+  "logs_put",
   "hub_status",
   "hub_network_set",
   "device_pair",

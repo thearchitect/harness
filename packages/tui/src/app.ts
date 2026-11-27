@@ -1092,6 +1092,12 @@ export class App {
   }
 
   private onKey(data: string): { consume: boolean } | undefined {
+    if (this.client.log.debugging) {
+      // the bytes as the terminal sent them: the next key that misbehaves shows in the log
+      this.client.log.debug("key", { bytes: JSON.stringify(data), name: keyNameOf(data), release: isKeyRelease(data) });
+    } else {
+      // keys are logged at debug only
+    }
     if (isKeyRelease(data)) {
       // the terminal reports releases too (the kitty protocol): only presses act; pi-tui drops the
       // releases before the focused component itself

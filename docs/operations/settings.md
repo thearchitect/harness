@@ -25,7 +25,7 @@
     hub.sock            #   the hub's socket
     hub.lock            #   who holds the hub (a window's or the service's pid)
     locks/              #   one agent per session
-  log/                  # hub events and agents' output
+  log/<source>/<day>.jsonl  # the log: hub, agent, tui, app (hub.md); log/agents/<id>.stderr
 ```
 
 A home of the flat layout of earlier versions is moved to this one when harness first starts on
@@ -75,6 +75,8 @@ Shared by every client of the user: the hub's `ui-settings.json`. Clients read t
 | `ui.theme` | The theme (pi's built-in name or a file in `themes/`). |
 | `ui.font.chat`, `ui.font.chrome` | The app's fonts of its two zones: `{ family, size }`, family `jetbrains-mono`, `iosevka-term`, `terminus` or `system` ([app.md](app.md)). |
 | `ui.web.panes` | The app's strip width: `{ left }` in pixels. |
+| `log.level` | What the log writes from: `error`, `warn`, `info` (default), `debug` (also streaming events' types and the TUI's raw key bytes) ([hub.md](hub.md#logs)). |
+| `log.retentionDays` | Days the log is kept, on the hub and on devices (default 3). |
 | `ui.scrollOff.vertical`, `ui.scrollOff.horizontal` | How far a field's cursor stays from its edges while the text goes on: lines in the chat's field (2), characters in single-line fields (10); at the text's ends the cursor comes to the edge. |
 | `ui.web.notifications` | The app's notifications when a session waits (default off). |
 | `hub.network` | The hub's network access: `{ enabled, listen, proxy, url }` (default off, `127.0.0.1:8790`); the `/hub` dialog changes it, a service's configuration overrides it ([hub.md](hub.md)). |

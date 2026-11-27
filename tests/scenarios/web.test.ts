@@ -9,6 +9,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { test } from "node:test";
 import { WebDriver } from "#testkit/drivers/web.ts";
+import { readLogs } from "#hub/log-files.ts";
 import { defineScenario, runScenario } from "#testkit/scenario/scenario.ts";
 
 const unavailable = WebDriver.available();
@@ -427,6 +428,32 @@ export const scenario = defineScenario({
         await web.page.reload();
         await web.waitForScreen((screen) => screen.tabs.length === count && screen.active === 0);
         await web.page.waitForFunction(() => (document.querySelector('[aria-label="Message"]') as HTMLTextAreaElement | null)?.value === "draft of the first");
+      },
+    },
+    {
+      name: "the app's log reaches its hub (with the device's own copy in IndexedDB)",
+      async run({ stand, clients: { web } }) {
+        for (let tries = 0; ; tries += 1) {
+          const records = readLogs(stand.layout.log, { sources: ["app"] });
+          if (records.some((record) => record.event === "res" && typeof record.req === "string") && records.some((record) => record.event === "action")) {
+            break; // its requests and its actions
+          } else {
+            assert.ok(tries < 100, `the app's log did not reach the hub: ${records.length} records`);
+            await web.page.waitForTimeout(100);
+          }
+        }
+        const kept = await web.page.evaluate(
+          () =>
+            new Promise<number>((resolve) => {
+              const open = indexedDB.open("harness-log");
+              open.onsuccess = () => {
+                const count = open.result.transaction("records").objectStore("records").count();
+                count.onsuccess = () => resolve(count.result);
+              };
+              open.onerror = () => resolve(-1);
+            }),
+        );
+        assert.ok(kept > 0, `the device keeps its own: ${kept}`);
       },
     },
   ],

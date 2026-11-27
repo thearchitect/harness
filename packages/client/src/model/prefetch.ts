@@ -28,6 +28,8 @@ export class Prefetch {
   private readonly now: () => number;
   private running = false;
   private again = false;
+  /** Sessions this pass loaded (for the log). */
+  private loaded = 0;
   private listedAt = 0;
   private stopped = false;
 
@@ -45,9 +47,13 @@ export class Prefetch {
       this.again = true;
     } else {
       this.running = true;
+      const started = this.now();
       void this.pass()
-        .catch(() => undefined) // a node gone meanwhile: the next pass tries again
+        .then(() => this.client.log.info("prefetch_pass", { ms: this.now() - started, sessions: this.loaded }))
+        // a hub gone meanwhile: the next pass tries again
+        .catch((error: unknown) => this.client.log.warn("prefetch_pass", { ms: this.now() - started, error: error instanceof Error ? error.message : String(error) }))
         .finally(() => {
+          this.loaded = 0;
           this.running = false;
           if (this.again) {
             this.again = false;
@@ -99,11 +105,13 @@ export class Prefetch {
     if (this.stopped || !this.client.connections.has(target.hub) || this.client.offline.has(target.hub)) {
       return; // gone, or not reachable now
     } else if (target.agent !== undefined) {
+      this.loaded += 1;
       await this.client.follow(target.hub, target.agent);
       await this.client.loadAll(target.hub, target.agent);
     } else if (target.file !== undefined) {
       const known = this.client.stored.get(storedKey(target.hub, target.file));
       if (known === undefined || this.now() - known.checked >= PREFETCH_RECHECK_MS) {
+        this.loaded += 1;
         await this.client.readStored(target.hub, target.file, this.now());
       } else {
         // read a moment ago

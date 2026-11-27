@@ -1,11 +1,12 @@
-// The hub's event log: ~/.harness/log/node-<name>.jsonl, one JSON object per line — what happened
-// (connections, agents starting and exiting, refusals), never message texts, prompts or secrets.
-// For operators and test reports; it rotates at 10 MB (the previous file keeps the suffix .1).
+// The hub's log (protocol/log.ts, log-files.ts): ~/.harness/log/hub/<day>.jsonl — what happened
+// (connections, every operation with its time and error, agents starting and exiting, refusals,
+// pairing, the network, terminals) with the ids that tie a request to the client's and the agent's
+// records. The hub also keeps the logs its clients send (logs_put) and removes days older than
+// `log.retentionDays`, at its start and every hour.
 
-import { appendFileSync, mkdirSync, readFileSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
-
-const ROTATE_BYTES = 10 * 1024 * 1024;
+import { LOG_RETENTION_DAYS, type LogLevel, type LogRecord } from "#protocol/log.ts";
+import { formatLogRecord, LogFiles, readLogs, sweepLogs } from "./log-files.ts";
 
 export type TelemetryEvent =
   | { event: "hub_start"; network: boolean }
@@ -14,7 +15,9 @@ export type TelemetryEvent =
   | { event: "connect"; connection: string; client: string; device?: string }
   | { event: "disconnect"; connection: string }
   | { event: "refused"; connection: string; code: string }
-  | { event: "agent_start"; agent: string; session: string; cwd: string }
+  | { event: "op"; connection: string; req: string; op: string; ms: number; args?: unknown; error?: string }
+  | { event: "hap"; connection: string; agent: string; req: string; type: string; forwarded?: string }
+  | { event: "agent_start"; agent: string; session: string; cwd: string; requested?: string }
   | { event: "agent_exit"; agent: string; code: number | null; error?: string }
   | { event: "agent_unload"; agent: string }
   | { event: "terminal_started"; session: string; cwd: string; pid: number }
@@ -31,39 +34,72 @@ export type TelemetryEvent =
   | { event: "device_renamed"; device: string; to: string }
   | { event: "device_revoked"; device: string }
   | { event: "idle_exit"; minutes: number }
-  | { event: "attachments_removed"; count: number };
+  | { event: "attachments_removed"; count: number }
+  | { event: "logs_removed"; count: number };
+
+/** Events that tell of something going wrong. */
+const WARN = new Set(["refused", "network_problem", "pairing_failed", "device_refused"]);
+
+/** Strings longer than this are logged by their length (a file's base64, a screen). */
+const LONG = 4000;
+
+/** Arguments as the log keeps them: long strings by their length. */
+export function summarize(value: unknown): unknown {
+  if (typeof value === "string") {
+    return value.length > LONG ? `<${value.length} chars>` : value;
+  } else if (Array.isArray(value)) {
+    return value.map(summarize);
+  } else if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, summarize(inner)]));
+  } else {
+    return value;
+  }
+}
 
 export class Telemetry {
-  private readonly path: string;
+  readonly root: string;
+  private readonly files: LogFiles;
   private readonly now: () => number;
+  private readonly retention: () => number;
+  /** The log's level now (`log.level`): agents start with it. */
+  readonly level: () => LogLevel;
 
-  constructor(dataDir: string, node: string, now: () => number) {
-    const dir = join(dataDir, "log");
-    mkdirSync(dir, { recursive: true });
-    this.path = join(dir, `node-${node}.jsonl`);
+  constructor(dataDir: string, now: () => number, settings: { level: () => LogLevel; retentionDays: () => number } = { level: () => "info", retentionDays: () => LOG_RETENTION_DAYS }) {
+    this.root = join(dataDir, "log");
     this.now = now;
-  }
-
-  /** The last `count` events, oldest first. */
-  tail(count: number): string[] {
-    try {
-      const lines = readFileSync(this.path, "utf8").split("\n").filter((line) => line !== "");
-      return lines.slice(-count);
-    } catch {
-      return []; // nothing logged yet
-    }
+    this.retention = settings.retentionDays;
+    this.level = settings.level;
+    this.files = new LogFiles(this.root, "hub", {}, { now, level: settings.level });
   }
 
   log(event: TelemetryEvent): void {
-    try {
-      if ((statSync(this.path, { throwIfNoEntry: false })?.size ?? 0) > ROTATE_BYTES) {
-        renameSync(this.path, `${this.path}.1`);
-      } else {
-        // small enough
-      }
-      appendFileSync(this.path, `${JSON.stringify({ at: new Date(this.now()).toISOString(), ...event })}\n`);
-    } catch {
-      // the log is best effort: a full disk must not stop the hub
+    const { event: name, ...fields } = event;
+    const failed = (name === "op" && "error" in fields && fields.error !== undefined) || (name === "agent_exit" && "error" in fields && fields.error !== undefined);
+    this.files.log(failed ? "error" : WARN.has(name) ? "warn" : "info", name, fields);
+  }
+
+  /** A debug record (the level decides whether it is written). */
+  debug(event: string, fields: Record<string, unknown>): void {
+    this.files.log("debug", event, fields);
+  }
+
+  /** Records a client sent (logs_put), with who sent them. */
+  put(records: LogRecord[], from: Record<string, unknown>): void {
+    this.files.append(records.map((record) => ({ ...record, ...from })));
+  }
+
+  /** The last `count` records of every source, oldest first, as lines for people. */
+  tail(count: number): string[] {
+    return readLogs(this.root, { last: count, since: this.now() - 24 * 3600 * 1000 }).map(formatLogRecord);
+  }
+
+  /** Days older than the retention go. */
+  sweep(): void {
+    const removed = sweepLogs(this.root, this.retention(), this.now());
+    if (removed.length > 0) {
+      this.log({ event: "logs_removed", count: removed.length });
+    } else {
+      // nothing old
     }
   }
 }

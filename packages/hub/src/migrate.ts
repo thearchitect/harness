@@ -167,6 +167,11 @@ function migrateHub(home: string, layout: Layout, migration: Migration): void {
       // none
     }
   }
+  // the old event log (log/node-<name>.jsonl): the log is a file a day per source now, kept 3 days
+  for (const file of existsSync(layout.log) ? readdirSync(layout.log).filter((name) => /^node-.*\.jsonl(\.1)?$/.test(name)) : []) {
+    rmSync(join(layout.log, file), { force: true });
+    migration.notes.push(`log/${file} removed: the log is ~/.harness/log/<source>/<day>.jsonl now (harness logs)`);
+  }
   if (existsSync(join(home, "users"))) {
     rmSync(join(home, "users"), { recursive: true, force: true });
     migration.notes.push("users/ removed: a hub is one user's; other users run hubs of their own");

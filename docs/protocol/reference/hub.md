@@ -255,11 +255,19 @@ Speech to text on the hub with its user's OpenAI login (gpt-4o-transcribe). → 
 
 ### `logs_tail`
 
-The hub's event log, newest last. → { lines }
+The last day's log of every source (the hub, its agents, the clients), merged by time, newest last, as lines. → { lines }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `lines` | integer |  |  |
+
+### `logs_put`
+
+A client's log records, kept with the hub's under their source (the hub adds the connection and the device). → {}
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `records` | any[] | yes |  |
 
 ### `terminal_open`
 

@@ -6,15 +6,18 @@ import { randomUUID } from "node:crypto";
 import type { InteractionCloseReason, InteractionKind, InteractionMap, InteractionRequest } from "#protocol/interactions.ts";
 import type { HapEvent } from "#protocol/hap.ts";
 import type { AskOptions, Interactions } from "#extension/host.ts";
+import type { Logger } from "#protocol/log.ts";
 
 type Pending = { request: InteractionRequest; resolve(answer: unknown): void };
 
 export class InteractionHub implements Interactions {
   private readonly pending = new Map<string, Pending>();
   private readonly emit: (event: HapEvent) => void;
+  private readonly log: Logger | undefined;
 
-  constructor(emit: (event: HapEvent) => void) {
+  constructor(emit: (event: HapEvent) => void, log?: Logger) {
     this.emit = emit;
+    this.log = log;
   }
 
   ask<K extends InteractionKind>(kind: K, payload: InteractionMap[K]["payload"], options?: AskOptions): Promise<InteractionMap[K]["answer"] | undefined> {
@@ -32,6 +35,7 @@ export class InteractionHub implements Interactions {
             resolve(answer as InteractionMap[K]["answer"] | undefined);
           },
         });
+        this.log?.info("question", { interaction: request.id, kind, payload });
         this.emit({ type: "harness_interaction_request", request });
       });
     }
@@ -39,7 +43,11 @@ export class InteractionHub implements Interactions {
 
   /** A client's answer; false when the interaction is no longer open (another client answered first). */
   answer(interactionId: string, answer: unknown): boolean {
-    if (this.pending.has(interactionId)) {
+    const pending = this.pending.get(interactionId);
+    if (pending !== undefined) {
+      // a secret's value is logged under the name the log masks
+      const logged = pending.request.kind === "secret" && typeof answer === "object" && answer !== null && "value" in answer ? { secretValue: (answer as { value: unknown }).value } : answer;
+      this.log?.info("answer", { interaction: interactionId, kind: pending.request.kind, answer: logged });
       this.close(interactionId, "answered", answer);
       return true;
     } else {
