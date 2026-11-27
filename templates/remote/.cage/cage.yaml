@@ -30,7 +30,7 @@ envs:
   ci-deploy:
     files: [ops:fly.env]
     recipients: [actions-ci]
-  # alice's node and agents: her API keys (the machine identity decrypts them at boot).
+  # alice's hub and its agents: her API keys (the machine identity decrypts them at boot).
   user-alice:
     files: [alice:llm.env]
     recipients: [alice, fly-machine]

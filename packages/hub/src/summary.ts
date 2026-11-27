@@ -1,7 +1,7 @@
-// What a node tells every client about an agent without its whole stream: status, mode, title,
+// What a hub tells every client about an agent without its whole stream: status, mode, title,
 // open interactions, tasks, the outcome of the last run. Computed from the agent's HAP records.
 
-import type { AgentSummary } from "#protocol/node.ts";
+import type { AgentSummary } from "#protocol/hub.ts";
 import type { HarnessState } from "#protocol/state.ts";
 import type { SessionView } from "#protocol/hap.ts";
 

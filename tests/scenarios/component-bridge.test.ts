@@ -83,7 +83,7 @@ export const rawScenario = defineScenario({
       name: "the component waits for a client that can show it, and says so",
       async run({ stand, clients: { raw } }) {
         const { agent } = await raw.api.request("agent_start", { cwd: stand.project });
-        const model = await raw.client.follow(raw.node, agent.id);
+        const model = await raw.client.follow(raw.hub, agent.id);
         await raw.api.call(agent.id, { type: "harness_prompt", text: "/probe-component" });
         await new Promise<void>((resolve) => {
           const check = (): void => {

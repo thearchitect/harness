@@ -1,13 +1,13 @@
 // `harness web-app`'s server (plan 10.6): the app's web build and its /client endpoint on
 // 127.0.0.1, for one window on this machine. The page proves itself with the token in its address's
-// fragment (never sent in a request line); each of its connections is relayed to this user's node —
-// the node running under its socket, or one inside this process — as a local client.
+// fragment (never sent in a request line); each of its connections is relayed to this user's hub —
+// the hub running under its socket, or one inside this process — as a local client.
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { WebSocketServer } from "ws";
 import { decodeRecord, encodeRecord } from "#protocol/framing.ts";
-import type { ClientFrame, NodeFrame, Transport } from "#protocol/node.ts";
+import type { ClientFrame, HubFrame, Transport } from "#protocol/hub.ts";
 import { serveStatic } from "./endpoints/static.ts";
 
 export type WebApp = { url: string; server: Server; close(): void };
@@ -44,7 +44,7 @@ export async function startWebApp(options: { staticDir: string; open: () => Prom
               .open()
               .then((transport) => {
                 node = transport;
-                transport.onFrame((frame: NodeFrame) => page.send(encodeRecord(frame)));
+                transport.onFrame((frame: HubFrame) => page.send(encodeRecord(frame)));
                 transport.onClose(() => page.close());
                 transport.send({ ...hello, token: undefined });
                 for (const frame of early.splice(0)) {
@@ -58,7 +58,7 @@ export async function startWebApp(options: { staticDir: string; open: () => Prom
             page.on("message", (more) => {
               const frame = decodeRecord(String(more));
               if (!frame.ok) {
-                // malformed: the node would refuse it too
+                // malformed: the hub would refuse it too
               } else if (node === undefined) {
                 early.push(frame.record as ClientFrame);
               } else {

@@ -1,4 +1,4 @@
-// Several clients of one node at the same time: two opening one session get one agent; two changing
+// Several clients of one hub at the same time: two opening one session get one agent; two changing
 // the tab set keep both changes; two messages with their own modes arriving together leave the run
 // in the mode of the one it started with (the other one steers it).
 

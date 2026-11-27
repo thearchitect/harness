@@ -1,7 +1,7 @@
 # Reading pi's documents in harness
 
 pi's documents (`../pi/coding-agent/README.md`, `../pi/coding-agent/docs/`) describe pi as a
-standalone program. In harness the same SDK runs inside agents of a node, so some paths, commands
+standalone program. In harness the same SDK runs inside agents of a hub, so some paths, commands
 and APIs differ. Read pi's documents with this table; where a row says "the same", pi's text holds
 as written.
 
@@ -19,7 +19,7 @@ as written.
 | `~/.pi/agent/trust.json` | `~/.harness/trust.json` |
 | `~/.pi/agent/AGENTS.md` | `~/.harness/AGENTS.md` |
 | `~/.pi/agent/tmp/` | `~/.harness/tmp/` |
-| — | `~/.harness/harness.json` (defaults of new sessions), `nodes/`, `sockets/`, `locks/`, `log/`, `hub/`, `users/`, `remotes.json` ([operations/settings.md](operations/settings.md)) |
+| — | `~/.harness/harness.json` (defaults of new sessions), `nodes/`, `sockets/`, `locks/`, `log/`, `hub/`, `remotes.json` ([operations/settings.md](operations/settings.md)) |
 
 ## Commands
 
@@ -30,7 +30,7 @@ as written.
 | `pi --continue`, `pi -c` | `harness -c` |
 | `pi --resume`, `pi -r` | Ctrl+O (or `/open`) in the TUI |
 | `pi --model`, `pi --list-models` | the model list in the TUI (Ctrl+L); references without versions: [extending/models.md](extending/models.md) |
-| `pi --mode`, `pi --print`, `pi -p` | no headless mode of its own: clients speak the node protocol ([protocol/node.md](protocol/node.md)) |
+| `pi --mode`, `pi --print`, `pi -p` | no headless mode of its own: clients speak the hub protocol ([protocol/hub.md](protocol/hub.md)) |
 | `pi --tools`, `pi --no-builtin-tools`, `pi -e`, `pi --extension`, `pi -ne`, `pi --append-system-prompt` | not flags: agents load the bundled extensions and packages (the bundle's manifest) and pi's extension discovery; the system prompt is harness's |
 | `pi --use-theme` | `ui.theme` in the UI settings |
 | `pi --help`, `pi --version` | `harness --help`, `harness --version` |
@@ -42,7 +42,7 @@ as written.
 | `ctx.ui.select/confirm/input/editor` | the same calls; they become `pi-dialog` interactions every client can answer |
 | `ctx.mode` | `"tui"`: harness always has the operator's interface, so extensions draw for a terminal (pi's `/mcp` opens its manager) |
 | `ctx.ui.custom()`, component widgets | run in the agent; the TUI and the app show them through the component bridge — the app as a remote terminal (ANSI lines in a monospace font, keys as terminal bytes, pasted text, clicks at a cell; a key strip on phones). Without such a client the component waits and the status line says so. harness's own code uses typed interactions instead ([extending/tools.md](extending/tools.md)) |
-| an MCP server's sign-in link (`openUrl`) | opened by the clients where they run (the TUI's machine, the app's browser), not on the node; the link is in the status line too |
+| an MCP server's sign-in link (`openUrl`) | opened by the clients where they run (the TUI's machine, the app's browser), not on the hub; the link is in the status line too |
 | `ctx.ui.setFooter`, `setHeader`, `setEditorComponent`, `onTerminalInput`, working indicators, `setTheme` | no effect: the footer, editor, indicators and themes belong to the client |
 | `InteractiveMode` | the TUI (`packages/tui`) |
 | RPC mode (`rpc.md`, `rpc-commands.md`, `rpc-extension-ui.md`) | HAP: pi's RPC records pass unchanged, harness adds `harness_*` records ([protocol/hap.md](protocol/hap.md)) |

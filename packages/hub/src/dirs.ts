@@ -1,10 +1,10 @@
-// The directories of the node's machine, for choosing where a new session starts (dirs_list): the
+// The directories of the hub's machine, for choosing where a new session starts (dirs_list): the
 // directories in one directory by name, each saying whether it holds directories itself — read up
 // to its first directory, so a big directory costs no more than a small one.
 
 import { opendir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { DirItem } from "#protocol/node.ts";
+import type { DirItem } from "#protocol/hub.ts";
 
 async function isDirectory(path: string, entry: { isDirectory(): boolean; isSymbolicLink(): boolean }): Promise<boolean> {
   if (entry.isDirectory()) {

@@ -1,6 +1,6 @@
 // What a browser adds to the shared screen (plan 10.1, web details): the page's title and icon carry
 // the number of sessions that wait for the operator; the address names the active session
-// (`#/<node>/<session>`) so it can be bookmarked and back/forward move between sessions; files
+// (`#/<hub>/<session>`) so it can be bookmarked and back/forward move between sessions; files
 // dropped on the editor go to the session's machine and into the message as `@path`.
 
 import { windowState, type ViewStateStore } from "#client/workbench/view-state.ts";
@@ -82,7 +82,7 @@ async function base64Of(blob: Blob): Promise<string> {
   return btoa(binary);
 }
 
-/** A file from the session's node, saved by the browser. */
+/** A file from the session's hub, saved by the browser. */
 export function saveFile(name: string, base64: string): void {
   const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
   const url = URL.createObjectURL(new Blob([bytes]));

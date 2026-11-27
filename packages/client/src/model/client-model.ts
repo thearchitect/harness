@@ -3,8 +3,8 @@
 // recently visited ones; the rest at summary level). Isomorphic: no Node API.
 
 import { SNAPSHOT_ENTRIES, type HapRecord, type SnapshotData } from "#protocol/hap.ts";
-import type { AgentInfo, AgentSummary, NodeEvent, NodeInfo, NodeOp, NodeOps, SessionListItem } from "#protocol/node.ts";
-import { RequestError, type NodeConnection } from "../connection.ts";
+import type { AgentInfo, AgentSummary, HubEvent, HubOp, HubOps, SessionListItem } from "#protocol/hub.ts";
+import { RequestError, type HubConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
 import { TerminalModel } from "./terminal-model.ts";
 import { systemClock, type Clock } from "#protocol/clock.ts";
@@ -13,29 +13,26 @@ import { settingRevision } from "#protocol/settings.ts";
 /** How often a change of a setting is made again after another client's change came first. */
 const UPDATE_ATTEMPTS = 8;
 
-/** One node as the client reaches it: its own connection, or a hub's connection routing to it. */
-export class NodeApi {
-  readonly node: string;
-  readonly connection: NodeConnection;
-  /** Frames name the node only when a hub routes them. */
-  private readonly target: string | undefined;
+/** One hub as the client reaches it, by the name the client knows it by. */
+export class HubApi {
+  readonly hub: string;
+  readonly connection: HubConnection;
 
-  constructor(node: string, connection: NodeConnection, routed: boolean) {
-    this.node = node;
+  constructor(node: string, connection: HubConnection) {
+    this.hub = node;
     this.connection = connection;
-    this.target = routed ? node : undefined;
   }
 
-  request<K extends NodeOp>(op: K, args: NodeOps[K]["args"]): Promise<NodeOps[K]["result"]> {
-    return this.connection.request(op, args, this.target);
+  request<K extends HubOp>(op: K, args: HubOps[K]["args"]): Promise<HubOps[K]["result"]> {
+    return this.connection.request(op, args);
   }
 
   call<T = unknown>(agent: string, record: { type: string; [key: string]: unknown }): Promise<T> {
-    return this.connection.call<T>(agent, record, this.target);
+    return this.connection.call<T>(agent, record);
   }
 
   tell(agent: string, record: { type: string; [key: string]: unknown }): void {
-    this.connection.tell(agent, record, this.target);
+    this.connection.tell(agent, record);
   }
 }
 
@@ -54,13 +51,11 @@ export function storedKey(node: string, file: string): string {
 }
 
 export class ClientModel {
-  /** Every node this client reaches, by name. */
-  readonly connections = new Map<string, NodeApi>();
-  /** The node whose settings this client uses (the local node, or the hub it logged into). */
+  /** Every hub this client reaches, by name. */
+  readonly connections = new Map<string, HubApi>();
+  /** The hub whose settings this client uses (the local one). */
   home: string | undefined;
-  private homeConnection: NodeConnection | undefined;
-  /** Nodes known through hubs, online or not. */
-  readonly nodes = new Map<string, NodeInfo>();
+  private homeConnection: HubConnection | undefined;
   readonly agents = new Map<AgentKey, AgentInfo>();
   readonly full = new Map<AgentKey, AgentModel>();
   /** Most recently used first; the head is the active one. */
@@ -68,7 +63,7 @@ export class ClientModel {
   settings: Record<string, unknown> = {};
   readonly offline = new Map<string, string>();
   private readonly listeners = new Set<() => void>();
-  private readonly endpoints = new Set<NodeConnection>();
+  private readonly endpoints = new Set<HubConnection>();
   private disposed = false;
 
   onChange(listener: () => void): () => void {
@@ -82,53 +77,40 @@ export class ClientModel {
     }
   }
 
-  /**
-   * Adds a connection: to a node, or to a hub and every node it routes to for this user. The
-   * home connection's settings are the client's (the local node's, or the hub user's).
-   */
-  async addConnection(connection: NodeConnection, options: { home: boolean }): Promise<string> {
-    const entry = connection.welcome?.node ?? "node";
+  /** Adds a connection to a hub. The home connection's settings are the client's. */
+  async addConnection(connection: HubConnection, options: { home: boolean }): Promise<string> {
+    const name = connection.welcome?.hub ?? "node";
     if (options.home) {
-      this.home = entry;
+      this.home = name;
       this.homeConnection = connection;
     } else {
-      // a remote node or hub besides the home one
+      // another machine's hub besides the home one
     }
-    connection.onEvent((from, event) => this.onEvent(from, event, connection));
-    connection.onHap((from, agent, record) => this.onHap(from, agent, record));
+    connection.onEvent((event) => this.onEvent(name, event));
+    connection.onHap((agent, record) => this.onHap(name, agent, record));
     connection.onClose((reason) => {
-      for (const [name, api] of [...this.connections]) {
-        if (api.connection === connection) {
-          this.dropNode(name, reason);
-        } else {
-          // reached through another connection
-        }
+      if (this.connections.get(name)?.connection === connection) {
+        this.dropNode(name, reason);
+      } else {
+        // replaced by a newer connection meanwhile
       }
       this.changed();
     });
-    const { nodes } = await connection.request("nodes_list", {});
-    for (const info of nodes) {
-      this.nodes.set(info.name, info);
-      if (info.online) {
-        await this.addNode(new NodeApi(info.name, connection, info.name !== entry));
-      } else {
-        this.offline.set(info.name, `node ${info.name} is offline`);
-      }
-    }
+    await this.addNode(new HubApi(name, connection));
     if (options.home) {
       this.settings = (await connection.request("settings_get", {})).settings;
     } else {
       // settings come from the home connection only
     }
     this.changed();
-    return entry;
+    return name;
   }
 
   /**
-   * A connection that comes back: opened now, and after a loss reopened with backoff — its nodes
+   * A connection that comes back: opened now, and after a loss reopened with backoff — its hubs
    * listed again and the agents this client followed in full re-followed (fresh snapshots).
    */
-  async addEndpoint(open: () => Promise<NodeConnection>, options: { home: boolean; clock?: Clock }): Promise<string> {
+  async addEndpoint(open: () => Promise<HubConnection>, options: { home: boolean; clock?: Clock }): Promise<string> {
     const clock = options.clock ?? systemClock;
     let attempt = 0;
     const connect = async (): Promise<string> => {
@@ -175,12 +157,12 @@ export class ClientModel {
     }
   }
 
-  private async addNode(api: NodeApi): Promise<void> {
-    this.connections.set(api.node, api);
-    this.offline.delete(api.node);
+  private async addNode(api: HubApi): Promise<void> {
+    this.connections.set(api.hub, api);
+    this.offline.delete(api.hub);
     const { agents } = await api.request("agents_list", {});
     for (const agent of agents) {
-      this.agents.set(agentKey(api.node, agent.id), agent);
+      this.agents.set(agentKey(api.hub, agent.id), agent);
       await api.request("agent_attach", { agent: agent.id, level: "summary" });
     }
   }
@@ -193,39 +175,22 @@ export class ClientModel {
         this.agents.delete(key);
         this.full.delete(key);
       } else {
-        // another node's agent
+        // another hub's agent
       }
     }
   }
 
-  connection(node: string): NodeApi {
+  connection(node: string): HubApi {
     const connection = this.connections.get(node);
     if (connection === undefined) {
-      throw new Error(`node ${node} is not connected${this.offline.has(node) ? `: ${this.offline.get(node)}` : ""}`);
+      throw new Error(`hub ${node} is not connected${this.offline.has(node) ? `: ${this.offline.get(node)}` : ""}`);
     } else {
       return connection;
     }
   }
 
-  private onEvent(node: string, event: NodeEvent, via: NodeConnection): void {
+  private onEvent(node: string, event: HubEvent): void {
     switch (event.ev) {
-      case "nodes":
-        for (const info of event.nodes) {
-          this.nodes.set(info.name, info);
-          if (info.online && !this.connections.has(info.name)) {
-            void this.addNode(new NodeApi(info.name, via, true))
-              .then(() => this.changed())
-              .catch((error: unknown) => this.offline.set(info.name, error instanceof Error ? error.message : String(error)));
-          } else if (!info.online && this.connections.get(info.name)?.connection === via) {
-            this.dropNode(info.name, `node ${info.name} is offline`);
-          } else {
-            // no change for this node
-          }
-        }
-        break;
-      case "refused":
-        this.dropNode(node, event.error.message);
-        break;
       case "agents": {
         const present = new Set(event.agents.map((agent) => agentKey(node, agent.id)));
         for (const agent of event.agents) {
@@ -242,7 +207,7 @@ export class ClientModel {
             this.agents.delete(key);
             this.full.delete(key);
           } else {
-            // still there, or another node's
+            // still there, or another hub's
           }
         }
         break;
@@ -265,7 +230,7 @@ export class ClientModel {
         if (node === this.home) {
           this.settings = event.settings;
         } else {
-          // another node's settings: not this client's
+          // another hub's settings: not this client's
         }
         break;
       case "terminal_output":
@@ -283,7 +248,7 @@ export class ClientModel {
   /** The sessions' terminals this client showed, by node and session. */
   private readonly terminals = new Map<string, TerminalModel>();
 
-  /** A session's terminal on its node (made at the first show; kept while the client runs). */
+  /** A session's terminal on its hub (made at the first show; kept while the client runs). */
   terminal(node: string, session: string, cwd: string): TerminalModel {
     const key = `${node}\u0000${session}`;
     const known = this.terminals.get(key);
@@ -343,7 +308,7 @@ export class ClientModel {
         if (snapshot !== undefined) {
           model.loadSnapshot(snapshot);
         } else {
-          throw new Error(`node ${node} attached ${agentId} without a snapshot`);
+          throw new Error(`hub ${node} attached ${agentId} without a snapshot`);
         }
         model.onChange(() => this.changed());
         this.changed();
@@ -462,7 +427,7 @@ export class ClientModel {
 
   /**
    * Changes a setting from its current value: when another client changed it meanwhile (conflict),
-   * the change applies again to the value the node has now. For values clients change together
+   * the change applies again to the value the hub has now. For values clients change together
    * (ui.tabs): no change of another client is lost.
    */
   async updateSetting<T>(key: string, change: (current: T | undefined) => T): Promise<void> {
@@ -483,10 +448,10 @@ export class ClientModel {
   }
 
   /**
-   * An operation of the home endpoint itself (settings, themes): the node or hub this client came in
-   * through, which keeps the user's settings even when the user may not run agents on it.
+   * An operation of the home hub itself (settings, themes): this machine's hub, which keeps the
+   * user's settings.
    */
-  homeRequest<K extends NodeOp>(op: K, args: NodeOps[K]["args"]): Promise<NodeOps[K]["result"]> {
+  homeRequest<K extends HubOp>(op: K, args: HubOps[K]["args"]): Promise<HubOps[K]["result"]> {
     if (this.homeConnection === undefined) {
       throw new Error("no home node to keep settings");
     } else {

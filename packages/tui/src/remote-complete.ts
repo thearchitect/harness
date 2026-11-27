@@ -1,4 +1,4 @@
-// Completion of `@file` mentions for a session on another machine: the paths come from its node
+// Completion of `@file` mentions for a session on another machine: the paths come from its hub
 // (harness_complete runs in the session's agent, in its directory); `/commands` are completed as
 // pi's provider does. A session on this machine keeps pi's own provider (fd, fuzzy).
 

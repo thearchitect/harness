@@ -1,6 +1,6 @@
 // The browser's way back from a sign-in when the login runs on another machine: the callback port of
-// the link is listened to here and the address goes to the node as the step's answer; a login on this
-// machine's own node is left to its flow.
+// the link is listened to here and the address goes to the hub as the step's answer; a login on this
+// machine's own hub is left to its flow.
 
 import assert from "node:assert/strict";
 import { createServer } from "node:net";
@@ -40,7 +40,7 @@ test("the callback port of a sign-in link", () => {
   assert.equal(callbackPort("not a url"), undefined);
 });
 
-test("a remote node's login: the browser's address reaches the step's field; a local one's is left alone", async () => {
+test("a remote hub's login: the browser's address reaches the step's field; a local one's is left alone", async () => {
   const port = await freePort();
   const answers: { id: string; answer: LoginAnswer }[] = [];
   const callback = new LoginCallback(

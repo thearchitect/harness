@@ -18,7 +18,7 @@ export const scenario = defineScenario({
 runScenario(scenario);
 ```
 
-The stand (`stand/stand.ts`) is a node in a temporary home with agents on a scripted model
+The stand (`stand/stand.ts`) is a hub in a temporary home with agents on a scripted model
 (`stand.script([{ text }, { toolCalls }])`), optionally extra models (`stand.models([...])`) and a
 `ManualClock`. Drivers act by the keymap's action ids (`tui.act("model.select")`), type text and
 keys, and expose the client's `Workbench` screen — the verdict is always the screen's meaning

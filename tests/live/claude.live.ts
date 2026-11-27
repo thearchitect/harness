@@ -54,7 +54,7 @@ function evidence(stand: Stand, model: AgentModel | undefined): string {
 async function run(stand: Stand, follow: (model: AgentModel) => void): Promise<void> {
   const raw = await RawDriver.open(() => stand.connect());
   const { agent } = await raw.api.request("agent_start", { cwd: stand.project });
-  const model = await raw.client.follow(raw.node, agent.id);
+  const model = await raw.client.follow(raw.hub, agent.id);
   follow(model);
   const call = (record: object): Promise<unknown> => raw.api.call(agent.id, record as never);
 

@@ -1,5 +1,5 @@
 // The session's terminal over the main area, the TUI's twin (plan polish-3 F): a frame in the accent
-// border color, the title naming the directory and the key that hides it (Ctrl+I), the node's shell
+// border color, the title naming the directory and the key that hides it (Ctrl+I), the hub's shell
 // as the client's terminal model draws it (ANSI lines in the chrome zone's monospace font). Its size
 // in cells follows the frame. While it is shown every key is the shell's (keyboard.web.ts) but the
 // workbench's own (tabs, the panel, Ctrl+I); pasted text arrives bracketed when the program asks for

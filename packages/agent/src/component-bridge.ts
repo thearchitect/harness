@@ -29,7 +29,7 @@ export class ComponentBridge {
   private counter = 0;
   private width = DEFAULT_WIDTH;
   private rows = DEFAULT_ROWS;
-  /** Clients that can draw components (the node's harness_clients). */
+  /** Clients that can draw components (the hub's harness_clients). */
   private clients = 0;
   /** Components waiting for such a client. */
   private readonly waiting: (() => void)[] = [];

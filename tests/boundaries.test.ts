@@ -7,7 +7,7 @@ import { join, relative } from "node:path";
 import { test } from "node:test";
 
 const root = join(import.meta.dirname, "..");
-const PACKAGES = ["protocol", "client", "node", "agent", "extension", "tui", "cli", "testkit"] as const;
+const PACKAGES = ["protocol", "client", "hub", "agent", "extension", "tui", "cli", "testkit"] as const;
 type Package = (typeof PACKAGES)[number];
 
 /** What each package may import (besides itself); testkit and tests may import anything. */
@@ -16,9 +16,9 @@ const ALLOWED: Record<Package, readonly Package[]> = {
   client: ["protocol"],
   extension: ["protocol"],
   agent: ["protocol", "client", "extension"],
-  node: ["protocol"],
+  hub: ["protocol"],
   tui: ["protocol", "client", "extension"],
-  cli: ["protocol", "client", "node", "tui"],
+  cli: ["protocol", "client", "hub", "tui"],
   testkit: PACKAGES,
 };
 

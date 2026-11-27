@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import type { AgentSummary } from "#protocol/node.ts";
+import type { AgentSummary } from "#protocol/hub.ts";
 import { glyphOf } from "./workbench.ts";
 
 const base: AgentSummary = { status: "idle", mode: "plan", title: "t", waiting: 0, tasks: { running: 0, failed: 0 }, lastActivity: 100, costUsd: 0 };

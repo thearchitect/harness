@@ -1,7 +1,7 @@
-// The local node held by a client window (local.ts), with real processes: the first window holds
-// it and the next connects; when the holder goes, exactly one of the others holds a new node and the
-// rest connect to it; a service is waited for, never replaced; node_restart starts the node again in
-// its holder; another version's node is refused with the reason.
+// The local hub held by a client window (local.ts), with real processes: the first window holds
+// it and the next connects; when the holder goes, exactly one of the others holds a new hub and the
+// rest connect to it; a service is waited for, never replaced; hub_restart starts the hub again in
+// its holder; another version's hub is refused with the reason.
 
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -11,9 +11,9 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { listenUnix, socketPath } from "#node/endpoints/unix.ts";
-import { quitQuestion, versionProblem } from "#node/local.ts";
-import { HarnessNode } from "#node/node.ts";
+import { listenUnix, socketPath } from "#hub/endpoints/unix.ts";
+import { quitQuestion, versionProblem } from "#hub/local.ts";
+import { Hub } from "#hub/hub.ts";
 
 const WINDOW = fileURLToPath(new URL("../../packages/testkit/src/fakes/window.ts", import.meta.url));
 
@@ -80,7 +80,7 @@ function home(): string {
   return mkdtempSync(join(tmpdir(), "ln-"));
 }
 
-test("the first window holds the node, the next connects; when the holder quits, the other holds a new one", async () => {
+test("the first window holds the hub, the next connects; when the holder quits, the other holds a new one", async () => {
   const dir = home();
   const a = open(dir);
   const first = await a.welcome(0);
@@ -99,7 +99,7 @@ test("the first window holds the node, the next connects; when the holder quits,
   assert.equal(moved.pid, b.process.pid);
 });
 
-test("three windows lose a crashed holder together: exactly one holds a new node, the other connects to it", async () => {
+test("three windows lose a crashed holder together: exactly one holds a new hub, the other connects to it", async () => {
   const dir = home();
   const a = open(dir);
   await a.welcome(0);
@@ -113,7 +113,7 @@ test("three windows lose a crashed holder together: exactly one holds a new node
   assert.equal(nb.pid, nc.pid);
 });
 
-test("node_restart starts the node again in its holder; its clients come back", async () => {
+test("hub_restart starts the hub again in its holder; its clients come back", async () => {
   const dir = home();
   const a = open(dir);
   await a.welcome(0);
@@ -127,8 +127,8 @@ test("node_restart starts the node again in its holder; its clients come back", 
 
 test("a service is waited for, never replaced: its clients come back to it", async () => {
   const dir = home();
-  const start = async (): Promise<{ node: HarnessNode; close(): Promise<void> }> => {
-    const node = new HarnessNode({ name: "default", dataDir: dir, harnessVersion: "test" });
+  const start = async (): Promise<{ node: Hub; close(): Promise<void> }> => {
+    const node = new Hub({ name: "default", dataDir: dir, harnessVersion: "test" });
     const server = await listenUnix(node, socketPath(dir, "default"));
     return {
       node,
@@ -144,25 +144,25 @@ test("a service is waited for, never replaced: its clients come back to it", asy
   assert.deepEqual([first.host, first.holding], ["service", false]);
   await service.close();
   await new Promise((resolve) => setTimeout(resolve, 1500));
-  assert.equal(a.welcomes.length, 1, "no node held while the service is down");
+  assert.equal(a.welcomes.length, 1, "no hub held while the service is down");
   const again = await start();
   const back = await a.welcome(1);
   assert.deepEqual([back.host, back.holding], ["service", false]);
   await again.close();
 });
 
-test("quitting the holder asks first while agents work or other windows use the node", () => {
+test("quitting the holder asks first while agents work or other windows use the hub", () => {
   assert.equal(quitQuestion(undefined), undefined, "a client of another holder or a service quits at once");
   assert.equal(quitQuestion({ running: 0, otherClients: 0 }), undefined);
-  assert.equal(quitQuestion({ running: 2, otherClients: 1 }), "Quitting stops 2 running agents (1 other windows use this node)");
+  assert.equal(quitQuestion({ running: 2, otherClients: 1 }), "Quitting stops 2 running agents (1 other windows use this hub)");
   assert.match(quitQuestion({ running: 0, otherClients: 1 }) ?? "", /1 other windows/);
 });
 
-test("another version's node is refused with what to do", () => {
-  assert.equal(versionProblem("2", { node: "default", harness: "2", host: "client", pid: 7 }), undefined);
+test("another version's hub is refused with what to do", () => {
+  assert.equal(versionProblem("2", { hub: "default", harness: "2", host: "client", pid: 7 }), undefined);
   assert.equal(
-    versionProblem("2", { node: "default", harness: "1", host: "client", pid: 7 }),
-    "harness 2: node default runs harness 1 (held by window PID 7); close it or restart the service",
+    versionProblem("2", { hub: "default", harness: "1", host: "client", pid: 7 }),
+    "harness 2: hub default runs harness 1 (held by window PID 7); close it or restart the service",
   );
-  assert.match(versionProblem("2", { node: "default", harness: "1", host: "service", pid: 7 }) ?? "", /\(a service\)/);
+  assert.match(versionProblem("2", { hub: "default", harness: "1", host: "service", pid: 7 }) ?? "", /\(a service\)/);
 });

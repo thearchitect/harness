@@ -1,4 +1,4 @@
-// One harness-agent process and its HAP stream. The node writes requests and commands to it and
+// One harness-agent process and its HAP stream. The hub writes requests and commands to it and
 // fans its records out: responses go to the connection that asked (ids are rewritten per
 // connection, so two clients' ids never collide), everything else to every attached connection.
 

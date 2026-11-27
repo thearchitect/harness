@@ -8,7 +8,7 @@ import type { BridgedComponent, ComponentMouse, LoginProvider, SubagentProfileVi
 import { familyRefs } from "#protocol/model-ref.ts";
 import { modeOfText } from "#protocol/modes.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
-import type { AgentInfo, AgentSummary } from "#protocol/node.ts";
+import type { AgentInfo, AgentSummary } from "#protocol/hub.ts";
 import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#protocol/state.ts";
 import type { ActionId } from "../keymap.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
@@ -75,11 +75,11 @@ export function pickerHints(picker: Picker): KeyHint[] {
 export type OverlayKind = "panel" | "tabs";
 
 /**
- * A row of the strip's top block: a node this client reaches (its own first, named `inprocess` in
+ * A row of the strip's top block: a hub this client reaches (its own first, named `inprocess` in
  * the window that holds it), one glyph for all its sessions: ⊘ offline, ◆ one waits for the
  * operator, ● something works.
  */
-export type NodeRow = { name: string; label: string; glyph: "⊘" | "◆" | "●" | "" };
+export type HubRow = { name: string; label: string; glyph: "⊘" | "◆" | "●" | "" };
 
 export type StatusLine = { level: "info" | "warning" | "error" | "working"; text: string };
 
@@ -131,7 +131,7 @@ export type Zones = {
   aboveEditor: { queue: { kind: "steer" | "next"; text: string }[]; widgets: string[]; search: Search | undefined };
   editor: EditorZone;
   status: StatusLine[];
-  footer: { node: string; agent: AgentModel | undefined };
+  footer: { hub: string; agent: AgentModel | undefined };
   overlays: OverlayKind[];
   /** An extension's overlay component drawn in the agent, over the screen. */
   componentOverlay: BridgedComponent | undefined;
@@ -166,10 +166,10 @@ export function itemText(item: TranscriptItem): string {
 
 export type Screen = {
   strips: { left: boolean };
-  /** The strip's three blocks: the nodes, the chosen node's sessions, the active session's items. */
-  nodes: NodeRow[];
-  node: string | undefined;
-  /** The chosen node's tabs (each with its index among all tabs); `active` indexes these. */
+  /** The strip's three blocks: the hubs, the chosen hub's sessions, the active session's items. */
+  hubs: HubRow[];
+  hub: string | undefined;
+  /** The chosen hub's tabs (each with its index among all tabs); `active` indexes these. */
   tabs: Tab[];
   active: number;
   /** A new session being placed on this node: its row in the sessions block. */
@@ -224,14 +224,14 @@ export type UpdateHook = {
 export type Glyph = "⊘" | "◆" | "✗" | "●" | "✓" | " ";
 
 /** A tab as `ui.tabs` stores it. `seen`: the last activity the user has seen (ms), which clears ✓ and ✗. */
-export type TabRecord = { node: string; sessionId: string; sessionFile?: string; cwd: string; seen?: number };
+export type TabRecord = { hub: string; sessionId: string; sessionFile?: string; cwd: string; seen?: number };
 
 export type Tab = TabRecord & {
   agent: AgentInfo | undefined;
   glyph: Glyph;
   title: string;
   mode: RunMode;
-  /** Why the tab cannot open now (its node is offline, its session is gone). */
+  /** Why the tab cannot open now (its hub is offline, its session is gone). */
   unavailable: string | undefined;
   /** Its index among all tabs (what activate, goto and closeTab take). */
   index: number;
@@ -292,7 +292,7 @@ function subagentGlyph(subagent: SubagentInfo): Glyph {
   }
 }
 
-/** A node event (telemetry JSONL) as one line: time, event, its fields. */
+/** A hub event (telemetry JSONL) as one line: time, event, its fields. */
 function logLine(line: string): string {
   try {
     const { at, event, ...rest } = JSON.parse(line) as { at?: string; event?: string; [key: string]: unknown };
@@ -350,12 +350,15 @@ function duration(ms: number): string {
 
 export function tabRecords(settings: Record<string, unknown>): TabRecord[] {
   const tabs = settings["ui.tabs"];
-  return Array.isArray(tabs) ? (tabs.filter((tab) => typeof tab === "object" && tab !== null && typeof (tab as TabRecord).sessionId === "string") as TabRecord[]) : [];
+  return Array.isArray(tabs) ? (tabs.filter((tab) => typeof tab === "object" && tab !== null && typeof (tab as TabRecord).sessionId === "string" && typeof (tab as TabRecord).hub === "string") as TabRecord[]) : [];
 }
 
-/** Whether a record is a tab's: the same session on the same node. */
-function sameTab(record: { node: string; sessionId: string }, tab: { node: string; sessionId: string }): boolean {
-  return record.node === tab.node && record.sessionId === tab.sessionId;
+/** What names a tab: its session on its hub. */
+export type TabKey = { hub: string; sessionId: string };
+
+/** Whether a record is a tab's: the same session on the same hub. */
+function sameTab(record: TabKey, tab: TabKey): boolean {
+  return record.hub === tab.hub && record.sessionId === tab.sessionId;
 }
 
 export type WorkbenchOptions = {
@@ -367,11 +370,11 @@ export type WorkbenchOptions = {
   themes?: () => string[];
   /** Settings only this kind of UI has (the app's fonts and notifications): rows of /settings. */
   uiSettings?: () => UiSetting[];
-  /** Brings a file of a node to this device (the app downloads it); without it the path is shown. */
+  /** Brings a file of a hub to this device (the app downloads it); without it the path is shown. */
   offerFile?: (node: string, path: string) => void;
-  /** Whether this window holds its home node (the TUI's local node in its process): its row reads `inprocess`. */
+  /** Whether this window holds its home hub (the TUI's local hub in its process): its row reads `inprocess`. */
   holdsHome?: () => boolean;
-  /** `+ add` of the nodes block: pairs this client with a hub (its address, a one-time code). */
+  /** `+ add` of the hubs block: pairs this client with a hub (its address, a one-time code). */
   addHub?: (url: string, code: string) => Promise<void>;
   /** Where this window keeps its state between starts (view-state.ts); none: nothing is kept. */
   viewStore?: ViewStateStore;
@@ -385,10 +388,10 @@ export type UiSetting = { value: string; label: string; description?: string; ch
 export class Workbench {
   readonly client: ClientModel;
   /** The active tab, by identity: other clients' changes of the tab set keep it. */
-  private activeKey: { node: string; sessionId: string } | undefined;
+  private activeKey: TabKey | undefined;
   /** The node the strip shows the sessions of (where new sessions start, what HARNESS acts on). */
-  private chosenNode: string | undefined;
-  /** The last active tab of each node (choosing a node opens it again). */
+  private chosenHub: string | undefined;
+  /** The last active tab of each hub (choosing a hub opens it again). */
   private readonly lastActive = new Map<string, string>();
   /**
    * Tabs of sessions without a message yet: this window's alone (pi writes no file for them); the
@@ -464,11 +467,11 @@ export class Workbench {
   /** The window's tabs to load ahead: the active one, then by their last use. */
   private prefetchTargets(): PrefetchTarget[] {
     const active = this.activeTab();
-    const used = (tab: Tab): number => (active !== undefined && sameTab(tab, active) ? Infinity : (this.usedAt.get(`${tab.node}/${tab.sessionId}`) ?? 0));
+    const used = (tab: Tab): number => (active !== undefined && sameTab(tab, active) ? Infinity : (this.usedAt.get(`${tab.hub}/${tab.sessionId}`) ?? 0));
     return this.tabs()
       .filter((tab) => tab.unavailable === undefined)
       .sort((a, b) => used(b) - used(a))
-      .map((tab) => ({ node: tab.node, agent: tab.agent?.id, file: tab.sessionFile ?? tab.agent?.sessionFile }));
+      .map((tab) => ({ hub: tab.hub, agent: tab.agent?.id, file: tab.sessionFile ?? tab.agent?.sessionFile }));
   }
 
   /** Stops loading ahead (the window closes). */
@@ -479,16 +482,16 @@ export class Workbench {
   /* ----- what each tab left (view-state.ts) ----- */
 
   /** What a tab left: its draft, its scroll, its expanded output, its item. */
-  view(tab: { node: string; sessionId: string }): TabView {
-    return this.views.get(`${tab.node}/${tab.sessionId}`) ?? DEFAULT_VIEW;
+  view(tab: TabKey): TabView {
+    return this.views.get(`${tab.hub}/${tab.sessionId}`) ?? DEFAULT_VIEW;
   }
 
   /**
    * Changes what a tab left. Drafts and scrolling change as the operator types and scrolls: kept
    * quietly; what the screen shows (the item, expanded output) redraws.
    */
-  updateView(tab: { node: string; sessionId: string }, change: Partial<TabView>): void {
-    this.views.set(`${tab.node}/${tab.sessionId}`, { ...this.view(tab), ...change });
+  updateView(tab: TabKey, change: Partial<TabView>): void {
+    this.views.set(`${tab.hub}/${tab.sessionId}`, { ...this.view(tab), ...change });
     this.scheduleViewSave();
     if (change.selected !== undefined || change.expanded !== undefined) {
       this.client.changed();
@@ -497,17 +500,17 @@ export class Workbench {
     }
   }
 
-  /** The window's state to keep: the views of the tabs there are, the active tab, the node, the drafts with text. */
+  /** The window's state to keep: the views of the tabs there are, the active tab, the hub, the drafts with text. */
   windowState(): WindowState {
     const tabs = this.tabs();
     const active = this.activeTab();
-    const node = this.chosenNode;
+    const hub = this.chosenHub;
     return {
       version: 1,
-      tabs: Object.fromEntries(tabs.filter((tab) => !tab.draft).flatMap((tab) => (this.views.has(`${tab.node}/${tab.sessionId}`) ? [[`${tab.node}/${tab.sessionId}`, this.view(tab)]] : []))),
-      ...(active !== undefined && !active.draft ? { active: { node: active.node, sessionId: active.sessionId } } : {}),
-      ...(node !== undefined ? { node } : {}),
-      drafts: tabs.filter((tab) => tab.draft && this.view(tab).draft !== "").map((tab) => ({ node: tab.node, cwd: tab.cwd, draft: this.view(tab).draft })),
+      tabs: Object.fromEntries(tabs.filter((tab) => !tab.draft).flatMap((tab) => (this.views.has(`${tab.hub}/${tab.sessionId}`) ? [[`${tab.hub}/${tab.sessionId}`, this.view(tab)]] : []))),
+      ...(active !== undefined && !active.draft ? { active: { hub: active.hub, sessionId: active.sessionId } } : {}),
+      ...(hub !== undefined ? { hub } : {}),
+      drafts: tabs.filter((tab) => tab.draft && this.view(tab).draft !== "").map((tab) => ({ hub: tab.hub, cwd: tab.cwd, draft: this.view(tab).draft })),
     };
   }
 
@@ -535,8 +538,8 @@ export class Workbench {
   }
 
   /**
-   * The window as it was: the tabs' views, the active tab and the node; each draft of a session
-   * without a message becomes a new session in its folder with the draft. Call once the nodes are
+   * The window as it was: the tabs' views, the active tab and the hub; each draft of a session
+   * without a message becomes a new session in its folder with the draft. Call once the hubs are
    * connected, before the UI starts.
    */
   async restoreViews(): Promise<void> {
@@ -552,25 +555,25 @@ export class Workbench {
       const index = active !== undefined ? tabs.findIndex((tab) => sameTab(tab, active)) : -1;
       if (index >= 0) {
         this.activeKey = active;
-        this.chosenNode = active?.node;
+        this.chosenHub = active?.hub;
       } else {
         // the tab is gone: the first one opens
       }
-      if (state.node !== undefined && (this.client.connections.has(state.node) || this.client.offline.has(state.node))) {
-        this.chosenNode = state.node;
+      if (state.hub !== undefined && (this.client.connections.has(state.hub) || this.client.offline.has(state.hub))) {
+        this.chosenHub = state.hub;
       } else {
-        // the node is gone: the active tab's or the home node
+        // the hub is gone: the active tab's or the home hub
       }
       for (const draft of state.drafts) {
-        if (this.client.connections.has(draft.node)) {
-          const tab = await this.newTab(draft.node, draft.cwd).catch(() => undefined);
+        if (this.client.connections.has(draft.hub)) {
+          const tab = await this.newTab(draft.hub, draft.cwd).catch(() => undefined);
           if (tab !== undefined) {
             this.updateView(tab, { draft: draft.draft });
           } else {
             // the folder is gone
           }
         } else {
-          // its node is not here: the draft goes
+          // its hub is not here: the draft goes
         }
       }
       this.client.changed();
@@ -584,26 +587,26 @@ export class Workbench {
   }
 
   /**
-   * The node the strip shows: chosen, else the active tab's, else the home node when this user runs
-   * agents on it (a hub may only keep their settings), else the first node reached.
+   * The hub the strip shows: chosen, else the active tab's, else the home hub when it is connected,
+   * else the first hub reached.
    */
-  node(): string | undefined {
+  hub(): string | undefined {
     const home = this.client.home;
-    return this.chosenNode ?? this.activeTab()?.node ?? (home !== undefined && this.client.connections.has(home) ? home : [...this.client.connections.keys()][0]);
+    return this.chosenHub ?? this.activeTab()?.hub ?? (home !== undefined && this.client.connections.has(home) ? home : [...this.client.connections.keys()][0]);
   }
 
-  /** The chosen node's tabs, each with its index among all. */
-  nodeTabs(): Tab[] {
-    const node = this.node();
-    return this.tabs().filter((tab) => tab.node === node);
+  /** The chosen hub's tabs, each with its index among all. */
+  hubTabs(): Tab[] {
+    const node = this.hub();
+    return this.tabs().filter((tab) => tab.hub === node);
   }
 
-  /** The nodes block: this client's own node first, then the others it reaches; one glyph each. */
-  nodes(): NodeRow[] {
+  /** The hubs block: this client's own hub first, then the others it reaches; one glyph each. */
+  hubs(): HubRow[] {
     const home = this.client.home;
-    const names = [...new Set([...(home !== undefined ? [home] : []), ...this.client.connections.keys(), ...this.client.nodes.keys(), ...this.client.offline.keys()])];
+    const names = [...new Set([...(home !== undefined ? [home] : []), ...this.client.connections.keys(), ...this.client.offline.keys()])];
     return names.map((name) => {
-      const agents = [...this.client.agents.values()].filter((agent) => agent.node === name);
+      const agents = [...this.client.agents.values()].filter((agent) => agent.hub === name);
       const glyph = this.client.offline.has(name) || !this.client.connections.has(name)
         ? "⊘"
         : agents.some((agent) => agent.summary.waiting > 0 || agent.summary.status === "waiting")
@@ -615,26 +618,26 @@ export class Workbench {
     });
   }
 
-  /** Chooses a node in the strip: its last active tab opens again, or choosing a folder for a new session there. */
-  async chooseNode(node: string): Promise<void> {
-    if (!this.client.connections.has(node)) {
-      this.notify("warning", `node ${node} is offline`);
+  /** Chooses a hub in the strip: its last active tab opens again, or choosing a folder for a new session there. */
+  async chooseHub(hub: string): Promise<void> {
+    if (!this.client.connections.has(hub)) {
+      this.notify("warning", `hub ${hub} is offline`);
     } else {
-      this.chosenNode = node;
+      this.chosenHub = hub;
       const tabs = this.tabs();
-      const last = this.lastActive.get(node);
-      const index = tabs.findIndex((tab) => tab.node === node && (last === undefined || tab.sessionId === last));
-      const fallback = tabs.findIndex((tab) => tab.node === node);
+      const last = this.lastActive.get(hub);
+      const index = tabs.findIndex((tab) => tab.hub === hub && (last === undefined || tab.sessionId === last));
+      const fallback = tabs.findIndex((tab) => tab.hub === hub);
       if (index >= 0 || fallback >= 0) {
         await this.goto(index >= 0 ? index : fallback);
       } else {
-        this.openNewSession(node);
+        this.openNewSession(hub);
       }
     }
   }
 
-  /** `+ add` in the nodes block: a hub's address, then the one-time code its admin made (harness hub device add). */
-  addNode(): void {
+  /** `+ add` in the hubs block: another hub's address, then the one-time code made there (harness hub device add). */
+  pairHub(): void {
     const addHub = this.addHub;
     if (addHub === undefined) {
       this.notify("warning", "this client adds hubs elsewhere (its pairing screen)");
@@ -656,7 +659,7 @@ export class Workbench {
     }
   }
 
-  /** Choosing where a new session starts on a node, in the chat zone (new-session.ts). */
+  /** Choosing where a new session starts on a hub, in the chat zone (new-session.ts). */
   openNewSession(node: string): void {
     const choice = new NewSession(node, {
       list: (path, hidden) => this.client.connection(node).request("dirs_list", { path, hidden }),
@@ -673,7 +676,7 @@ export class Workbench {
       now: () => this.clock.now(),
       failed: (message) => this.notify("error", message),
     });
-    this.chosenNode = node;
+    this.chosenHub = node;
     this.newSessionChoice = choice;
     this.client.changed();
     void choice.start();
@@ -688,17 +691,17 @@ export class Workbench {
    */
   editorMode(text: string): RunMode {
     const tab = this.activeTab();
-    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.hub, tab.agent.id)) : undefined;
     return agent?.running === true ? agent.state.mode : modeOfText(text, agent?.state.variant ?? "advanced").mode;
   }
 
   screen(width: number, editor: { mode: RunMode }): Screen {
     const tab = this.activeTab();
     // a tab whose agent is not up yet shows what was read from its file
-    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : tab !== undefined ? this.client.storedModel(tab.node, tab.sessionFile) : undefined;
+    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.hub, tab.agent.id)) : tab !== undefined ? this.client.storedModel(tab.hub, tab.sessionFile) : undefined;
     if (tab?.agent !== undefined && agent === undefined && tab.unavailable === undefined) {
-      // the active tab's agent became known (another client opened it, the node reported it): follow it
-      void this.client.follow(tab.node, tab.agent.id).catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
+      // the active tab's agent became known (another client opened it, the hub reported it): follow it
+      void this.client.follow(tab.hub, tab.agent.id).catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
     } else {
       // followed already, or nothing to follow
     }
@@ -707,7 +710,7 @@ export class Workbench {
     const choice = this.newSessionChoice;
     const main: MainZone = choice !== undefined ? { kind: "newSession", choice } : this.mainZone(selected, agent, tab);
     this.followTask(main.kind === "task" ? main.taskId : undefined);
-    const asking = tab?.agent !== undefined ? this.asking(tab.node, tab.agent.id, agent) : undefined;
+    const asking = tab?.agent !== undefined ? this.asking(tab.hub, tab.agent.id, agent) : undefined;
     const request = asking?.request;
     const inline = agent?.components.filter((component) => !component.overlay).at(-1);
     const componentOverlay = agent?.components.filter((component) => component.overlay).at(-1);
@@ -722,14 +725,14 @@ export class Workbench {
             ? { kind: "component", component: inline }
             : { kind: "editor", mode: agent?.running === true ? agent.state.mode : editor.mode };
     const queue = agent?.session?.queue;
-    const nodeTabs = this.nodeTabs();
+    const nodeTabs = this.hubTabs();
     return {
       strips: { left: width >= LEFT_STRIP_MIN },
-      nodes: this.nodes(),
-      node: this.node(),
+      hubs: this.hubs(),
+      hub: this.hub(),
       tabs: nodeTabs,
       active: choice !== undefined ? -1 : nodeTabs.findIndex((candidate) => tab !== undefined && sameTab(candidate, tab)),
-      newSession: choice?.node,
+      newSession: choice?.hub,
       tab,
       agent,
       items,
@@ -743,7 +746,7 @@ export class Workbench {
         },
         editor: editorZone,
         status: this.statusLines(this.tabs(), tab, agent),
-        footer: { node: tab?.node ?? "", agent },
+        footer: { hub: tab?.hub ?? "", agent },
         overlays: this.overlays.filter((overlay) => (overlay === "tabs" ? width < LEFT_STRIP_MIN : true)),
         componentOverlay,
       },
@@ -775,7 +778,7 @@ export class Workbench {
 
   /** The active tab's terminal when it is shown; the one shown before (another tab's, a hidden one) stops coming here. */
   private shownTerminal(tab: Tab | undefined): TerminalModel | undefined {
-    const shown = tab !== undefined && tab.unavailable === undefined && this.view(tab).terminal === true ? this.client.terminal(tab.node, tab.sessionId, tab.cwd) : undefined;
+    const shown = tab !== undefined && tab.unavailable === undefined && this.view(tab).terminal === true ? this.client.terminal(tab.hub, tab.sessionId, tab.cwd) : undefined;
     if (shown !== this.terminalShown) {
       this.terminalShown?.detach();
       this.terminalShown = shown;
@@ -852,18 +855,18 @@ export class Workbench {
     }
   }
 
-  /** The session as an HTML page (pi's export), written on its node; the app downloads it. */
+  /** The session as an HTML page (pi's export), written on its hub; the app downloads it. */
   private async exportSession(outputPath: string | undefined): Promise<void> {
     const tab = this.activeTab();
     if (tab?.agent === undefined) {
       this.notify("warning", "no session to export");
     } else {
       try {
-        const { path } = await this.client.connection(tab.node).call<{ path: string }>(tab.agent.id, { type: "export_html", ...(outputPath !== undefined ? { outputPath } : {}) });
+        const { path } = await this.client.connection(tab.hub).call<{ path: string }>(tab.agent.id, { type: "export_html", ...(outputPath !== undefined ? { outputPath } : {}) });
         if (this.offerFile !== undefined) {
-          this.offerFile(tab.node, path);
+          this.offerFile(tab.hub, path);
         } else {
-          this.notify("info", `exported to ${path}${tab.node !== this.client.home ? ` on ${tab.node}` : ""}`);
+          this.notify("info", `exported to ${path}${tab.hub !== this.client.home ? ` on ${tab.hub}` : ""}`);
         }
       } catch (error) {
         this.notify("error", `export: ${error instanceof Error ? error.message : String(error)}`);
@@ -878,7 +881,7 @@ export class Workbench {
     if (tab?.agent === undefined) {
       return own;
     } else {
-      const { commands } = await this.client.connection(tab.node).call<{ commands: { name: string; description?: string }[] }>(tab.agent.id, { type: "get_commands" });
+      const { commands } = await this.client.connection(tab.hub).call<{ commands: { name: string; description?: string }[] }>(tab.agent.id, { type: "get_commands" });
       return [...own, ...commands];
     }
   }
@@ -892,11 +895,11 @@ export class Workbench {
 
   /**
    * Settings as a list in the editor's place: the theme (the user's UI settings, shared by their
-   * clients) and the session's queue and compaction behavior (pi's, on the session's node).
+   * clients) and the session's queue and compaction behavior (pi's, on the session's hub).
    */
   async settingsPicker(): Promise<void> {
     const tab = this.activeTab();
-    const api = tab !== undefined ? this.client.connections.get(tab.node) : undefined;
+    const api = tab !== undefined ? this.client.connections.get(tab.hub) : undefined;
     const agentId = tab?.agent?.id;
     const state =
       api !== undefined && agentId !== undefined
@@ -952,7 +955,7 @@ export class Workbench {
     if (tab?.agent === undefined) {
       this.notify("warning", "no session here");
     } else {
-      const api = this.client.connection(tab.node);
+      const api = this.client.connection(tab.hub);
       const agentId = tab.agent.id;
       const { tree, leafId } = await api.call<{ tree: TreeNode[]; leafId: string | null }>(agentId, { type: "get_tree" });
       const rows: PickerItem[] = [];
@@ -992,32 +995,32 @@ export class Workbench {
       const subagent = agent.state.subagents.find((candidate) => candidate.session === selected);
       const childId = subagent?.agentId ?? (selected.startsWith("agent:") ? selected.slice("agent:".length) : undefined);
       if (subagent !== undefined || childId !== undefined) {
-        const child = childId !== undefined ? this.client.agents.get(agentKey(tab.node, childId)) : undefined;
-        if (child !== undefined && !this.client.full.has(agentKey(tab.node, child.id))) {
-          void this.client.follow(tab.node, child.id).catch(() => undefined);
+        const child = childId !== undefined ? this.client.agents.get(agentKey(tab.hub, childId)) : undefined;
+        if (child !== undefined && !this.client.full.has(agentKey(tab.hub, child.id))) {
+          void this.client.follow(tab.hub, child.id).catch(() => undefined);
         } else {
           // followed already, or its agent is gone
         }
         const transcript =
           child !== undefined
-            ? this.client.full.get(agentKey(tab.node, child.id))
+            ? this.client.full.get(agentKey(tab.hub, child.id))
             : subagent?.engine === "claude" && tab.agent !== undefined
-              ? this.client.claudeTranscript(tab.node, tab.agent.id, subagent.session)
+              ? this.client.claudeTranscript(tab.hub, tab.agent.id, subagent.session)
               : undefined;
         return { kind: "subagent", id: selected, subagent, agent: transcript };
       } else if (task?.toolUseId !== undefined && task.owner !== undefined && tab.agent !== undefined) {
         // a subagent of Claude's: its Task call in Claude's transcript
         const owner = agent.state.subagents.find((candidate) => candidate.session === task.owner);
-        return { kind: "subagent", id: task.owner, subagent: owner, agent: this.client.claudeTranscript(tab.node, tab.agent.id, task.owner), focus: task.toolUseId };
+        return { kind: "subagent", id: task.owner, subagent: owner, agent: this.client.claudeTranscript(tab.hub, tab.agent.id, task.owner), focus: task.toolUseId };
       } else {
         return { kind: "task", taskId: selected, task, output: this.taskOutputs.get(selected) ?? "" };
       }
     }
   }
 
-  /** The agents of a session's subagents on its node, subagents of subagents included. */
+  /** The agents of a session's subagents on its hub, subagents of subagents included. */
   private descendants(node: string, agentId: string): AgentInfo[] {
-    const children = [...this.client.agents.values()].filter((candidate) => candidate.node === node && candidate.parent === agentId);
+    const children = [...this.client.agents.values()].filter((candidate) => candidate.hub === node && candidate.parent === agentId);
     return children.flatMap((child) => [child, ...this.descendants(node, child.id)]);
   }
 
@@ -1110,7 +1113,7 @@ export class Workbench {
       return;
     } else {
       try {
-        const output = await this.client.connection(tab.node).call<{ text: string }>(tab.agent.id, { type: "harness_task_output", taskId, offset: 0, limit: 256 * 1024 });
+        const output = await this.client.connection(tab.hub).call<{ text: string }>(tab.agent.id, { type: "harness_task_output", taskId, offset: 0, limit: 256 * 1024 });
         if (this.taskOutputs.get(taskId) !== output.text) {
           this.taskOutputs.set(taskId, output.text);
           this.client.changed();
@@ -1261,12 +1264,12 @@ export class Workbench {
 
   /**
    * The harness panel: MODE (the active session's switches, kept for new sessions too), SESSION (its
-   * name, its implementer) and HARNESS (the bundle, the node). The same sections, rows and order in
+   * name, its implementer) and HARNESS (the bundle, the hub). The same sections, rows and order in
    * every UI. Without a session only HARNESS.
    */
   panel(): PanelSection[] {
     const tab = this.activeTab();
-    const model = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    const model = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.hub, tab.agent.id)) : undefined;
     const state = model?.state;
     const name = this.nameDraft?.text ?? model?.session?.sessionName ?? "";
     const mode: PanelSection[] =
@@ -1299,16 +1302,16 @@ export class Workbench {
               { kind: "action" as const, id: "subagents" as const, label: "subagents", hint: "profiles" },
             ]
           : []),
-        { kind: "action", id: "logs", label: "logs", hint: "node events" },
-        { kind: "action", id: "restart", label: "restart node", hint: this.panelNode() ?? "" },
+        { kind: "action", id: "logs", label: "logs", hint: "hub events" },
+        { kind: "action", id: "restart", label: "restart hub", hint: this.panelHub() ?? "" },
       ],
     };
     return [...mode, harness];
   }
 
-  /** The node the HARNESS rows act on: the active session's, else the home one. */
-  private panelNode(): string | undefined {
-    return this.activeTab()?.node ?? this.client.home;
+  /** The hub the HARNESS rows act on: the active session's, else the home one. */
+  private panelHub(): string | undefined {
+    return this.activeTab()?.hub ?? this.client.home;
   }
 
   /** The session name being typed in the panel, and where it goes. */
@@ -1325,7 +1328,7 @@ export class Workbench {
       } else {
         // the first change of this edit
       }
-      const draft = { node: tab.node, agent: tab.agent.id, text, timer: undefined as unknown };
+      const draft = { node: tab.hub, agent: tab.agent.id, text, timer: undefined as unknown };
       draft.timer = this.clock.setTimeout(() => void this.applySessionName(draft), NAME_APPLY_MS);
       this.nameDraft = draft;
       this.client.changed();
@@ -1388,7 +1391,7 @@ export class Workbench {
 
   async choosePanel(value: PanelId): Promise<void> {
     const tab = this.activeTab();
-    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.hub, tab.agent.id)) : undefined;
     if (value === "update") {
       if (this.update?.canRun() === true) {
         await this.update.run();
@@ -1396,29 +1399,29 @@ export class Workbench {
         this.notify("info", `update: ${this.update?.hint() ?? "not available here"}`);
       }
     } else if (value === "restart") {
-      const node = this.panelNode();
-      if (node === undefined) {
-        this.notify("warning", "no node");
+      const hub = this.panelHub();
+      if (hub === undefined) {
+        this.notify("warning", "no hub");
       } else {
-        const agents = [...this.client.agents.values()].filter((agent) => agent.node === node).length;
-        this.confirm(`Restart node ${node}? Stops ${agents} agents and their background tasks`, "Restart", async () => {
-          await this.client.connection(node).request("node_restart", {});
+        const agents = [...this.client.agents.values()].filter((agent) => agent.hub === hub).length;
+        this.confirm(`Restart hub ${hub}? Stops ${agents} agents and their background tasks`, "Restart", async () => {
+          await this.client.connection(hub).request("hub_restart", {});
         });
       }
     } else if (value === "logs") {
       try {
         const { lines } = await this.client.homeRequest("logs_tail", { lines: 300 });
-        this.showList("logs", `Log of ${this.client.home ?? "the node"}`, [...lines].reverse().map((line) => ({ label: logLine(line) })));
+        this.showList("logs", `Log of ${this.client.home ?? "the hub"}`, [...lines].reverse().map((line) => ({ label: logLine(line) })));
       } catch (error) {
         this.notify("error", error instanceof Error ? error.message : String(error));
       }
     } else if (tab?.agent === undefined || agent === undefined) {
       this.notify("warning", "no session");
     } else if (value === "dependencies") {
-      const { text } = await this.client.connection(tab.node).call<{ text: string }>(tab.agent.id, { type: "harness_report" });
-      this.showList("dependencies", `Dependencies (node ${tab.node})`, [...text.split("\n"), ...(this.update?.lines() ?? [])].map((label) => ({ label })));
+      const { text } = await this.client.connection(tab.hub).call<{ text: string }>(tab.agent.id, { type: "harness_report" });
+      this.showList("dependencies", `Dependencies (hub ${tab.hub})`, [...text.split("\n"), ...(this.update?.lines() ?? [])].map((label) => ({ label })));
     } else if (value === "subagents") {
-      const { profiles, problems } = await this.client.connection(tab.node).call<{ profiles: SubagentProfileView[]; problems: string[] }>(tab.agent.id, { type: "harness_subagents" });
+      const { profiles, problems } = await this.client.connection(tab.hub).call<{ profiles: SubagentProfileView[]; problems: string[] }>(tab.agent.id, { type: "harness_subagents" });
       this.showList("subagents", "Subagents", [
         ...profiles.map((profile) => ({
           label: `${profile.name} · ${profile.engine} · ${profile.mode}${profile.model !== undefined ? ` · ${profile.model}${profile.resolved !== undefined ? ` → ${profile.resolved}` : ""}` : ""}`,
@@ -1431,17 +1434,17 @@ export class Workbench {
       const variant: Variant = state.variant === "simple" ? "advanced" : "simple";
       switch (value) {
         case "madness":
-          await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", madness: !state.madness });
+          await this.client.connection(tab.hub).call(tab.agent.id, { type: "harness_set", madness: !state.madness });
           break;
         case "simple":
-          await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", variant });
+          await this.client.connection(tab.hub).call(tab.agent.id, { type: "harness_set", variant });
           break;
         case "implementer": {
           // in turn: self, then the profiles this session may call
-          const { profiles } = await this.client.connection(tab.node).call<{ profiles: SubagentProfileView[] }>(tab.agent.id, { type: "harness_subagents" });
+          const { profiles } = await this.client.connection(tab.hub).call<{ profiles: SubagentProfileView[] }>(tab.agent.id, { type: "harness_subagents" });
           const choices = ["self", ...profiles.map((profile) => profile.name)];
           const next = choices[(choices.indexOf(state.implementer) + 1) % choices.length] ?? "self";
-          await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", implementer: next });
+          await this.client.connection(tab.hub).call(tab.agent.id, { type: "harness_set", implementer: next });
           break;
         }
         case "name":
@@ -1456,7 +1459,7 @@ export class Workbench {
 
   async act(action: ActionId): Promise<void> {
     const tab = this.activeTab();
-    const api = tab !== undefined ? this.client.connections.get(tab.node) : undefined;
+    const api = tab !== undefined ? this.client.connections.get(tab.hub) : undefined;
     const agentId = tab?.agent?.id;
     const call = async (record: { type: string; [key: string]: unknown }): Promise<void> => {
       if (api !== undefined && agentId !== undefined) {
@@ -1467,8 +1470,8 @@ export class Workbench {
     };
     try {
       if (action.startsWith("tabs.goto.")) {
-        // Alt+N: the Nth session of the chosen node
-        const target = this.nodeTabs()[Number(action.slice("tabs.goto.".length)) - 1];
+        // Alt+N: the Nth session of the chosen hub
+        const target = this.hubTabs()[Number(action.slice("tabs.goto.".length)) - 1];
         if (target !== undefined) {
           await this.goto(target.index);
         } else {
@@ -1479,22 +1482,22 @@ export class Workbench {
         switch (named) {
           case "tabs.next":
           case "tabs.prev": {
-            const tabs = this.nodeTabs();
+            const tabs = this.hubTabs();
             const at = tabs.findIndex((candidate) => tab !== undefined && sameTab(candidate, tab));
             const target = tabs[tabs.length === 0 ? 0 : (Math.max(0, at) + (action === "tabs.next" ? 1 : tabs.length - 1)) % tabs.length];
             if (target !== undefined) {
               await this.goto(target.index);
             } else {
-              // no tabs on this node
+              // no tabs on this hub
             }
             break;
           }
           case "tabs.new": {
-            const node = this.node();
-            if (node === undefined || !this.client.connections.has(node)) {
-              this.notify("warning", "no node to start a session on: none of yours is online");
+            const hub = this.hub();
+            if (hub === undefined || !this.client.connections.has(hub)) {
+              this.notify("warning", "no hub to start a session on: none of yours is online");
             } else {
-              this.openNewSession(node);
+              this.openNewSession(hub);
             }
             break;
           }
@@ -1507,7 +1510,7 @@ export class Workbench {
           case "items.next":
           case "items.prev":
             if (tab !== undefined) {
-              const items = this.items(tab, this.client.full.get(agentKey(tab.node, agentId ?? ""))?.state);
+              const items = this.items(tab, this.client.full.get(agentKey(tab.hub, agentId ?? ""))?.state);
               const index = items.findIndex((item) => item.id === this.selectedItem(tab));
               const next = items[Math.max(0, Math.min(items.length - 1, index + (action === "items.next" ? 1 : -1)))];
               this.select(tab, next?.id ?? "session");
@@ -1582,15 +1585,15 @@ export class Workbench {
   }
 
   /**
-   * Logs in to a provider on the active session's node (where its agents read auth.json): a list of
+   * Logs in to a provider on the active session's hub (where its agents read auth.json): a list of
    * providers, then the login's steps as interactions in the editor's place.
    */
   async loginPicker(initial?: string): Promise<void> {
     const tab = this.activeTab();
     if (tab?.agent === undefined) {
-      this.notify("warning", "no session: logins are stored on a session's node");
+      this.notify("warning", "no session: logins are stored on a session's hub");
     } else {
-      const node = tab.node;
+      const node = tab.hub;
       const agentId = tab.agent.id;
       const api = this.client.connection(node);
       const { providers } = await api.call<{ providers: LoginProvider[] }>(agentId, { type: "harness_login_providers" });
@@ -1605,7 +1608,7 @@ export class Workbench {
         ...(initial !== undefined ? { initial } : {}),
         choose: (value) => {
           const [provider, authType] = value.split("\u0000") as [string, "oauth" | "api_key"];
-          // the login runs on the node; its steps arrive as `login` interactions
+          // the login runs on the hub; its steps arrive as `login` interactions
           void api
             .call<{ back?: true }>(agentId, { type: "harness_login", provider, authType })
             .then((result) => (result.back === true ? this.loginPicker(value) : this.notify("info", `logged in to ${provider} on ${node}`)))
@@ -1625,7 +1628,7 @@ export class Workbench {
       this.notify("warning", "no session here");
     } else {
       try {
-        await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_task_stop", taskId });
+        await this.client.connection(tab.hub).call(tab.agent.id, { type: "harness_task_stop", taskId });
       } catch (error) {
         this.notify("error", error instanceof Error ? error.message : String(error));
       }
@@ -1639,7 +1642,7 @@ export class Workbench {
       this.notify("warning", "no session here: Ctrl+T starts one, Ctrl+O opens one");
     } else {
       try {
-        await this.client.connection(tab.node).call(tab.agent.id, { type: "bash", command, excludeFromContext });
+        await this.client.connection(tab.hub).call(tab.agent.id, { type: "bash", command, excludeFromContext });
       } catch (error) {
         this.notify("error", error instanceof Error ? error.message : String(error));
       }
@@ -1649,10 +1652,10 @@ export class Workbench {
   async logout(provider: string): Promise<void> {
     const tab = this.activeTab();
     if (tab?.agent === undefined) {
-      this.notify("warning", "no session: logins are stored on a session's node");
+      this.notify("warning", "no session: logins are stored on a session's hub");
     } else {
-      await this.client.connection(tab.node).call(tab.agent.id, { type: "harness_logout", provider });
-      this.notify("info", `logged out of ${provider} on ${tab.node}`);
+      await this.client.connection(tab.hub).call(tab.agent.id, { type: "harness_logout", provider });
+      this.notify("info", `logged out of ${provider} on ${tab.hub}`);
     }
   }
 
@@ -1685,7 +1688,7 @@ export class Workbench {
     if (tab?.agent === undefined) {
       this.notify("warning", "no session");
     } else {
-      const api = this.client.connection(tab.node);
+      const api = this.client.connection(tab.hub);
       const agentId = tab.agent.id;
       type Listed = { provider: string; id: string; name?: string };
       const { models, favorites } = await api.call<{ models: Listed[]; favorites?: { provider: string; id: string }[] }>(agentId, { type: "get_available_models" });
@@ -1732,7 +1735,7 @@ export class Workbench {
     const tab = this.activeTab();
     if (tab?.agent !== undefined) {
       await this.client
-        .connection(tab.node)
+        .connection(tab.hub)
         .call(tab.agent.id, record)
         .catch((error: unknown) => this.notify("error", error instanceof Error ? error.message : String(error)));
     } else {
@@ -1744,11 +1747,11 @@ export class Workbench {
     const tab = this.activeTab();
     if (tab?.agent !== undefined) {
       // the session's own interaction, or one of its subagents'
-      const owner = [tab.agent, ...this.descendants(tab.node, tab.agent.id)].find((candidate) =>
-        this.client.full.get(agentKey(tab.node, candidate.id))?.interactions.some((request) => request.id === interactionId),
+      const owner = [tab.agent, ...this.descendants(tab.hub, tab.agent.id)].find((candidate) =>
+        this.client.full.get(agentKey(tab.hub, candidate.id))?.interactions.some((request) => request.id === interactionId),
       );
       try {
-        await this.client.connection(tab.node).call((owner ?? tab.agent).id, { type: "harness_interaction_response", interactionId, answer: value });
+        await this.client.connection(tab.hub).call((owner ?? tab.agent).id, { type: "harness_interaction_response", interactionId, answer: value });
       } catch (error) {
         this.notify("error", `answer not delivered: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -1764,11 +1767,11 @@ export class Workbench {
       this.notify("warning", "no session here: Ctrl+T starts one, Ctrl+O opens one");
     } else {
       const selected = this.selectedItem(tab);
-      const agent = this.client.full.get(agentKey(tab.node, tab.agent.id));
+      const agent = this.client.full.get(agentKey(tab.hub, tab.agent.id));
       const subagent = agent?.state.subagents.find((candidate) => candidate.session === selected);
       const task = agent?.state.tasks.find((candidate) => candidate.id === selected);
-      const nested = selected.startsWith("agent:") ? this.client.agents.get(agentKey(tab.node, selected.slice("agent:".length))) : undefined;
-      const api = this.client.connection(tab.node);
+      const nested = selected.startsWith("agent:") ? this.client.agents.get(agentKey(tab.hub, selected.slice("agent:".length))) : undefined;
+      const api = this.client.connection(tab.hub);
       try {
         if (subagent !== undefined) {
           // the operator's steering of a live subagent (C12), through the session that runs it
@@ -1795,10 +1798,10 @@ export class Workbench {
     const shared = tabRecords(this.client.settings);
     const drafts = this.drafts.filter((draft) => !shared.some((record) => sameTab(record, draft)));
     return [...shared, ...drafts].map((record, index) => {
-      const agent = [...this.client.agents.values()].find((candidate) => candidate.node === record.node && candidate.sessionId === record.sessionId);
-      const unavailable = this.client.offline.has(record.node) ? `node ${record.node} is offline` : this.client.connections.has(record.node) ? undefined : `node ${record.node} is not connected`;
+      const agent = [...this.client.agents.values()].find((candidate) => candidate.hub === record.hub && candidate.sessionId === record.sessionId);
+      const unavailable = this.client.offline.has(record.hub) ? `hub ${record.hub} is offline` : this.client.connections.has(record.hub) ? undefined : `hub ${record.hub} is not connected`;
       // a subagent that waits for the operator makes its session wait too
-      const childWaits = agent !== undefined && unavailable === undefined && this.descendants(record.node, agent.id).some((child) => child.summary.waiting > 0);
+      const childWaits = agent !== undefined && unavailable === undefined && this.descendants(record.hub, agent.id).some((child) => child.summary.waiting > 0);
       return {
         ...record,
         agent,
@@ -1815,7 +1818,7 @@ export class Workbench {
   activeTab(): Tab | undefined {
     const tabs = this.tabs();
     const key = this.activeKey;
-    return (key !== undefined ? tabs.find((tab) => sameTab(tab, key)) : undefined) ?? tabs.find((tab) => tab.node === this.chosenNode) ?? tabs[0];
+    return (key !== undefined ? tabs.find((tab) => sameTab(tab, key)) : undefined) ?? tabs.find((tab) => tab.hub === this.chosenHub) ?? tabs[0];
   }
 
   /** The items of a session: itself first, then its tasks and subagents on one level (subagents' own children indented). */
@@ -1834,7 +1837,7 @@ export class Workbench {
     }));
     // a harness subagent's own agent tells its state live, and its own subagents follow it indented
     const subagents: Item[] = (state?.subagents ?? []).flatMap((subagent) => {
-      const child = subagent.agentId !== undefined ? this.client.agents.get(agentKey(tab.node, subagent.agentId)) : undefined;
+      const child = subagent.agentId !== undefined ? this.client.agents.get(agentKey(tab.hub, subagent.agentId)) : undefined;
       const live = child !== undefined && (subagent.state === "running" || subagent.state === "waiting");
       const row: Item = {
         kind: "subagent",
@@ -1846,7 +1849,7 @@ export class Workbench {
       };
       const nested: Item[] =
         child !== undefined
-          ? this.descendants(tab.node, child.id).map((grandchild) => ({
+          ? this.descendants(tab.hub, child.id).map((grandchild) => ({
               kind: "subagent" as const,
               id: `agent:${grandchild.id}`,
               label: `${grandchild.subagent?.profile ?? "subagent"} ${grandchild.sessionId.slice(0, 4)}`,
@@ -1866,7 +1869,7 @@ export class Workbench {
 
   select(tab: Tab, itemId: string): void {
     // a subagent of Claude's opens its Task call expanded
-    const agent = tab.agent !== undefined ? this.client.full.get(agentKey(tab.node, tab.agent.id)) : undefined;
+    const agent = tab.agent !== undefined ? this.client.full.get(agentKey(tab.hub, tab.agent.id)) : undefined;
     const claudeAgent = agent?.state.tasks.some((task) => task.id === itemId && task.toolUseId !== undefined) === true;
     this.updateView(tab, claudeAgent ? { selected: itemId, expanded: true } : { selected: itemId });
     if (itemId !== "session") {
@@ -1885,16 +1888,16 @@ export class Workbench {
     } else {
       const tab = tabs[Math.max(0, Math.min(index, tabs.length - 1))];
       if (tab !== undefined) {
-        this.activeKey = { node: tab.node, sessionId: tab.sessionId };
-        this.usedAt.set(`${tab.node}/${tab.sessionId}`, this.clock.now());
-        this.chosenNode = tab.node;
-        this.lastActive.set(tab.node, tab.sessionId);
+        this.activeKey = { hub: tab.hub, sessionId: tab.sessionId };
+        this.usedAt.set(`${tab.hub}/${tab.sessionId}`, this.clock.now());
+        this.chosenHub = tab.hub;
+        this.lastActive.set(tab.hub, tab.sessionId);
         this.newSessionChoice = undefined;
       } else {
         // tabs is not empty
       }
       if (tab?.agent !== undefined) {
-        await this.client.follow(tab.node, tab.agent.id);
+        await this.client.follow(tab.hub, tab.agent.id);
         await this.markSeen(tab);
       } else {
         // the tab's agent is not running: opening it starts one (openTab)
@@ -1918,19 +1921,19 @@ export class Workbench {
   }
 
   /** The index of a tab in the current set. */
-  private tabIndex(tab: { node: string; sessionId: string }): number {
+  private tabIndex(tab: TabKey): number {
     return tabRecords(this.client.settings).findIndex((record) => sameTab(record, tab));
   }
 
-  /** Starts an agent for a new session on the node and opens it as the last tab. */
+  /** Starts an agent for a new session on the hub and opens it as the last tab. */
   /**
-   * A new session on the node, in `cwd`: an agent and a tab of this window alone (a draft), which
+   * A new session on the hub, in `cwd`: an agent and a tab of this window alone (a draft), which
    * joins the shared tab set with its first message; closed before that, nothing of it remains.
    */
-  async newTab(node: string, cwd: string): Promise<Tab | undefined> {
-    const { agent } = await this.client.connection(node).request("agent_start", { cwd });
-    this.client.agents.set(agentKey(node, agent.id), agent);
-    const record: TabRecord = { node, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
+  async newTab(hub: string, cwd: string): Promise<Tab | undefined> {
+    const { agent } = await this.client.connection(hub).request("agent_start", { cwd });
+    this.client.agents.set(agentKey(hub, agent.id), agent);
+    const record: TabRecord = { hub, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
     this.drafts = [...this.drafts, record];
     await this.activate(this.tabs().findIndex((tab) => sameTab(tab, record)));
     return this.activeTab();
@@ -1938,22 +1941,22 @@ export class Workbench {
 
   /** A draft's first message is sent: it joins the shared tab set (every client of the user sees it). */
   private async keepDraft(tab: Tab): Promise<void> {
-    const record: TabRecord = { node: tab.node, sessionId: tab.sessionId, sessionFile: tab.agent?.sessionFile ?? tab.sessionFile, cwd: tab.cwd };
+    const record: TabRecord = { hub: tab.hub, sessionId: tab.sessionId, sessionFile: tab.agent?.sessionFile ?? tab.sessionFile, cwd: tab.cwd };
     await this.updateTabs((records) => (records.some((candidate) => sameTab(candidate, record)) ? records : [...records, record]));
     this.drafts = this.drafts.filter((draft) => !sameTab(draft, record));
   }
 
-  /** Opens a stored session: an agent for it (the node's, if one runs already), then a tab. */
-  async openSession(node: string, session: { id: string; path: string; cwd: string }): Promise<void> {
+  /** Opens a stored session: an agent for it (the hub's, if one runs already), then a tab. */
+  async openSession(hub: string, session: { id: string; path: string; cwd: string }): Promise<void> {
     const records = tabRecords(this.client.settings);
-    const index = records.findIndex((record) => record.node === node && record.sessionId === session.id);
+    const index = records.findIndex((record) => record.hub === hub && record.sessionId === session.id);
     if (index !== -1) {
       await this.ensureAgent(this.tabs()[index]);
       await this.activate(index);
     } else {
-      const { agent } = await this.client.connection(node).request("agent_start", { cwd: session.cwd, sessionFile: session.path });
-      this.client.agents.set(agentKey(node, agent.id), agent);
-      const record: TabRecord = { node, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
+      const { agent } = await this.client.connection(hub).request("agent_start", { cwd: session.cwd, sessionFile: session.path });
+      this.client.agents.set(agentKey(hub, agent.id), agent);
+      const record: TabRecord = { hub, sessionId: agent.sessionId, sessionFile: agent.sessionFile, cwd: agent.cwd };
       await this.updateTabs((current) => (current.some((candidate) => sameTab(candidate, record)) ? current : [...current, record]));
       await this.activate(this.tabIndex(record));
     }
@@ -1964,13 +1967,13 @@ export class Workbench {
     if (tab === undefined || tab.agent !== undefined || tab.unavailable !== undefined) {
       return;
     } else {
-      const { agent } = await this.client.connection(tab.node).request("agent_start", { cwd: tab.cwd, sessionFile: tab.sessionFile });
-      this.client.agents.set(agentKey(tab.node, agent.id), agent);
+      const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd, sessionFile: tab.sessionFile });
+      this.client.agents.set(agentKey(tab.hub, agent.id), agent);
     }
   }
 
-  /** Closes a tab (the agent keeps running on its node). */
-  /** Closes a tab: its agent keeps running on its node; a draft's agent stops (nothing of it remains). */
+  /** Closes a tab (the agent keeps running on its hub). */
+  /** Closes a tab: its agent keeps running on its hub; a draft's agent stops (nothing of it remains). */
   async closeTab(index: number): Promise<void> {
     const closed = this.tabs()[index];
     if (closed === undefined) {
@@ -1979,7 +1982,7 @@ export class Workbench {
       this.drafts = this.drafts.filter((draft) => !sameTab(draft, closed));
       if (closed.agent !== undefined) {
         await this.client
-          .connection(closed.node)
+          .connection(closed.hub)
           .request("agent_close", { agent: closed.agent.id })
           .catch(() => undefined);
       } else {
@@ -1988,7 +1991,7 @@ export class Workbench {
     } else {
       await this.updateTabs((records) => records.filter((record) => !sameTab(record, closed)));
     }
-    const left = this.tabs().filter((tab) => tab.node === closed.node);
+    const left = this.tabs().filter((tab) => tab.hub === closed.hub);
     const next = left[Math.min(left.length - 1, this.nodeTabIndexBefore(closed, left))];
     if (next !== undefined) {
       await this.activate(next.index);
@@ -1998,9 +2001,9 @@ export class Workbench {
     }
   }
 
-  /** Where a closed tab was among its node's remaining tabs. */
+  /** Where a closed tab was among its hub's remaining tabs. */
   private nodeTabIndexBefore(closed: Tab, left: Tab[]): number {
-    const before = this.tabs().filter((tab) => tab.node === closed.node && tab.index < closed.index).length;
+    const before = this.tabs().filter((tab) => tab.hub === closed.hub && tab.index < closed.index).length;
     return Math.max(0, Math.min(before, left.length - 1));
   }
 

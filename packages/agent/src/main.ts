@@ -1,4 +1,4 @@
-// harness-agent: one pi session in its own process, driven over HAP on fd 3 (a socket pair the node
+// harness-agent: one pi session in its own process, driven over HAP on fd 3 (a socket pair the hub
 // opens; stdout and stderr stay free for diagnostics, so no stray print can corrupt the stream).
 //
 //   harness-agent --cwd <dir> [--session-file <path>] [--parent-session <path>] [--subagent <json>]
@@ -10,7 +10,7 @@ import { parseArgs } from "node:util";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
 import type { HapEvent } from "#protocol/hap.ts";
 import type { HarnessState, SubagentLaunch } from "#protocol/state.ts";
-import { NodeChildren } from "./children.ts";
+import { HubChildren } from "./children.ts";
 import { createHarnessExtension } from "#extension/index.ts";
 import { HapServer } from "./hap-server.ts";
 import { InteractionHub } from "./interactions.ts";
@@ -56,7 +56,7 @@ async function main(): Promise<void> {
   };
 
   const hub = new InteractionHub(emit);
-  const children = new NodeChildren((frame) => write({ type: "harness_node", frame }));
+  const children = new HubChildren((frame) => write({ type: "harness_hub", frame }));
   const { factory, controller } = createHarnessExtension({
     interactions: hub,
     publishState: (state: HarnessState) => emit({ type: "harness_state", state }),

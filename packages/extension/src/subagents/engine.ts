@@ -1,4 +1,4 @@
-// The engines of subagents (plan 12.2): `harness` (a child agent on the node) and `claude` (Claude
+// The engines of subagents (plan 12.2): `harness` (a child agent on the hub) and `claude` (Claude
 // Code). Both turn their own streams into the same SubagentEvents, from which the `subagent` tool
 // builds its progress, the HarnessState row and the handover block.
 

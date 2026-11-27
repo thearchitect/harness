@@ -1,5 +1,5 @@
 // Long sessions (plan polish-3 D): sessions are loaded ahead whole in the background — the window's
-// tabs and the sessions of the node's list, read from their files without agents — and a frame draws
+// tabs and the sessions of the hub's list, read from their files without agents — and a frame draws
 // what is in sight, so scrolling costs the same in a session of 5000 entries as in one of 50, and the
 // whole session is there to scroll and search to its first message. A session opened from the list
 // shows at once from what was read; its agent starts meanwhile and carries on with the same items.
@@ -9,9 +9,9 @@ import { resolve } from "node:path";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { NodeConnection } from "#client/connection.ts";
+import { HubConnection } from "#client/connection.ts";
 import { agentKey } from "#client/model/client-model.ts";
-import { inProcessTransport } from "#node/endpoints/transports.ts";
+import { inProcessTransport } from "#hub/endpoints/transports.ts";
 import { TuiDriver } from "#testkit/drivers/tui.ts";
 import { createStand, type Stand } from "#testkit/stand/stand.ts";
 
@@ -54,7 +54,7 @@ test("long sessions: loaded ahead whole, a frame draws what is in sight, the fir
   const stand = await createStand({});
   stands.push(stand);
   const sessions = [longSession(stand, "alpha"), longSession(stand, "beta"), longSession(stand, "gamma"), longSession(stand, "listed")];
-  const tui = await TuiDriver.start(() => NodeConnection.open(inProcessTransport(stand.node), "tui", undefined, ["component-bridge"]), { cwd: stand.project });
+  const tui = await TuiDriver.start(() => HubConnection.open(inProcessTransport(stand.hub), "tui", undefined, ["component-bridge"]), { cwd: stand.project });
   drivers.push(tui);
   const node = tui.client.home ?? "";
 

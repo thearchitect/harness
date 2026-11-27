@@ -1,5 +1,5 @@
 // The session's terminal over the main area (plan polish-3 F): a frame `╭─╮` in the accent border
-// color, its title naming the directory and the key that hides it; inside, the node's shell as the
+// color, its title naming the directory and the key that hides it; inside, the hub's shell as the
 // client's terminal model draws it, the terminal's own cursor where the shell's stands. While it is
 // shown every key goes to the shell as a terminal sends it (Tab, Ctrl+C, Esc too) but the one that
 // hides it; keys this terminal reports by the kitty protocol go on as legacy bytes, which a shell

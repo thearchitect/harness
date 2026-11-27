@@ -1,4 +1,4 @@
-// The UI settings of a user, kept by the node the user's clients come through: themes, fonts, the
+// The UI settings of a user, kept by the hub the user's clients come through: themes, fonts, the
 // open tabs (ui.tabs), task defaults. Stored in ~/.harness/ui-settings.json, apart from pi's
 // settings.json, which agents write themselves. Changes reach every client of the user.
 

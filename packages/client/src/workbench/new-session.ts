@@ -1,15 +1,15 @@
 // Choosing where a new session starts, in the chat zone: the folders of recent sessions (newest
-// first) under `folder ⇒`, which browses the node's directories. No field and no focus: typing
+// first) under `folder ⇒`, which browses the hub's directories. No field and no focus: typing
 // filters (pi-tui's fuzzy matching), ↑/↓ choose, → opens a folder (its directories replace the list),
 // ← goes up, `/` opens the best match, Enter starts the session in the chosen folder, Esc cancels.
-// Listings come from the node (dirs_list) and are fetched ahead for the chosen row and the parent,
-// so → and ← answer at once, also for nodes behind a hub. The same model in every UI.
+// Listings come from the hub (dirs_list) and are fetched ahead for the chosen row and the parent,
+// so → and ← answer at once, also for other machines' hubs. The same model in every UI.
 
-import type { DirItem, NodeOps, SessionListItem } from "#protocol/node.ts";
+import type { DirItem, HubOps, SessionListItem } from "#protocol/hub.ts";
 import { fuzzyFilter } from "../fuzzy.ts";
 
 export type NewSessionRow =
-  /** `folder ⇒`: browse from the node user's home. */
+  /** `folder ⇒`: browse from the hub user's home. */
   | { kind: "browse" }
   /** `· this folder`: start in the folder being browsed. */
   | { kind: "here"; path: string }
@@ -29,7 +29,7 @@ export type NewSessionKey =
   | "enter"
   | "escape";
 
-type Listing = NodeOps["dirs_list"]["result"];
+type Listing = HubOps["dirs_list"]["result"];
 
 export type NewSessionDeps = {
   list(path: string, hidden: boolean): Promise<Listing>;
@@ -59,20 +59,20 @@ export function age(ms: number): string {
 }
 
 export class NewSession {
-  readonly node: string;
+  readonly hub: string;
   mode: "recent" | "browse" = "recent";
   /** The folder being browsed. */
   path: string | undefined;
   filter = "";
   selected = 0;
-  /** The node user's home (from the node's first listing). */
+  /** The hub user's home (from the hub's first listing). */
   home: string | undefined;
   private recent: { path: string; created: number }[] = [];
   private readonly listings = new Map<string, Listing>();
   private readonly deps: NewSessionDeps;
 
   constructor(node: string, deps: NewSessionDeps) {
-    this.node = node;
+    this.hub = node;
     this.deps = deps;
   }
 
@@ -131,7 +131,7 @@ export class NewSession {
   }
 
   title(): string {
-    return this.mode === "recent" || this.path === undefined ? `New session on ${this.node}` : `New session on ${this.node} · ${this.label(this.path)}`;
+    return this.mode === "recent" || this.path === undefined ? `New session on ${this.hub}` : `New session on ${this.hub} · ${this.label(this.path)}`;
   }
 
   rows(): NewSessionRow[] {

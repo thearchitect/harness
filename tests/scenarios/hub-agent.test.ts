@@ -1,4 +1,4 @@
-// A node runs an agent for a client: the client starts it, attaches with a snapshot, prompts in
+// A hub runs an agent for a client: the client starts it, attaches with a snapshot, prompts in
 // BUILD, answers the gate the agent opens for a file change, and sees the run settle. The same
 // over a unix socket, with a second client that sees the first one's answer close its gate.
 
@@ -9,7 +9,7 @@ import { after, describe, test } from "node:test";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { createStand, nextRecord, type Stand } from "#testkit/stand/stand.ts";
 
-describe("node and agent", () => {
+describe("hub and agent", () => {
   const stands: Stand[] = [];
   after(async () => {
     for (const stand of stands) {
@@ -44,7 +44,7 @@ describe("node and agent", () => {
     assert.equal(readFileSync(join(stand.project, "hello.txt"), "utf8"), "hi\n");
   });
 
-  test("the server skill is an agent's only on a node declared a shared server", async () => {
+  test("the server skill is an agent's only on a hub declared a shared server", async () => {
     const skills = async (server: boolean): Promise<string[]> => {
       const stand = await createStand({ server });
       stands.push(stand);

@@ -1,6 +1,6 @@
 // Where the TUI keeps its window's state (client/workbench/view-state.ts): ~/.harness/ui-state/tui.json,
 // written under its lock and merged by tab, so two windows keep each other's tabs; the active tab,
-// the node and the drafts are the window's that saved last.
+// the hub and the drafts are the window's that saved last.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

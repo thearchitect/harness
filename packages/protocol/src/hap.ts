@@ -1,4 +1,4 @@
-// HAP — the harness agent protocol: one ordered JSONL stream between a harness-agent and the node
+// HAP — the harness agent protocol: one ordered JSONL stream between a harness-agent and the hub
 // that runs it (stdio), forwarded per client channel. It is a superset of pi's RPC: pi commands,
 // responses, session events and extension_ui_* records pass unchanged; harness adds the records
 // below. pi's shapes are documented by pi (docs/rpc.md, docs/rpc-commands.md, docs/json.md);
@@ -159,12 +159,12 @@ export type HapEvent =
   | { type: "harness_reload" };
 
 /**
- * Node → agent: the clients attached in full; and the node's frames for the agent's own connection
- * to its node (an agent is a client of its node for its subagents).
+ * Hub → agent: the clients attached in full; and the hub's frames for the agent's own connection
+ * to its hub (an agent is a client of its hub for its subagents).
  */
-export type NodeToAgentRecord = { type: "harness_clients"; componentBridge: number } | { type: "harness_node"; frame: unknown };
+export type HubToAgentRecord = { type: "harness_clients"; componentBridge: number } | { type: "harness_hub"; frame: unknown };
 
 /** Agent → node: a frame of the agent's own client connection to its node (node.ts ClientFrame). */
-export type AgentToNodeRecord = { type: "harness_node"; frame: unknown };
+export type AgentToHubRecord = { type: "harness_hub"; frame: unknown };
 
-export type HapRecord = HapRequest | HapEvent | AgentToNodeRecord | NodeToAgentRecord | PiRecord;
+export type HapRecord = HapRequest | HapEvent | AgentToHubRecord | HubToAgentRecord | PiRecord;

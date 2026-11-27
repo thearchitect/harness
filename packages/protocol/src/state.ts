@@ -44,7 +44,7 @@ export type SubagentEngine = "harness" | "claude";
 export type SubagentState = "running" | "waiting" | "done" | "stopped" | "failed";
 
 /**
- * How a child agent runs as a subagent: the parent resolves its profile into this, the node passes
+ * How a child agent runs as a subagent: the parent resolves its profile into this, the hub passes
  * it to the child (`agent_start { subagent }`) and sets `depth` from the chain of parents.
  */
 export type SubagentLaunch = {
@@ -60,7 +60,7 @@ export type SubagentLaunch = {
   /** Profiles the child may call itself (the `subagent` tool only when non-empty and depth < 2). */
   subagents: string[];
   madness: boolean;
-  /** 1 for a subagent of a session, 2 for a subagent's subagent; set by the node. */
+  /** 1 for a subagent of a session, 2 for a subagent's subagent; set by the hub. */
   depth: number;
 };
 

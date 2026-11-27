@@ -23,7 +23,7 @@ function until(model: AgentModel, condition: () => boolean): Promise<void> {
 
 async function open(raw: RawDriver, cwd: string, sessionFile?: string): Promise<{ id: string; model: AgentModel; sessionFile?: string }> {
   const { agent } = await raw.api.request("agent_start", { cwd, sessionFile });
-  return { id: agent.id, model: await raw.client.follow(raw.node, agent.id), sessionFile: agent.sessionFile };
+  return { id: agent.id, model: await raw.client.follow(raw.hub, agent.id), sessionFile: agent.sessionFile };
 }
 
 export const scenario = defineScenario({

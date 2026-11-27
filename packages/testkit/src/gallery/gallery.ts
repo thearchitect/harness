@@ -15,11 +15,11 @@ import { choiceDialog, piDialog } from "#extension/presentation/tui/dialogs.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { SideStrip, type StripActions } from "#tui/columns.ts";
 import { getTheme } from "#tui/pi-internals.ts";
-import { appWebDir } from "#node/endpoints/static.ts";
-import { startWebApp } from "#node/webapp.ts";
+import { appWebDir } from "#hub/endpoints/static.ts";
+import { startWebApp } from "#hub/webapp.ts";
 import { bundledBrowser, gridHtml, screenshot } from "../capture/rasterize.ts";
 import { VirtualTerminal } from "../drivers/terminal.ts";
-import { CLAUDE_TASK, INTERACTIONS, ITEMS, NODES, TABS } from "../fixtures/fixtures.ts";
+import { CLAUDE_TASK, INTERACTIONS, ITEMS, HUBS, TABS } from "../fixtures/fixtures.ts";
 import { claudeTaskRenderers } from "#extension/presentation/claude-task.ts";
 import { reportsRoot } from "../report/report.ts";
 
@@ -56,12 +56,12 @@ export function exhibits(): Exhibit[] {
   return [
     ...Object.entries(INTERACTIONS).map(([name, request]) => ({ name: `interaction-${name}`, width: 100, component: (tui: TUI) => interaction(tui, request) })),
     {
-      // the strip's three blocks: nodes, sessions (every glyph), the active session's items
+      // the strip's three blocks: hubs, sessions (every glyph), the active session's items
       name: "strip-all-glyphs",
       width: 18,
       component: () => {
         const strip = new SideStrip(theme, () => 24, STRIP_INERT);
-        strip.content = { nodes: NODES, node: "laptop", tabs: TABS, active: 1, newSession: false, items: ITEMS, selected: "t2", mode: "build" };
+        strip.content = { hubs: HUBS, hub: "laptop", tabs: TABS, active: 1, newSession: false, items: ITEMS, selected: "t2", mode: "build" };
         return strip;
       },
     },
@@ -81,7 +81,7 @@ export function exhibits(): Exhibit[] {
       width: 18,
       component: () => {
         const strip = new SideStrip(theme, () => 12, STRIP_INERT);
-        strip.content = { nodes: [{ name: "default", label: "inprocess", glyph: "" }], node: "default", tabs: [], active: -1, newSession: true, items: [], selected: "session", mode: "plan" };
+        strip.content = { hubs: [{ name: "default", label: "inprocess", glyph: "" }], hub: "default", tabs: [], active: -1, newSession: true, items: [], selected: "session", mode: "plan" };
         return strip;
       },
     },

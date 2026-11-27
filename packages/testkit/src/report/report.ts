@@ -6,7 +6,7 @@
 
 import { appendFileSync, cpSync, existsSync, mkdirSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
-import type { Transport } from "#protocol/node.ts";
+import type { Transport } from "#protocol/hub.ts";
 import type { RawDriver } from "../drivers/raw.ts";
 import { TuiDriver } from "../drivers/tui.ts";
 import { WebDriver } from "../drivers/web.ts";
@@ -189,7 +189,7 @@ export class Report {
   }
 }
 
-/** What a client knows, as plain data: its nodes, agents, settings, and the screen it would draw. */
+/** What a client knows, as plain data: its hubs, agents, settings, and the screen it would draw. */
 export async function modelState(client: TuiDriver | RawDriver | WebDriver): Promise<unknown> {
   if (client instanceof WebDriver) {
     return { screen: await client.screen() };
@@ -214,12 +214,12 @@ function clientState(client: TuiDriver | RawDriver): unknown {
       ...base,
       screen: {
         strips: screen.strips,
-        tabs: screen.tabs.map((tab) => ({ node: tab.node, title: tab.title, glyph: tab.glyph, mode: tab.mode, unavailable: tab.unavailable })),
+        tabs: screen.tabs.map((tab) => ({ node: tab.hub, title: tab.title, glyph: tab.glyph, mode: tab.mode, unavailable: tab.unavailable })),
         active: screen.active,
         items: screen.items,
         selected: screen.selected,
         input: screen.input,
-        zones: { ...screen.zones, footer: { node: screen.zones.footer.node }, editor: screen.zones.editor.kind === "picker" ? { kind: "picker", id: screen.zones.editor.picker.id, items: screen.zones.editor.picker.items.length } : screen.zones.editor },
+        zones: { ...screen.zones, footer: { node: screen.zones.footer.hub }, editor: screen.zones.editor.kind === "picker" ? { kind: "picker", id: screen.zones.editor.picker.id, items: screen.zones.editor.picker.items.length } : screen.zones.editor },
       },
     };
   } else {

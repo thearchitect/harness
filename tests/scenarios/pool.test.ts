@@ -1,11 +1,11 @@
-// The node's pool: an agent nobody follows, with no run, interaction or task, is unloaded after the
+// The hub's pool: an agent nobody follows, with no run, interaction or task, is unloaded after the
 // idle time (its session stays and opens again); a followed one stays; at the agent limit the
 // oldest idle agent makes room, and with none idle the start is refused.
 
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { ManualClock } from "#protocol/clock.ts";
-import { IDLE_UNLOAD_MS } from "#node/node.ts";
+import { IDLE_UNLOAD_MS } from "#hub/hub.ts";
 import { createStand, type Stand } from "#testkit/stand/stand.ts";
 
 const stands: Stand[] = [];

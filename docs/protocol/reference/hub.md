@@ -1,8 +1,8 @@
-# Node protocol reference
+# Hub protocol reference
 
 <!-- Generated from packages/protocol/src/schemas.ts by packages/testkit/src/docs/write-reference.ts; do not edit. -->
 
-Frames between a client and a node (or a hub routing to nodes), one JSON object per line ([behavior](../node.md)).
+Frames between a client and a hub, one JSON object per line ([behavior](../hub.md)).
 
 Protocol version: 1.
 
@@ -16,8 +16,8 @@ The first frame of a connection; answered with welcome or refused.
 |---|---|---|---|
 | `k` | `"hello"` | yes |  |
 | `protocol` | integer | yes | PROTOCOL_VERSION of the client (version.ts) |
-| `client` | string | yes | What the client is: tui, app, test, hub, node |
-| `token` | string |  | A device token (hub) or a node key (uplink); none on local endpoints |
+| `client` | string | yes | What the client is: tui, app, test |
+| `token` | string |  | A device token on the network endpoint; none on local endpoints |
 | `capabilities` | string[] |  | What the client can draw besides typed data: component-bridge |
 
 ### `req`
@@ -28,7 +28,6 @@ A control operation; answered with one res frame of the same id.
 |---|---|---|---|
 | `k` | `"req"` | yes |  |
 | `id` | string | yes | Chosen by the client; the res frame carries it back |
-| `node` | string |  | The node to run it on, through a hub; the connected node when absent |
 | `op` | string | yes | A control operation (see Operations) |
 | `args` | any | yes | The operation's arguments |
 
@@ -39,11 +38,10 @@ A HAP record for an agent; requests are answered by the agent with the same id.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `k` | `"hap"` | yes |  |
-| `node` | string |  | The agent's node, through a hub |
 | `agent` | string | yes | The agent id |
 | `rec` | { type } | yes | The HAP record for the agent |
 
-## Node frames
+## Hub frames
 
 ### `welcome`
 
@@ -53,15 +51,14 @@ The answer to hello.
 |---|---|---|---|
 | `k` | `"welcome"` | yes |  |
 | `protocol` | integer | yes |  |
-| `harness` | string | yes | The node's harness version |
-| `node` | string | yes | The node's name |
-| `user` | string | yes | Who the connection is: the node's OS user or a hub user |
-| `host` | `"client"` \| `"service"` | yes | Who runs the node: a client window holding it, or a service (harness node) |
-| `pid` | integer | yes | The node's process |
+| `harness` | string | yes | The hub's harness version |
+| `hub` | string | yes | The hub's name |
+| `host` | `"client"` \| `"service"` | yes | Who runs the hub: a client window holding it, or a service (harness hub) |
+| `pid` | integer | yes | The hub's process |
 
 ### `refused`
 
-The connection is refused; the node closes it.
+The connection is refused; the hub closes it.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -82,13 +79,12 @@ The answer to a req.
 
 ### `evt`
 
-A node event.
+A hub event.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `k` | `"evt"` | yes |  |
-| `node` | string | yes |  |
-| `event` | any | yes | A node event (see Node events) |
+| `event` | any | yes | A hub event (see Hub events) |
 
 ### `hap`
 
@@ -97,21 +93,14 @@ A record of an agent this connection follows in full (and answers to its request
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `k` | `"hap"` | yes |  |
-| `node` | string | yes |  |
 | `agent` | string | yes |  |
 | `rec` | any | yes | A HAP record of the agent |
 
 ## Operations
 
-### `nodes_list`
-
-The nodes this connection reaches: the node itself (if the user may use it) and, through a hub, the user's nodes with presence. → { nodes }
-
-No fields.
-
 ### `sessions_list`
 
-Sessions stored on the node, newest first, with the agent serving each. → { sessions }
+Sessions stored on the hub, newest first, with the agent serving each. → { sessions }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -129,7 +118,7 @@ A stored session's entries without its agent, as harness_snapshot and harness_en
 
 ### `agents_list`
 
-The agents running on the node with their summaries. → { agents }
+The agents running on the hub with their summaries. → { agents }
 
 No fields.
 
@@ -139,7 +128,7 @@ Starts an agent (or returns the one serving the session already). → { agent }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `cwd` | string | yes | The session's directory; ~ is the node user's home |
+| `cwd` | string | yes | The session's directory; ~ is the hub user's home |
 | `sessionFile` | string |  | Open this stored session; a new one when absent |
 | `subagent` | { profile, role, mode, model, tools, subagents, madness, depth } |  | How the child runs as a subagent; only an agent's own connection may start one |
 | `background` | boolean |  | A subagent that outlives its parent |
@@ -175,7 +164,7 @@ Lists a directory. → { path, items }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `path` | string | yes | A directory under the node user's home |
+| `path` | string | yes | A directory under the hub user's home |
 
 ### `dirs_list`
 
@@ -183,7 +172,7 @@ The directories in a directory, by name, each with hasChildren (it holds directo
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `path` | string | yes | A directory of the node's machine: absolute, ~ or ~/… |
+| `path` | string | yes | A directory of the hub's machine: absolute, ~ or ~/… |
 | `hidden` | boolean |  | Directories whose names start with a dot too |
 
 ### `files_get`
@@ -192,7 +181,7 @@ Reads a file. → { path, base64 }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `path` | string | yes | A file under the node user's home |
+| `path` | string | yes | A file under the hub user's home |
 
 ### `files_put`
 
@@ -200,7 +189,7 @@ Writes a file (directories are created). → { path }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
-| `path` | string | yes | A file under the node user's home |
+| `path` | string | yes | A file under the hub user's home |
 | `base64` | string | yes | The content |
 
 ### `theme_get`
@@ -213,7 +202,7 @@ A theme's colors as hex for clients that draw it themselves, with the names of t
 
 ### `files_upload`
 
-A file the operator hands to a session (dropped, shared, picked), kept in the node's ~/.harness/uploads. → { path }
+A file the operator hands to a session (dropped, shared, picked), kept in the hub's ~/.harness/uploads. → { path }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -222,7 +211,7 @@ A file the operator hands to a session (dropped, shared, picked), kept in the no
 
 ### `transcribe`
 
-Speech to text on the node with its user's OpenAI login (gpt-4o-transcribe). → { text }
+Speech to text on the hub with its user's OpenAI login (gpt-4o-transcribe). → { text }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -231,7 +220,7 @@ Speech to text on the node with its user's OpenAI login (gpt-4o-transcribe). →
 
 ### `logs_tail`
 
-The node's event log, newest last; its own user, or a hub's admins. → { lines }
+The hub's event log, newest last. → { lines }
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -239,7 +228,7 @@ The node's event log, newest last; its own user, or a hub's admins. → { lines 
 
 ### `terminal_open`
 
-Shows a session's terminal to this client: a shell in its directory on this node, started at the first show (and again after it exited); the stream follows as terminal_output events. → { screen } (its screen with history as ANSI)
+Shows a session's terminal to this client: a shell in its directory on this hub, started at the first show (and again after it exited); the stream follows as terminal_output events. → { screen } (its screen with history as ANSI)
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -275,15 +264,15 @@ Hides the terminal from this client; the shell runs on. → {}
 |---|---|---|---|
 | `session` | string | yes |  |
 
-### `node_restart`
+### `hub_restart`
 
-Stops every agent and its processes and starts the node again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}
+Stops every agent and its processes and starts the hub again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}
 
 No fields.
 
 ### `settings_get`
 
-The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }
+The user's UI settings (ui.tabs, ui.theme, …): the hub user's. → { settings }
 
 No fields.
 
@@ -297,11 +286,11 @@ Changes one setting; every client of the user receives a settings event. → { s
 | `value` | any | yes | Its new value; null removes it |
 | `ifRevision` | string |  | The revision (settings.ts settingRevision) of the value this change was made from: another current one answers conflict |
 
-## Node events
+## Hub events
 
 ### `agents`
 
-The node's agents changed (one started or exited).
+The hub's agents changed (one started or exited).
 
 | Field | Type | Required | Description |
 |---|---|---|---|
@@ -331,30 +320,12 @@ An agent's process ended.
 
 ### `settings`
 
-The user's settings changed (sent only to that user's connections).
+The user's settings changed.
 
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `ev` | `"settings"` | yes |  |
 | `settings` | any | yes | The user's settings |
-
-### `nodes`
-
-A hub's nodes came online or went offline.
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `ev` | `"nodes"` | yes |  |
-| `nodes` | any | yes | NodeInfo[]: name, online, roles |
-
-### `refused`
-
-A node behind a hub refused this client's channel.
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `ev` | `"refused"` | yes |  |
-| `error` | any | yes | { code, message } |
 
 ### `terminal_output`
 

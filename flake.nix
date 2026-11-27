@@ -135,10 +135,10 @@
         }
       );
 
-      # services.harness.nodes.<name>: nodes as systemd services, each as its own user (nix/module.nix).
+      # services.harness.hubs.<user>: a hub as a systemd service for each user (nix/module.nix).
       nixosModules.default = import ./nix/module.nix { inherit self; };
 
-      # The OCI image of a remote deployment (a hub and the users' nodes under s6): nix/remote-image.nix.
+      # The OCI image of a user's remote hub (under s6): nix/remote-image.nix.
       lib.mkRemoteImage = import ./nix/remote-image.nix self;
 
       templates.remote = {

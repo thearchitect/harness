@@ -1,4 +1,4 @@
-// JSONL framing shared by every harness stream (HAP on stdio, the node protocol on sockets).
+// JSONL framing shared by every harness stream (HAP on stdio, the hub protocol on sockets).
 // One JSON value per line; only LF separates records, a CR before it is dropped; U+2028 and
 // U+2029 are ordinary characters inside JSON strings, never separators (as pi's jsonl.ts).
 

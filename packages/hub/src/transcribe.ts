@@ -1,5 +1,5 @@
 // Speech to text for the app's voice input: OpenAI's transcription (gpt-4o-transcribe) with the
-// node user's OpenAI login from ~/.harness/auth.json (an OpenAI Codex subscription or an OpenAI
+// hub user's OpenAI login from ~/.harness/auth.json (an OpenAI Codex subscription or an OpenAI
 // API key). HARNESS_TRANSCRIBE_URL and HARNESS_TRANSCRIBE_MODEL point it elsewhere (tests).
 
 import { ModelRuntime } from "@earendil-works/pi-coding-agent";

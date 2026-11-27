@@ -26,7 +26,7 @@ describe("the bundle", { skip }, () => {
 
   test("harness --help and pi's account commands run", async () => {
     const help = await run(join(root, "bin/harness"), ["--help"]);
-    assert.match(help.stdout, /harness node/);
+    assert.match(help.stdout, /harness hub device/);
     const list = await run(join(root, "bin/harness"), ["list"], { env: { ...process.env, HARNESS_HOME: join(process.env.TMPDIR ?? "/tmp", "smoke-home") } });
     assert.equal(typeof list.stdout, "string");
   });

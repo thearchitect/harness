@@ -1,8 +1,8 @@
 // A browser's way back from a provider's sign-in, when the login runs on another machine (plan
 // polish-3 C): the sign-in link names a callback on 127.0.0.1/localhost, which on this machine
 // reaches nothing. While such a login step is shown, this TUI listens on the same port and sends
-// the address the browser came back to on to the node, as the answer of the step's field (pi's flows
-// take a pasted redirect address there). A login on this machine's own node needs none of it: its
+// the address the browser came back to on to the hub, as the answer of the step's field (pi's flows
+// take a pasted redirect address there). A login on this machine's own hub needs none of it: its
 // flow listens itself. Busy port: the operator pastes the address, as the step says.
 
 import { createServer, type Server } from "node:http";
@@ -41,7 +41,7 @@ export class LoginCallback {
     this.notify = notify;
   }
 
-  /** A login step is shown: listen for its callback when its node is elsewhere. */
+  /** A login step is shown: listen for its callback when its hub is elsewhere. */
   follow(request: LoginRequest, node: string | undefined): void {
     const url = request.payload.url;
     const callback = url !== undefined ? callbackPort(url) : undefined;

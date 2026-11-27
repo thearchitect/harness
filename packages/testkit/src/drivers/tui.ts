@@ -1,11 +1,11 @@
-// The TUI driver: the real TUI (App) on a virtual terminal, connected to a stand's node like any
+// The TUI driver: the real TUI (App) on a virtual terminal, connected to a stand's hub like any
 // client. Tests act by keymap action ids (the same ids the app driver uses), type text, press raw
 // keys, and read what the screen shows: the Workbench's screen (the verdict), the terminal's text,
 // and captures (text, ANSI, PNG) for reports.
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import type { NodeConnection } from "#client/connection.ts";
+import type { HubConnection } from "#client/connection.ts";
 import type { ActionId } from "#client/keymap.ts";
 import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench, type Screen } from "#client/workbench/workbench.ts";
@@ -42,8 +42,8 @@ export class TuiDriver {
     this.copied = outside.copied;
   }
 
-  /** A TUI on `connection` (the client's home node), started on a new session in `cwd`. */
-  static async start(open: () => Promise<NodeConnection>, options: TuiDriverOptions): Promise<TuiDriver> {
+  /** A TUI on `connection` (the client's home hub), started on a new session in `cwd`. */
+  static async start(open: () => Promise<HubConnection>, options: TuiDriverOptions): Promise<TuiDriver> {
     const terminal = new VirtualTerminal(options.columns ?? 140, options.rows ?? 40);
     const client = new ClientModel();
     const node = await client.addEndpoint(open, { home: true });

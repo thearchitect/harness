@@ -1,5 +1,5 @@
 {
-  description = "A remote harness deployment: a hub and the users' nodes on Fly.io";
+  description = "A remote harness deployment: a user's hub on Fly.io";
 
   inputs.harness.url = "github:thearchitect/harness";
   inputs.nixpkgs.follows = "harness/nixpkgs";

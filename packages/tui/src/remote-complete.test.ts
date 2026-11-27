@@ -1,4 +1,4 @@
-// @file mentions of a session on another machine complete from its node's paths; directories stay
+// @file mentions of a session on another machine complete from its hub's paths; directories stay
 // open, files end the mention; commands still complete.
 
 import assert from "node:assert/strict";
@@ -7,7 +7,7 @@ import { RemoteAutocompleteProvider } from "./remote-complete.ts";
 
 const signal = new AbortController().signal;
 
-test("a mention completes from the node's paths", async () => {
+test("a mention completes from the hub's paths", async () => {
   const asked: string[] = [];
   const provider = new RemoteAutocompleteProvider([{ name: "tree", description: "the tree" }], async (prefix) => {
     asked.push(prefix);
@@ -24,7 +24,7 @@ test("a mention completes from the node's paths", async () => {
   assert.deepEqual(file, { lines: ["look at @src.md  now"], cursorLine: 0, cursorCol: 16 });
 });
 
-test("commands complete; plain words do not ask the node", async () => {
+test("commands complete; plain words do not ask the hub", async () => {
   let asked = false;
   const provider = new RemoteAutocompleteProvider([{ name: "tree", description: "the tree" }], async () => {
     asked = true;

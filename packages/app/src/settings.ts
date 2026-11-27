@@ -1,5 +1,5 @@
 // The app's own rows of /settings (plan 6.1): the fonts of its two zones and, on web, browser
-// notifications. They live in the user's settings on the home node, like everything else, so every
+// notifications. They live in the user's settings on the home hub, like everything else, so every
 // app of the user draws the same.
 
 import type { ClientModel } from "#client/model/client-model.ts";

@@ -1,18 +1,18 @@
 // The operator's terminal of a session (plan polish-3 F): a shell in a pseudo-terminal in the
-// session's directory, held by the node (an agent unloads when idle; the terminal lives on). One per
-// session, kept until its shell exits or the node closes. A headless xterm mirrors its screen with
+// session's directory, held by the hub (an agent unloads when idle; the terminal lives on). One per
+// session, kept until its shell exits or the hub closes. A headless xterm mirrors its screen with
 // 10 000 lines of history, so a client that opens it gets the screen as it is (serialized) and then
 // the stream; every client sees the same screen, the size is the last one a client sent.
 
 import nodePty from "node-pty";
 import xterm from "@xterm/headless";
 import serialize from "@xterm/addon-serialize";
-import type { NodeEvent } from "#protocol/node.ts";
+import type { HubEvent } from "#protocol/hub.ts";
 
 /** History lines a terminal keeps. */
 export const TERMINAL_SCROLLBACK = 10_000;
 
-type TerminalEvent = Extract<NodeEvent, { ev: "terminal_output" | "terminal_exit" }>;
+type TerminalEvent = Extract<HubEvent, { ev: "terminal_output" | "terminal_exit" }>;
 
 /** Who gets a terminal's events: a client connection (by identity). */
 export type Viewer = object;
@@ -87,7 +87,7 @@ export class Terminals {
     }
   }
 
-  /** The node closes: every shell ends. */
+  /** The hub closes: every shell ends. */
   closeAll(): void {
     for (const term of this.terms.values()) {
       term.pty?.kill();

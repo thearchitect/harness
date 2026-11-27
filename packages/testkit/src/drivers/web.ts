@@ -1,13 +1,13 @@
-// The app's web build as a test client: `harness web-app`'s server on the stand's node, the bundle's
+// The app's web build as a test client: `harness web-app`'s server on the stand's hub, the bundle's
 // browser driven by Playwright. Verdicts read what a user's assistive technology reads — roles and
 // accessible names (ARIA) — and the screen state the page publishes; screenshots are for looking.
 
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Browser, Page } from "playwright-core";
-import type { Transport } from "#protocol/node.ts";
-import { startWebApp, type WebApp } from "#node/webapp.ts";
-import { appWebDir } from "#node/endpoints/static.ts";
+import type { Transport } from "#protocol/hub.ts";
+import { startWebApp, type WebApp } from "#hub/webapp.ts";
+import { appWebDir } from "#hub/endpoints/static.ts";
 import { bundledBrowser } from "../capture/rasterize.ts";
 
 export type WebDriverOptions = { width?: number; height?: number };

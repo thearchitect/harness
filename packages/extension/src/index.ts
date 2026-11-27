@@ -4,7 +4,7 @@
  * Modes (PLAN/BUILD per message, or the single SIMPLE mode), madness and the implementer; the
  * change gate (core/authorize.ts) that asks the operator through the `gate` interaction; the
  * system prompt (core/prompt.ts); the run's chip and "… finished" banner; "/-"; the bundled tools
- * (tools/) and MCP servers; background tasks (supervisor/). The extension knows nothing of nodes,
+ * (tools/) and MCP servers; background tasks (supervisor/). The extension knows nothing of hubs,
  * clients or transports: it talks to the operator through the host (host.ts) and publishes its
  * HarnessState there. How things look is presentation/'s.
  */
@@ -518,7 +518,7 @@ function registerExtensionParts(pi: ExtensionAPI, host: ExtensionHost, interrupt
   registerDisplayFile(pi);
   registerTaskTools(pi, supervisor, interrupts, host.dataDir);
 
-  // `server`: only on a node its configuration declares a shared server (HARNESS_SERVER from the node)
+  // `server`: only on a hub its configuration declares a shared server (HARNESS_SERVER from the hub)
   const skills = ["web-research", "testing", ...(process.env.HARNESS_SERVER === "1" ? ["server"] : [])].map((name) => join(EXTENSION_DIR, "skills", name, "SKILL.md"));
   pi.on("resources_discover", () => ({
     skillPaths: [...skills, ...("manifest" in bundle ? Object.values(bundle.manifest.skills) : [])],

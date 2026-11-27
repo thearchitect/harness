@@ -47,7 +47,7 @@ export class LineField implements Component, Focusable {
     return this.input.getValue();
   }
 
-  /** A value from outside (the node's): the cursor goes to its end. */
+  /** A value from outside (the hub's): the cursor goes to its end. */
   set value(value: string) {
     if (value !== this.input.getValue()) {
       this.input.setValue(value);

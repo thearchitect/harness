@@ -1,13 +1,13 @@
-// A client that loses its node comes back by itself: the node shows offline meanwhile, and after
+// A client that loses its hub comes back by itself: the hub shows offline meanwhile, and after
 // the reconnection the agent it followed is followed again with a fresh snapshot.
 
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { NodeConnection } from "#client/connection.ts";
+import { HubConnection } from "#client/connection.ts";
 import { agentKey, ClientModel } from "#client/model/client-model.ts";
-import { inProcessTransport } from "#node/endpoints/transports.ts";
+import { inProcessTransport } from "#hub/endpoints/transports.ts";
 import { ManualClock } from "#protocol/clock.ts";
-import type { Transport } from "#protocol/node.ts";
+import type { Transport } from "#protocol/hub.ts";
 import { createStand, type Stand } from "#testkit/stand/stand.ts";
 
 const stands: Stand[] = [];
@@ -25,8 +25,8 @@ test("a lost connection is reopened; followed agents are followed again", async 
   const client = new ClientModel();
   const node = await client.addEndpoint(
     () => {
-      transport = inProcessTransport(stand.node);
-      return NodeConnection.open(transport, "test");
+      transport = inProcessTransport(stand.hub);
+      return HubConnection.open(transport, "test");
     },
     { home: true, clock },
   );

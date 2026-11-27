@@ -1,5 +1,5 @@
 // Which entries of a session's current branch a client gets, one rule for the agent (harness_snapshot,
-// harness_entries_before) and the node reading a session without one (session_read): the newest
+// harness_entries_before) and the hub reading a session without one (session_read): the newest
 // `limit` before a cursor (the end without one), oldest first, and the cursor of the entries before
 // them (absent at the beginning). The same ids either way, so what a client loaded from the file
 // carries on when the session's agent starts.

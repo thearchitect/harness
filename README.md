@@ -1,9 +1,9 @@
 # harness
 
 A multi-session coding agent platform on [pi](https://github.com/earendil-works/pi), distributed as
-a Nix bundle. Nodes run agents — pi sessions with the harness extension — as the user who runs
-them; a hub links nodes and devices; the full-screen TUI (`harness`) works with sessions on the
-local node and on remote ones at once. The documents start at [docs/index.md](docs/index.md).
+a Nix bundle. A user's hub runs their agents — pi sessions with the harness extension — on its
+machine and serves the user's devices; the full-screen TUI (`harness`) works with sessions on
+this machine's hub and on other machines' hubs at once. The documents start at [docs/index.md](docs/index.md).
 
 On PATH: `harness`, `harness-dev`, `pnpm`, `cage`, `lightpanda`, `playwright-mcp`,
 `chrome-devtools-mcp` (telemetry off by default), and the runtimes `node`, `npm`, `npx`, `bun`,
@@ -54,7 +54,7 @@ own or a project's version wins), `"path"` also on yours at a low priority.
 })
 ```
 
-Nodes as services: [docs/operations/nixos.md](docs/operations/nixos.md); a hub on Fly.io:
+Hubs as services: [docs/operations/nixos.md](docs/operations/nixos.md); a hub on Fly.io:
 [docs/operations/fly.md](docs/operations/fly.md). Upgrade: rerun the script, or `nix flake update
 harness` and rebuild. Host settings: `HARNESS_BROWSER` (your own Chrome/Chromium for `browser` and
 playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools), `HARNESS_HOME`
@@ -67,14 +67,14 @@ playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools)
   message starting with `!` builds (`/simple`: one mode that decides itself). Ctrl+Enter (or
   Alt+Enter) sends, Ctrl+T opens a new session, Ctrl+O an existing one, Alt+1…9 switches tabs,
   Ctrl+\ opens the harness panel, Ctrl+F searches the transcript, Ctrl+L chooses the model, Ctrl+I
-  shows a terminal in the session's directory on its node (Alt+I where the terminal cannot tell
+  shows a terminal in the session's directory on its hub (Alt+I where the terminal cannot tell
   Ctrl+I from Tab; the shell runs on while hidden). As in
   pi, Ctrl+C clears the editor and Ctrl+D on an empty editor closes the session's tab (its agent
   keeps running); Ctrl+Q quits.
-- Sessions live on their node: closing the TUI leaves a node started as a service (and its
+- Sessions live on their hub: closing the TUI leaves a hub started as a service (and its
   agents) running; reopening shows everything again. Every client of a user sees the same tabs.
-- `harness hub`, `harness remote add`: [docs/operations/nodes.md](docs/operations/nodes.md).
-- Provider accounts: `/login` in any client (the login runs on the session's node; its steps show in
+- `harness hub`, `harness remote add`: [docs/operations/hub.md](docs/operations/hub.md).
+- Provider accounts: `/login` in any client (the login runs on the session's hub; its steps show in
   the editor's place: open the sign-in link in this machine's browser or copy it, ← goes back a
   step, Esc cancels), or `harness auth login` (pi's command on `~/.harness`).
 

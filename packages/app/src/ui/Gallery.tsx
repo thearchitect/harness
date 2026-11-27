@@ -3,12 +3,12 @@
 // fixtures are the same data the TUI gallery draws.
 
 import { View } from "react-native";
-import { CLAUDE_TASK, INTERACTIONS, ITEMS, NODES, TABS } from "#testkit/fixtures/fixtures.ts";
+import { CLAUDE_TASK, INTERACTIONS, ITEMS, HUBS, TABS } from "#testkit/fixtures/fixtures.ts";
 import { ToolRow } from "./Transcript.tsx";
 import { useTheme } from "../theme/theme.tsx";
 import { InteractionBlock } from "./Interactions.tsx";
 import { T } from "./primitives.tsx";
-import { ItemsStrip, NodesStrip, TabsStrip } from "./Shell.tsx";
+import { HubsStrip, ItemsStrip, TabsStrip } from "./Shell.tsx";
 
 function exhibit(name: string) {
   const interaction = name.startsWith("interaction-") ? INTERACTIONS[name.slice("interaction-".length)] : undefined;
@@ -19,7 +19,7 @@ function exhibit(name: string) {
       width: 154,
       body: (
         <View>
-          <NodesStrip nodes={NODES} chosen="laptop" onChoose={() => undefined} onAdd={() => undefined} />
+          <HubsStrip hubs={HUBS} chosen="laptop" onChoose={() => undefined} onAdd={() => undefined} />
           <TabsStrip tabs={TABS} active={1} onGoto={() => undefined} onNew={() => undefined} />
           <ItemsStrip items={ITEMS} selected="t2" onSelect={() => undefined} />
         </View>
@@ -43,7 +43,7 @@ function exhibit(name: string) {
       width: 154,
       body: (
         <View>
-          <NodesStrip nodes={[{ name: "default", label: "inprocess", glyph: "" }]} chosen="default" onChoose={() => undefined} onAdd={() => undefined} />
+          <HubsStrip hubs={[{ name: "default", label: "inprocess", glyph: "" }]} chosen="default" onChoose={() => undefined} onAdd={() => undefined} />
           <TabsStrip tabs={[]} active={-1} placing onGoto={() => undefined} onNew={() => undefined} />
         </View>
       ),

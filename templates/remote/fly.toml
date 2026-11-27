@@ -1,5 +1,5 @@
-# One machine with a volume, always on: the hub keeps the users' nodes, agents and background
-# tasks running, and devices connect to it at any time.
+# One machine with a volume, always on: the user's hub keeps its agents and background tasks
+# running, and devices connect to it at any time.
 app = "my-harness"
 primary_region = "ams"
 kill_signal = "SIGTERM"
@@ -14,12 +14,12 @@ kill_timeout = 30
   initial_size = "20gb"
 
 # The machine's cage identity (bootstrap.sh), written as a file at boot: it decrypts the users'
-# envs (.cage/store/envs/user-<name>.cage) for their nodes.
+# env (.cage/store/envs/user-<name>.cage) for the hub.
 [[files]]
   guest_path = "/run/harness/machine-identity"
   secret_name = "HARNESS_MACHINE_IDENTITY"
 
-# The hub's WebSocket endpoint; Fly terminates TLS (wss://<app>.fly.dev).
+# The hub's network endpoint; Fly terminates TLS (wss://<app>.fly.dev).
 [http_service]
   internal_port = 8080
   force_https = true
@@ -30,7 +30,7 @@ kill_timeout = 30
 [[restart]]
   policy = "always"
 
-# Builds (go, rust) and the users' agents (≈300 MB each).
+# Builds (go, rust) and the agents (≈300 MB each).
 [[vm]]
   size = "shared-cpu-2x"
   memory = "4gb"

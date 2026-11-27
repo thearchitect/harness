@@ -1,6 +1,6 @@
 // What iOS and Android add to the shared screen (plan 10.1, native details): files go out through
 // the system's share sheet and come in from the photo library or the document picker; voice is
-// recorded with the microphone; `harness://<node>/<session>[/<item>]` links open a session. No
+// recorded with the microphone; `harness://<hub>/<session>[/<item>]` links open a session. No
 // page title, drag and drop or pasted files: attention shows in the strips' glyphs.
 
 import { AudioModule, RecordingPresets, requestRecordingPermissionsAsync, setAudioModeAsync } from "expo-audio";

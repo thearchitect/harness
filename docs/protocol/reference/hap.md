@@ -250,7 +250,7 @@ The subagent profiles this session may call, with their resolved models, and the
 
 ### `harness_hello`
 
-The agent is ready (node only).
+The agent is ready (hub only).
 
 | Field | Type | Required | Description |
 |---|---|---|---|

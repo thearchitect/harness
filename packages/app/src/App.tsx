@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Linking, Platform, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
-import { NodeConnection } from "#client/connection.ts";
+import { HubConnection } from "#client/connection.ts";
 import type { AgentModel } from "#client/model/agent-model.ts";
 import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench, type Screen } from "#client/workbench/workbench.ts";
@@ -40,15 +40,15 @@ import { T } from "./ui/primitives.tsx";
 import { Shell, type DeviceActions } from "./ui/Shell.tsx";
 import { focusList } from "./ui/web-events";
 
-/** `themeNames`: the themes the home node has (theme_get), for /settings. */
+/** `themeNames`: the themes the home hub has (theme_get), for /settings. */
 type Connected = { client: ClientModel; workbench: Workbench; endpoint: Endpoint; themeNames: string[] };
 
 async function connect(endpoint: Endpoint): Promise<Connected> {
   const client = new ClientModel();
   // extensions' components show here as a remote terminal (ComponentView)
-  await client.addEndpoint(async () => NodeConnection.open(await wsTransport(endpoint.url), "app", endpoint.token, ["component-bridge"]), { home: true });
+  await client.addEndpoint(async () => HubConnection.open(await wsTransport(endpoint.url), "app", endpoint.token, ["component-bridge"]), { home: true });
   const themeNames: string[] = [];
-  // no directory of its own: new sessions ask for one on their node
+  // no directory of its own: new sessions ask for one on their hub
   const workbench: Workbench = new Workbench(client, {
     themes: () => themeNames,
     viewStore: viewStore(),
@@ -194,13 +194,13 @@ function WorkbenchApp() {
   }, [connected, version, width, editorText, theme.chrome]);
 
   // each tab has its own message being written: it comes back with the tab, and is kept as it is typed
-  const shownTab = screen?.tab !== undefined ? `${screen.tab.node}/${screen.tab.sessionId}` : "";
+  const shownTab = screen?.tab !== undefined ? `${screen.tab.hub}/${screen.tab.sessionId}` : "";
   useEffect(() => {
     setEditorText(screen?.view?.draft ?? "");
   }, [shownTab]);
   useEffect(() => {
     const tab = connected?.workbench.activeTab();
-    if (tab !== undefined && `${tab.node}/${tab.sessionId}` === shownTab && connected?.workbench.view(tab).draft !== editorText) {
+    if (tab !== undefined && `${tab.hub}/${tab.sessionId}` === shownTab && connected?.workbench.view(tab).draft !== editorText) {
       connected?.workbench.updateView(tab, { draft: editorText });
     } else {
       // the tab's draft already, or another tab coming
@@ -211,7 +211,7 @@ function WorkbenchApp() {
   useEffect(() => {
     const target = globalThis as unknown as { __harnessScreen?: () => unknown };
     target.__harnessScreen = () => ({
-      tabs: (screen?.tabs ?? []).map((tab) => ({ title: tab.title, glyph: tab.glyph, node: tab.node })),
+      tabs: (screen?.tabs ?? []).map((tab) => ({ title: tab.title, glyph: tab.glyph, node: tab.hub })),
       active: screen?.active ?? 0,
       items: (screen?.items ?? []).map((item) => ({ label: item.label, glyph: item.glyph, kind: item.kind })),
       editor: screen?.zones.editor.kind ?? "none",
@@ -251,18 +251,18 @@ function WorkbenchApp() {
   const selectedItem = screen?.selected;
   useEffect(() => {
     if (activeTab !== undefined) {
-      addressSession(activeTab.node, activeTab.sessionId, selectedItem);
+      addressSession(activeTab.hub, activeTab.sessionId, selectedItem);
     } else {
       // no session to name
     }
-  }, [activeTab?.node, activeTab?.sessionId, selectedItem]);
+  }, [activeTab?.hub, activeTab?.sessionId, selectedItem]);
   useEffect(() => {
     if (connected === undefined) {
       return;
     } else {
       const open = (): void => {
         const wanted = addressedSession();
-        const index = wanted !== undefined ? connected.workbench.tabs().findIndex((tab) => tab.node === wanted.node && tab.sessionId === wanted.sessionId) : -1;
+        const index = wanted !== undefined ? connected.workbench.tabs().findIndex((tab) => tab.hub === wanted.node && tab.sessionId === wanted.sessionId) : -1;
         if (wanted === undefined) {
           // the address names no session
         } else if (index >= 0) {
@@ -287,14 +287,14 @@ function WorkbenchApp() {
     }
   }, [connected]);
 
-  // files handed to the session (dropped on the window, picked) go to its node and into the message as @path
+  // files handed to the session (dropped on the window, picked) go to its hub and into the message as @path
   const upload = useCallback(
     (files: { name: string; base64: string }[]): void => {
       const tab = connected?.workbench.activeTab();
       if (connected === undefined || tab === undefined) {
         connected?.workbench.notify("warning", "open a session to hand it files");
       } else {
-        void Promise.all(files.map((file) => connected.client.connection(tab.node).request("files_upload", { name: file.name, base64: file.base64 })))
+        void Promise.all(files.map((file) => connected.client.connection(tab.hub).request("files_upload", { name: file.name, base64: file.base64 })))
           .then((stored) => setEditorText((text) => `${text}${text === "" || text.endsWith(" ") ? "" : " "}${stored.map((file) => `@${file.path}`).join(" ")} `))
           .catch((reason: unknown) => connected.workbench.notify("error", `upload: ${String(reason)}`));
       }
@@ -304,7 +304,7 @@ function WorkbenchApp() {
   useEffect(() => (connected !== undefined ? onFilesDropped(globalThis.document?.body, upload) : undefined), [connected, upload]);
   useEffect(() => (connected !== undefined ? onFilesPasted(upload) : undefined), [connected, upload]);
 
-  // a voice message: recorded here, transcribed on the session's node, inserted into the message
+  // a voice message: recorded here, transcribed on the session's hub, inserted into the message
   const [stopRecording, setStopRecording] = useState<(() => Promise<{ base64: string; mime: string }>) | undefined>(undefined);
   const voice = (): void => {
     const tab = connected?.workbench.activeTab();
@@ -318,7 +318,7 @@ function WorkbenchApp() {
       setStopRecording(undefined);
       connected.workbench.notify("info", "transcribing…");
       void stopRecording()
-        .then((audio) => connected.client.connection(tab.node).request("transcribe", audio))
+        .then((audio) => connected.client.connection(tab.hub).request("transcribe", audio))
         .then(({ text }) => setEditorText((current) => `${current}${current === "" || current.endsWith(" ") ? "" : " "}${text}`))
         .catch((reason: unknown) => connected.workbench.notify("error", `voice: ${reason instanceof Error ? reason.message : String(reason)}`));
     }
@@ -329,12 +329,12 @@ function WorkbenchApp() {
       const tab = connected?.workbench.activeTab();
       if (connected !== undefined && tab !== undefined) {
         void connected.client
-          .connection(tab.node)
+          .connection(tab.hub)
           .request("files_get", { path })
           .then((file) => saveFile(name, file.base64))
           .catch((reason: unknown) => connected.workbench.notify("error", `download: ${reason instanceof Error ? reason.message : String(reason)}`));
       } else {
-        // no session: no node to fetch from
+        // no session: no hub to fetch from
       }
     },
     attach: () => {
@@ -386,7 +386,7 @@ function WorkbenchApp() {
     const tab = connected?.workbench.activeTab();
     if (connected !== undefined && tab?.agent !== undefined && fileQuery !== undefined) {
       void connected.client
-        .connection(tab.node)
+        .connection(tab.hub)
         .call<{ items: string[] }>(tab.agent.id, { type: "harness_complete", kind: "file", prefix: fileQuery })
         .then(({ items }) => setFiles(items.map((path) => ({ value: path, label: path }))))
         .catch(() => setFiles([]));
@@ -449,7 +449,7 @@ function WorkbenchApp() {
   const loadOlder = (agent: AgentModel): void => {
     const tab = connected?.workbench.activeTab();
     if (connected !== undefined && tab !== undefined) {
-      void connected.client.loadOlder(tab.node, agent.agentId);
+      void connected.client.loadOlder(tab.hub, agent.agentId);
     } else {
       // nothing to load into
     }

@@ -1,7 +1,7 @@
 /**
  * send_file: offers one file to the operator, with a comment. The tool itself
  * only checks the file; every client sees the call's result and offers the
- * file for download (or "share" in the app), fetching it from the agent's node
+ * file for download (or "share" in the app), fetching it from the agent's hub
  * with files_get. Several files or a directory: the model zips them first.
  */
 

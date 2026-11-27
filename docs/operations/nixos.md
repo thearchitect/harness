@@ -1,23 +1,22 @@
 # NixOS
 
-The flake's `nixosModules.default` runs any number of nodes, each a systemd service as its own
-user:
+The flake's `nixosModules.default` runs a harness hub as a systemd service for each user who
+wants one without a window open:
 
 ```nix
 {
   imports = [ harness.nixosModules.default ];
-  services.harness.nodes = {
-    hub = { user = "harness"; hub.listen = "127.0.0.1:8790"; };
-    work = {
-      user = "alice";
-      users = [ "alice" ];
-      hubs = [ { url = "wss://hub.example"; keyFile = "/run/keys/harness-work"; } ];
-    };
+  services.harness.hubs = {
+    alice = { };
+    bob = { listen = "127.0.0.1:8790"; url = "https://bob.example.ts.net"; };
   };
 }
 ```
 
-Each node becomes `harness-<name>.service` (`harness node`, or `harness hub` when `hub.listen`
-is set) with its configuration in the Nix store; the key file stays outside it. Agents and their
-background tasks are the service's children and stop with it. The `harness` command is installed
-for administration. The module's VM test (`nix/module-test.nix`) links a node to a hub as two users.
+Each hub becomes `harness-<user>.service` (`harness hub`) running as that user, with its
+configuration in the Nix store. `listen` gives the user's devices network access behind a TLS
+proxy (`tailscale serve`, Caddy); `url` is the address pairing links carry. Agents and their
+background tasks are the service's children and stop with it. A user has one hub on a machine:
+with the service running, that user's harness windows connect to it instead of holding one. The
+`harness` command is installed for `harness hub device …`. The module's VM test
+(`nix/module-test.nix`) runs two users' hubs and pairs a device with one.

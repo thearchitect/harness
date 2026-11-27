@@ -1,4 +1,4 @@
-// The client's remote hubs and nodes (~/.harness/remotes.json, 0600): a name, the WebSocket base
+// The client's remote hubs (~/.harness/remotes.json, 0600): a name, the WebSocket base
 // and the device token. `harness remote add|remove|list` edits them; the TUI connects to each.
 
 import { readFileSync, renameSync, writeFileSync } from "node:fs";

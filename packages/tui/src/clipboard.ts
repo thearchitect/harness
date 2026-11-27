@@ -1,6 +1,6 @@
 // Ctrl+V as in pi (handleClipboardPaste of its interactive mode): copied files paste their paths, an
 // image pastes the path of a file holding it, anything else pastes as text. pi writes the image to
-// its own temp directory; here every file goes to the session's node when the session runs on
+// its own temp directory; here every file goes to the session's hub when the session runs on
 // another machine (files_upload), so the path in the message is one its agent can read.
 
 import { randomUUID } from "node:crypto";
@@ -15,7 +15,7 @@ export type Clipboard = {
   extensionOf(mimeType: string): string | undefined;
 };
 
-/** Where the session runs: on this machine, or on a node that takes files through files_upload. */
+/** Where the session runs: on this machine, or on a hub that takes files through files_upload. */
 export type PasteTarget = { local: true } | { local: false; upload(name: string, base64: string): Promise<string> };
 
 /** pi's quoting of a path in a shell command (`!` messages). */

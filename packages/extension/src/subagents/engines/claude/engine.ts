@@ -34,7 +34,7 @@ export type ClaudeEngineDeps = {
   mirror(task: TaskInfo, source: MirroredSource): void;
   /** The claude executable (default `claude` on PATH; HARNESS_CLAUDE overrides it). */
   command?: string;
-  /** How Claude runs the bridge (default: this node on cli/src/claude-bridge.ts). */
+  /** How Claude runs the bridge (default: this process's node on cli/src/claude-bridge.ts). */
   bridge?: string[];
   /** The calling agent's system prompt options of its current run (its project context, skills, tool guidelines, sections). */
   promptRun: () => NormalizedBuildSystemPromptOptions | undefined;

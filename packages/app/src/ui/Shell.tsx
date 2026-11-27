@@ -1,5 +1,5 @@
 // The multi-session screen (plan 10.5), drawn from the workbench's screen: the strip on the left in
-// three blocks (the nodes, the chosen node's sessions, the active session's items), the main area
+// three blocks (the hubs, the chosen hub's sessions, the active session's items), the main area
 // beside it (its zones top to bottom: main, above the editor, the editor, status, footer), the
 // panel over the right edge. A narrow screen hides the strip behind a button that shows it over.
 
@@ -7,7 +7,7 @@ import * as Clipboard from "expo-clipboard";
 import { useEffect, useMemo, useRef, useState, type ComponentRef } from "react";
 import { PanResponder, Platform, Pressable, TextInput, View } from "react-native";
 import type { AgentModel } from "#client/model/agent-model.ts";
-import { subagentHeading, type Item, type NodeRow, type PanelId, type PanelItem, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
+import { subagentHeading, type Item, type HubRow, type PanelId, type PanelItem, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
 import { fontOf, lineHeight, useTheme, type Token } from "../theme/theme.tsx";
 import { EditorZoneView, type Completion } from "./EditorZone.tsx";
@@ -19,13 +19,13 @@ import { Button, GlyphMark, ListRow, T } from "./primitives.tsx";
 import { Transcript } from "./Transcript.tsx";
 import { focusList, focusMessage, useListKeys } from "./web-events";
 
-/** The strip: the nodes block as tall as its rows, then the sessions (two thirds) and the items (a third), divided by rules. */
+/** The strip: the hubs block as tall as its rows, then the sessions (two thirds) and the items (a third), divided by rules. */
 function Strip({ screen, workbench, onMenu }: { screen: Screen; workbench: Workbench; onMenu: (menu: Menu) => void }) {
   const theme = useTheme();
   const rule = { borderTopWidth: 1, borderColor: theme.colors.borderMuted };
   return (
     <View style={{ flex: 1 }}>
-      <NodesStrip nodes={screen.nodes} chosen={screen.node} onChoose={(node) => void workbench.chooseNode(node)} onAdd={() => workbench.addNode()} />
+      <HubsStrip hubs={screen.hubs} chosen={screen.hub} onChoose={(hub) => void workbench.chooseHub(hub)} onAdd={() => workbench.pairHub()} />
       <View style={[rule, { flex: 2, minHeight: 0 }]}>
         <Tabs screen={screen} workbench={workbench} onMenu={onMenu} />
       </View>
@@ -36,17 +36,17 @@ function Strip({ screen, workbench, onMenu }: { screen: Screen; workbench: Workb
   );
 }
 
-/** The nodes block: one glyph each (⊘ offline, ◆ a session waits, ● something works), `+ add` last. */
-export function NodesStrip({ nodes, chosen, onChoose, onAdd }: { nodes: NodeRow[]; chosen: string | undefined; onChoose: (node: string) => void; onAdd?: () => void }) {
+/** The hubs block: one glyph each (⊘ offline, ◆ a session waits, ● something works), `+ add` last. */
+export function HubsStrip({ hubs, chosen, onChoose, onAdd }: { hubs: HubRow[]; chosen: string | undefined; onChoose: (hub: string) => void; onAdd?: () => void }) {
   const ref = useRef<ComponentRef<typeof View>>(null);
   useListKeys(ref);
   return (
-    <View ref={ref} accessibilityRole="list" accessibilityLabel="nodes" style={{ paddingVertical: 4 }}>
-      {nodes.map((node) => (
-        <ListRow key={node.name} label={`node ${node.label}`} selected={node.name === chosen} onPress={() => onChoose(node.name)} events={{ title: node.name }}>
-          {node.glyph !== "" ? <GlyphMark glyph={node.glyph} /> : <T> </T>}
+    <View ref={ref} accessibilityRole="list" accessibilityLabel="hubs" style={{ paddingVertical: 4 }}>
+      {hubs.map((hub) => (
+        <ListRow key={hub.name} label={`hub ${hub.label}`} selected={hub.name === chosen} onPress={() => onChoose(hub.name)} events={{ title: hub.name }}>
+          {hub.glyph !== "" ? <GlyphMark glyph={hub.glyph} /> : <T> </T>}
           <T lines={1} style={{ flexShrink: 1 }}>
-            {node.label}
+            {hub.label}
           </T>
         </ListRow>
       ))}
@@ -115,7 +115,7 @@ function MenuView({ menu, onClose }: { menu: Menu; onClose: () => void }) {
   );
 }
 
-/** The sessions block: one row per open session of the chosen node, the glyph first; `+ new` last. */
+/** The sessions block: one row per open session of the chosen hub, the glyph first; `+ new` last. */
 export function TabsStrip({
   tabs,
   active,
@@ -142,13 +142,13 @@ export function TabsStrip({
     <View ref={ref} accessibilityRole="tablist" accessibilityLabel="sessions" style={{ paddingVertical: 4 }}>
       {tabs.map((tab: Tab, index) => {
         return (
-          <View key={`${tab.node}/${tab.sessionId}`}>
+          <View key={`${tab.hub}/${tab.sessionId}`}>
             <ListRow
               label={`${tab.title}${tab.unavailable !== undefined ? ` (${tab.unavailable})` : ""}`}
               selected={index === active}
               onPress={() => onGoto(index)}
               events={{
-                title: `${tab.node}:${tab.cwd}${tab.unavailable !== undefined ? ` — ${tab.unavailable}` : ""}`,
+                title: `${tab.hub}:${tab.cwd}${tab.unavailable !== undefined ? ` — ${tab.unavailable}` : ""}`,
                 ...(onMenu !== undefined ? { onContextMenu: (x: number, y: number) => onMenu(index, x, y) } : {}),
                 ...(onClose !== undefined ? { onMiddleClick: () => onClose(index) } : {}),
                 ...(onMove !== undefined ? { drag: { index, onDrop: (from: number) => onMove(from, index) } } : {}),
@@ -316,7 +316,7 @@ const STATUS_TONE: Record<StatusLine["level"], Token> = { info: "muted", warning
 function Footer({ screen }: { screen: Screen }) {
   const session = screen.zones.footer.agent?.session;
   const parts = [
-    screen.zones.footer.node,
+    screen.zones.footer.hub,
     session?.cwd,
     session?.model !== undefined ? `${session.model.provider}/${session.model.id}` : undefined,
     session?.thinkingLevel,
@@ -346,7 +346,7 @@ function Main({ screen, workbench, onLoadOlder, device }: { screen: Screen; work
     case "transcript":
       return agent !== undefined ? (
         <Transcript
-          key={`${screen.tab?.node ?? ""}/${screen.tab?.sessionId ?? ""}`}
+          key={`${screen.tab?.hub ?? ""}/${screen.tab?.sessionId ?? ""}`}
           agent={agent}
           expanded={screen.toolsExpanded}
           anchor={screen.view?.scroll}

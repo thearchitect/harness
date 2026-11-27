@@ -4,7 +4,7 @@
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { NodeOps, SessionListItem } from "#protocol/node.ts";
+import type { HubOps, SessionListItem } from "#protocol/hub.ts";
 import { age, NewSession, type NewSessionKey } from "./new-session.ts";
 
 const TREE: Record<string, string[]> = {
@@ -24,7 +24,7 @@ const TREE: Record<string, string[]> = {
 function choice(): { choice: NewSession; created: string[]; cancelled: () => boolean } {
   const created: string[] = [];
   let cancelled = false;
-  const list = async (path: string, hidden: boolean): Promise<NodeOps["dirs_list"]["result"]> => {
+  const list = async (path: string, hidden: boolean): Promise<HubOps["dirs_list"]["result"]> => {
     const full = path === "~" ? "/home/u" : path;
     const names = TREE[full];
     if (names === undefined) {

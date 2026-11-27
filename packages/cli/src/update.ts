@@ -13,7 +13,7 @@
  * - updateLines / updateHint: the Update section of the dependencies report and the
  *   panel row's hint;
  * - execUpdate: replaces the exiting TUI with a shell that upgrades the
- *   profile and starts harness again (it reopens the user's tabs; nodes run
+ *   profile and starts harness again (it reopens the user's tabs; hubs run
  *   as services keep their agents, one inside the TUI stopped with it).
  */
 
@@ -242,7 +242,7 @@ fi
 exec harness
 `;
 
-/** Replaces this process with the update script; called after the TUI stopped and the embedded node closed. */
+/** Replaces this process with the update script; called after the TUI stopped and the embedded hub closed. */
 export function execUpdate(element: string): void {
   if (process.execve === undefined) {
     throw new Error("this Node has no process.execve");

@@ -1,4 +1,4 @@
-// The node's event log: ~/.harness/log/node-<name>.jsonl, one JSON object per line — what happened
+// The hub's event log: ~/.harness/log/node-<name>.jsonl, one JSON object per line — what happened
 // (connections, agents starting and exiting, refusals), never message texts, prompts or secrets.
 // For operators and test reports; it rotates at 10 MB (the previous file keeps the suffix .1).
 
@@ -8,10 +8,10 @@ import { join } from "node:path";
 const ROTATE_BYTES = 10 * 1024 * 1024;
 
 export type TelemetryEvent =
-  | { event: "node_start"; roles: string[] }
-  | { event: "node_stop" }
-  | { event: "node_restart"; user: string }
-  | { event: "connect"; connection: string; client: string; user: string; trusted: boolean }
+  | { event: "hub_start"; network: boolean }
+  | { event: "hub_stop" }
+  | { event: "hub_restart"; connection: string }
+  | { event: "connect"; connection: string; client: string; device?: string }
   | { event: "disconnect"; connection: string }
   | { event: "refused"; connection: string; code: string }
   | { event: "agent_start"; agent: string; session: string; cwd: string }
@@ -50,7 +50,7 @@ export class Telemetry {
       }
       appendFileSync(this.path, `${JSON.stringify({ at: new Date(this.now()).toISOString(), ...event })}\n`);
     } catch {
-      // the log is best effort: a full disk must not stop the node
+      // the log is best effort: a full disk must not stop the hub
     }
   }
 }

@@ -1,4 +1,4 @@
-// The app's web build against a node (plan 10, 16.4): a message from the field gets its answer;
+// The app's web build against a hub (plan 10, 16.4): a message from the field gets its answer;
 // the gate asks in the editor's place and Allow lets the change through; the TUI and the web show
 // the same tabs, glyphs and items — compared by meaning, never by pixels.
 
@@ -57,7 +57,7 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "the address names the active session; a dropped file goes to the node as @path",
+      name: "the address names the active session; a dropped file goes to the hub as @path",
       async run({ stand, clients: { web } }) {
         const screen = await web.screen();
         assert.match(new URL(web.page.url()).hash, new RegExp(`^#/test/`));
@@ -150,7 +150,7 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "a voice message is transcribed on the session's node into the message",
+      name: "a voice message is transcribed on the session's hub into the message",
       async run({ stand, clients: { web } }) {
         const received: string[] = [];
         const server = createServer((request, response) => {

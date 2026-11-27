@@ -1,16 +1,16 @@
-// The agent as a client of its node, for its subagents: frames of a NodeConnection travel inside
-// `harness_node` records of the agent's own HAP stream. A child is started with agent_start
-// { subagent } (the node makes this agent its parent and sets the depth) and followed in full.
+// The agent as a client of its hub, for its subagents: frames of a HubConnection travel inside
+// `harness_hub` records of the agent's own HAP stream. A child is started with agent_start
+// { subagent } (the hub makes this agent its parent and sets the depth) and followed in full.
 
-import { NodeConnection } from "#client/connection.ts";
-import type { NodeFrame, Transport } from "#protocol/node.ts";
+import { HubConnection } from "#client/connection.ts";
+import type { HubFrame, Transport } from "#protocol/hub.ts";
 import type { ChildAgent, ChildAgents, ChildLaunch, ChildRecord } from "#extension/host.ts";
 
-export class NodeChildren implements ChildAgents {
+export class HubChildren implements ChildAgents {
   private readonly write: (frame: unknown) => void;
-  private readonly frameListeners = new Set<(frame: NodeFrame) => void>();
-  private connection: Promise<NodeConnection> | undefined;
-  /** Frames held until the node knows this agent (it reads nothing before harness_hello). */
+  private readonly frameListeners = new Set<(frame: HubFrame) => void>();
+  private connection: Promise<HubConnection> | undefined;
+  /** Frames held until the hub knows this agent (it reads nothing before harness_hello). */
   private held: unknown[] | undefined = [];
 
   constructor(write: (frame: unknown) => void) {
@@ -34,15 +34,15 @@ export class NodeChildren implements ChildAgents {
     }
   }
 
-  /** A frame the node sent to this agent's connection. */
+  /** A frame the hub sent to this agent's connection. */
   receive(frame: unknown): void {
     for (const listener of this.frameListeners) {
-      listener(frame as NodeFrame);
+      listener(frame as HubFrame);
     }
   }
 
-  private connect(): Promise<NodeConnection> {
-    this.connection ??= NodeConnection.open(this.transport(), "agent");
+  private connect(): Promise<HubConnection> {
+    this.connection ??= HubConnection.open(this.transport(), "agent");
     return this.connection;
   }
 
@@ -67,7 +67,7 @@ export class NodeChildren implements ChildAgents {
       subagent: { ...launch.subagent, depth: 0 },
     });
     const listeners = new Set<(record: ChildRecord) => void>();
-    const off = connection.onHap((_node, agentId, record) => {
+    const off = connection.onHap((agentId, record) => {
       if (agentId === agent.id) {
         for (const listener of listeners) {
           listener(record as ChildRecord);

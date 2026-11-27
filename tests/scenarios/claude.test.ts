@@ -51,7 +51,7 @@ export const scenario = defineScenario({
       async run({ stand, clients: { raw }, memo }) {
         writeFileSync(join(stand.project, "AGENTS.md"), "Project rule: run the local checks.\n");
         const { agent } = await raw.api.request("agent_start", { cwd: stand.project });
-        const model = await raw.client.follow(raw.node, agent.id);
+        const model = await raw.client.follow(raw.hub, agent.id);
         memo.agent = agent.id;
         memo.model = model;
         const target = join(stand.project, "claude.txt");
@@ -197,7 +197,7 @@ export const scenario = defineScenario({
         assert.ok(!("steps" in (model.state.subagents.find((row) => row.session === session) ?? {})), "no steps in the state any more");
 
         // the transcript, read back from the subagent's log
-        const transcript = raw.client.claudeTranscript(raw.node, agent, session);
+        const transcript = raw.client.claudeTranscript(raw.hub, agent, session);
         assert.ok(transcript !== undefined);
         await until(transcript, () => transcript.items.some((item) => item.kind === "custom"));
         const roles = transcript.items.map((item) => (item.kind === "message" ? item.message.role : item.kind));

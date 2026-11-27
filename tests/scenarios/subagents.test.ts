@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { AgentModel } from "#client/model/agent-model.ts";
-import type { AgentInfo } from "#protocol/node.ts";
+import type { AgentInfo } from "#protocol/hub.ts";
 import type { RawDriver } from "#testkit/drivers/raw.ts";
 import { defineScenario, runScenario } from "#testkit/scenario/scenario.ts";
 
@@ -40,7 +40,7 @@ function profile(dataDir: string, name: string, frontmatter: string): void {
 
 async function session(raw: RawDriver, cwd: string, sessionFile?: string): Promise<{ id: string; model: AgentModel; info: AgentInfo }> {
   const { agent } = await raw.api.request("agent_start", { cwd, sessionFile });
-  return { id: agent.id, model: await raw.client.follow(raw.node, agent.id), info: agent };
+  return { id: agent.id, model: await raw.client.follow(raw.hub, agent.id), info: agent };
 }
 
 /** The caller's subagent that waits for the operator. */
@@ -115,7 +115,7 @@ export const scenario = defineScenario({
         const before = subagentResult(main.model);
         await raw.api.call(main.id, { type: "harness_prompt", text: "delegate the change", mode: "build" });
         const child = await askingChild(raw, main.id);
-        const childModel = await raw.client.follow(raw.node, child.id);
+        const childModel = await raw.client.follow(raw.hub, child.id);
         await until(childModel, () => childModel.interactions.length > 0);
         const request = childModel.interactions[0];
         assert.equal(request?.kind, "gate");
@@ -166,7 +166,7 @@ export const scenario = defineScenario({
         await raw.api.request("agent_close", { agent: main.id });
         // the background child keeps running and finishes
         const child = children[0] as AgentInfo;
-        const childModel = await raw.client.follow(raw.node, child.id);
+        const childModel = await raw.client.follow(raw.hub, child.id);
         await until(childModel, () => childModel.items.some((item) => item.kind === "message" && JSON.stringify(item.message.content).includes("background report")) && !childModel.running);
         const reopened = await session(raw, stand.project, sessionFile);
         await until(reopened.model, () => reopened.model.items.some((item) => item.kind === "custom" && item.customType === "harness-subagent" && (item.data as { state?: string }).state === "done"));

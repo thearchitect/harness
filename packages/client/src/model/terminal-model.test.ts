@@ -1,10 +1,10 @@
-// A session's terminal on a client: the node's screen and then its stream give the rows the shell
+// A session's terminal on a client: the hub's screen and then its stream give the rows the shell
 // drew, with their colors; the cursor stands where the shell's does (the TUI's marker before its
 // cell); scrolling the history is the client's own and typing comes back to the bottom.
 
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { NodeApi } from "./client-model.ts";
+import type { HubApi } from "./client-model.ts";
 import { TerminalModel } from "./terminal-model.ts";
 
 function flushed(): Promise<void> {
@@ -18,7 +18,7 @@ test("the screen and the stream, the cursor, the client's own history", async ()
       requests.push({ op, args });
       return op === "terminal_open" ? { screen: "\x1b[31mred\x1b[0m line\r\n$ " } : {};
     },
-  } as unknown as NodeApi;
+  } as unknown as HubApi;
   const model = new TerminalModel("n", "s", "/w", () => api, () => undefined);
   await model.open(20, 4);
   await flushed();
@@ -47,5 +47,38 @@ test("the screen and the stream, the cursor, the client's own history", async ()
   assert.deepEqual(requests.at(-1), { op: "terminal_resize", args: { session: "s", cols: 30, rows: 5 } });
   model.exited(0);
   assert.equal(model.state, "exited");
+  model.dispose();
+});
+
+test("what is typed while the shell starts reaches it, in order, once it runs", async () => {
+  const requests: { op: string; args: unknown }[] = [];
+  let started: () => void = () => undefined;
+  const api = {
+    request: async (op: string, args: unknown) => {
+      if (op === "terminal_open") {
+        await new Promise<void>((resolve) => (started = resolve));
+        requests.push({ op, args });
+        return { screen: "$ " };
+      } else {
+        requests.push({ op, args });
+        return {};
+      }
+    },
+  } as unknown as HubApi;
+  const model = new TerminalModel("n", "s", "/w", () => api, () => undefined);
+  const opening = model.open(20, 4);
+  model.input("ec");
+  model.input("ho");
+  assert.equal(requests.length, 0, "nothing goes before the shell runs");
+  started();
+  await opening;
+  assert.deepEqual(
+    requests.map((request) => request.op),
+    ["terminal_open", "terminal_input", "terminal_input"],
+  );
+  assert.deepEqual(
+    requests.slice(1).map((request) => (request.args as { data: string }).data),
+    ["ec", "ho"],
+  );
   model.dispose();
 });

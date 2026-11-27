@@ -1,6 +1,6 @@
-// Schemas of the protocols: what a client may send (node frames, the arguments of each control
-// operation, harness's HAP requests) and what it receives (node frames and events, harness's HAP
-// events). Every endpoint checks its input here before acting on it (a node checks every client
+// Schemas of the protocols: what a client may send (hub frames, the arguments of each control
+// operation, harness's HAP requests) and what it receives (hub frames and events, harness's HAP
+// events). Every endpoint checks its input here before acting on it (a hub checks every client
 // frame, the agent every HAP request); pi's own RPC commands are checked by pi. Dispatch is by the
 // discriminant (`k`, `op`, `type`), so an error names the one shape it broke. The descriptions are
 // the protocol reference (gen-reference.ts writes docs/protocol/reference/ from them).
@@ -8,7 +8,7 @@
 import { Type, type TSchema } from "typebox";
 import { Value } from "typebox/value";
 import type { HapRequestType } from "./hap.ts";
-import type { NodeOp } from "./node.ts";
+import type { HubOp } from "./hub.ts";
 
 const Str = (description?: string) => Type.String(description !== undefined ? { description } : {});
 const Int = (description?: string) => Type.Integer({ minimum: 0, ...(description !== undefined ? { description } : {}) });
@@ -17,15 +17,15 @@ const Opt = <T extends TSchema>(schema: T) => Type.Optional(schema);
 const Any = (description: string) => Type.Unknown({ description });
 const Obj = <P extends Record<string, TSchema>>(properties: P, description: string) => Type.Object(properties, { description });
 
-/* ----- client → node ----- */
+/* ----- client → hub ----- */
 
 export const FRAME_SCHEMAS = {
   hello: Obj(
     {
       k: Type.Literal("hello"),
       protocol: Type.Integer({ description: "PROTOCOL_VERSION of the client (version.ts)" }),
-      client: Str("What the client is: tui, app, test, hub, node"),
-      token: Opt(Str("A device token (hub) or a node key (uplink); none on local endpoints")),
+      client: Str("What the client is: tui, app, test"),
+      token: Opt(Str("A device token on the network endpoint; none on local endpoints")),
       capabilities: Opt(Type.Array(Str(), { description: "What the client can draw besides typed data: component-bridge" })),
     },
     "The first frame of a connection; answered with welcome or refused.",
@@ -34,7 +34,6 @@ export const FRAME_SCHEMAS = {
     {
       k: Type.Literal("req"),
       id: Str("Chosen by the client; the res frame carries it back"),
-      node: Opt(Str("The node to run it on, through a hub; the connected node when absent")),
       op: Str("A control operation (see Operations)"),
       args: Any("The operation's arguments"),
     },
@@ -43,7 +42,6 @@ export const FRAME_SCHEMAS = {
   hap: Obj(
     {
       k: Type.Literal("hap"),
-      node: Opt(Str("The agent's node, through a hub")),
       agent: Str("The agent id"),
       rec: Type.Object({ type: Str("A pi RPC command or a harness request") }, { description: "The HAP record for the agent" }),
     },
@@ -55,17 +53,16 @@ const Mode = Type.Union([Type.Literal("plan"), Type.Literal("build"), Type.Liter
 
 const Level = Type.Union([Type.Literal("full"), Type.Literal("summary")], { description: "full: snapshot and live stream; summary: summaries only" });
 
-export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
-  nodes_list: Obj({}, "The nodes this connection reaches: the node itself (if the user may use it) and, through a hub, the user's nodes with presence. → { nodes }"),
-  sessions_list: Obj({ cwd: Opt(Str("Only sessions of this directory")) }, "Sessions stored on the node, newest first, with the agent serving each. → { sessions }"),
+export const OP_SCHEMAS: Record<HubOp, TSchema> = {
+  sessions_list: Obj({ cwd: Opt(Str("Only sessions of this directory")) }, "Sessions stored on the hub, newest first, with the agent serving each. → { sessions }"),
   session_read: Obj(
     { file: Str("A session file from sessions_list"), cursor: Opt(Str("From an earlier answer: the entries before it")), limit: Opt(Int("How many entries (200 by default)")) },
     "A stored session's entries without its agent, as harness_snapshot and harness_entries_before give them: the current branch, oldest first. → { entries, cursor?, mtime }",
   ),
-  agents_list: Obj({}, "The agents running on the node with their summaries. → { agents }"),
+  agents_list: Obj({}, "The agents running on the hub with their summaries. → { agents }"),
   agent_start: Obj(
     {
-      cwd: Str("The session's directory; ~ is the node user's home"),
+      cwd: Str("The session's directory; ~ is the hub user's home"),
       sessionFile: Opt(Str("Open this stored session; a new one when absent")),
       subagent: Opt(
         Obj(
@@ -77,7 +74,7 @@ export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
             tools: Type.Object({ allow: Opt(Type.Array(Str())), deny: Opt(Type.Array(Str())) }),
             subagents: Type.Array(Str(), { description: "Profiles the child may call" }),
             madness: Type.Boolean(),
-            depth: Type.Integer({ description: "Set by the node from the chain of parents" }),
+            depth: Type.Integer({ description: "Set by the hub from the chain of parents" }),
           },
           "How the child runs as a subagent; only an agent's own connection may start one",
         ),
@@ -89,26 +86,26 @@ export const OP_SCHEMAS: Record<NodeOp, TSchema> = {
   agent_attach: Obj({ agent: Str("The agent id"), level: Level }, "Follows an agent; at the full level the answer carries the snapshot and the stream continues after it. → { agent, snapshot? }"),
   agent_detach: Obj({ agent: Str("The agent id") }, "Stops following an agent; it keeps running. → {}"),
   agent_close: Obj({ agent: Str("The agent id") }, "Stops an agent; its session stays. → {}"),
-  files_list: Obj({ path: Str("A directory under the node user's home") }, "Lists a directory. → { path, items }"),
+  files_list: Obj({ path: Str("A directory under the hub user's home") }, "Lists a directory. → { path, items }"),
   dirs_list: Obj(
-    { path: Str("A directory of the node's machine: absolute, ~ or ~/…"), hidden: Opt(Type.Boolean({ description: "Directories whose names start with a dot too" })) },
+    { path: Str("A directory of the hub's machine: absolute, ~ or ~/…"), hidden: Opt(Type.Boolean({ description: "Directories whose names start with a dot too" })) },
     "The directories in a directory, by name, each with hasChildren (it holds directories itself), for choosing where a session starts. → { path, parent, home, dirs }",
   ),
-  files_get: Obj({ path: Str("A file under the node user's home") }, "Reads a file. → { path, base64 }"),
-  files_put: Obj({ path: Str("A file under the node user's home"), base64: Str("The content") }, "Writes a file (directories are created). → { path }"),
+  files_get: Obj({ path: Str("A file under the hub user's home") }, "Reads a file. → { path, base64 }"),
+  files_put: Obj({ path: Str("A file under the hub user's home"), base64: Str("The content") }, "Writes a file (directories are created). → { path }"),
   theme_get: Obj({ name: Opt(Str("A theme name; the user's ui.theme, else dark, when absent")) }, "A theme's colors as hex for clients that draw it themselves, with the names of the themes there are. → { name, appearance, colors, names }"),
-  files_upload: Obj({ name: Str("The file's name"), base64: Str() }, "A file the operator hands to a session (dropped, shared, picked), kept in the node's ~/.harness/uploads. → { path }"),
-  transcribe: Obj({ base64: Str("The recording"), mime: Str("Its type, e.g. audio/webm") }, "Speech to text on the node with its user's OpenAI login (gpt-4o-transcribe). → { text }"),
-  logs_tail: Obj({ lines: Opt(Type.Integer({ minimum: 1, maximum: 2000 })) }, "The node's event log, newest last; its own user, or a hub's admins. → { lines }"),
+  files_upload: Obj({ name: Str("The file's name"), base64: Str() }, "A file the operator hands to a session (dropped, shared, picked), kept in the hub's ~/.harness/uploads. → { path }"),
+  transcribe: Obj({ base64: Str("The recording"), mime: Str("Its type, e.g. audio/webm") }, "Speech to text on the hub with its user's OpenAI login (gpt-4o-transcribe). → { text }"),
+  logs_tail: Obj({ lines: Opt(Type.Integer({ minimum: 1, maximum: 2000 })) }, "The hub's event log, newest last. → { lines }"),
   terminal_open: Obj(
     { session: Str("The session's id"), cwd: Str("Its directory"), cols: Int(), rows: Int() },
-    "Shows a session's terminal to this client: a shell in its directory on this node, started at the first show (and again after it exited); the stream follows as terminal_output events. → { screen } (its screen with history as ANSI)",
+    "Shows a session's terminal to this client: a shell in its directory on this hub, started at the first show (and again after it exited); the stream follows as terminal_output events. → { screen } (its screen with history as ANSI)",
   ),
   terminal_input: Obj({ session: Str(), data: Str("Bytes for the shell, as a terminal sends them") }, "Input to a session's terminal. → {}"),
   terminal_resize: Obj({ session: Str(), cols: Int(), rows: Int() }, "The terminal's size (the last client's wins). → {}"),
   terminal_detach: Obj({ session: Str() }, "Hides the terminal from this client; the shell runs on. → {}"),
-  node_restart: Obj({}, "Stops every agent and its processes and starts the node again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}"),
-  settings_get: Obj({}, "The user's UI settings (ui.tabs, ui.theme, …): the node user's, or the hub user's. → { settings }"),
+  hub_restart: Obj({}, "Stops every agent and its processes and starts the hub again (its own user only): a client holding it restarts it in its process, a service exits for its supervisor to start it. Clients reconnect. → {}"),
+  settings_get: Obj({}, "The user's UI settings (ui.tabs, ui.theme, …): the hub user's. → { settings }"),
   settings_set: Obj(
     {
       key: Str("A setting key"),
@@ -194,40 +191,37 @@ export const HAP_REQUEST_SCHEMAS: Record<HapRequestType, TSchema> = {
   harness_subagents: Request("harness_subagents", {}, "The subagent profiles this session may call, with their resolved models, and the profiles left out. → { profiles, problems }"),
 };
 
-/* ----- node → client ----- */
+/* ----- hub → client ----- */
 
-export const NODE_FRAME_SCHEMAS = {
+export const HUB_FRAME_SCHEMAS = {
   welcome: Obj(
     {
       k: Type.Literal("welcome"),
       protocol: Type.Integer(),
-      harness: Str("The node's harness version"),
-      node: Str("The node's name"),
-      user: Str("Who the connection is: the node's OS user or a hub user"),
-      host: Type.Union([Type.Literal("client"), Type.Literal("service")], { description: "Who runs the node: a client window holding it, or a service (harness node)" }),
-      pid: Type.Integer({ description: "The node's process" }),
+      harness: Str("The hub's harness version"),
+      hub: Str("The hub's name"),
+      host: Type.Union([Type.Literal("client"), Type.Literal("service")], { description: "Who runs the hub: a client window holding it, or a service (harness hub)" }),
+      pid: Type.Integer({ description: "The hub's process" }),
     },
     "The answer to hello.",
   ),
-  refused: Obj({ k: Type.Literal("refused"), error: Any("{ code, message } (errors.ts)") }, "The connection is refused; the node closes it."),
+  refused: Obj({ k: Type.Literal("refused"), error: Any("{ code, message } (errors.ts)") }, "The connection is refused; the hub closes it."),
   res: Obj({ k: Type.Literal("res"), id: Str(), ok: Type.Boolean(), data: Opt(Any("The operation's result")), error: Opt(Any("{ code, message }")) }, "The answer to a req."),
-  evt: Obj({ k: Type.Literal("evt"), node: Str(), event: Any("A node event (see Node events)") }, "A node event."),
-  hap: Obj({ k: Type.Literal("hap"), node: Str(), agent: Str(), rec: Any("A HAP record of the agent") }, "A record of an agent this connection follows in full (and answers to its requests)."),
+  evt: Obj({ k: Type.Literal("evt"), event: Any("A hub event (see Hub events)") }, "A hub event."),
+  hap: Obj({ k: Type.Literal("hap"), agent: Str(), rec: Any("A HAP record of the agent") }, "A record of an agent this connection follows in full (and answers to its requests)."),
 } as const;
 
-export const NODE_EVENT_SCHEMAS = {
-  agents: Obj({ ev: Type.Literal("agents"), agents: Any("AgentInfo[]") }, "The node's agents changed (one started or exited)."),
+export const HUB_EVENT_SCHEMAS = {
+  agents: Obj({ ev: Type.Literal("agents"), agents: Any("AgentInfo[]") }, "The hub's agents changed (one started or exited)."),
   summary: Obj({ ev: Type.Literal("summary"), agent: Str(), summary: Any("AgentSummary: status, mode, title, waiting, tasks, lastOutcome, lastActivity, costUsd") }, "An agent's summary changed; at most 4 per second per agent."),
   agent_exited: Obj({ ev: Type.Literal("agent_exited"), agent: Str(), code: Type.Union([Type.Integer(), Type.Null()]), error: Opt(Str()) }, "An agent's process ended."),
-  settings: Obj({ ev: Type.Literal("settings"), settings: Any("The user's settings") }, "The user's settings changed (sent only to that user's connections)."),
-  nodes: Obj({ ev: Type.Literal("nodes"), nodes: Any("NodeInfo[]: name, online, roles") }, "A hub's nodes came online or went offline."),
-  refused: Obj({ ev: Type.Literal("refused"), error: Any("{ code, message }") }, "A node behind a hub refused this client's channel."),
+  settings: Obj({ ev: Type.Literal("settings"), settings: Any("The user's settings") }, "The user's settings changed."),
   terminal_output: Obj({ ev: Type.Literal("terminal_output"), session: Str(), data: Str("Bytes of the shell as text") }, "Output of a session's terminal this client shows."),
   terminal_exit: Obj({ ev: Type.Literal("terminal_exit"), session: Str(), code: Type.Integer() }, "A session's terminal shell exited; terminal_open starts another."),
 } as const;
 
 export const HAP_EVENT_SCHEMAS = {
-  harness_hello: Obj({ type: Type.Literal("harness_hello"), protocol: Type.Integer(), harness: Str(), session: Any("SessionView") }, "The agent is ready (node only)."),
+  harness_hello: Obj({ type: Type.Literal("harness_hello"), protocol: Type.Integer(), harness: Str(), session: Any("SessionView") }, "The agent is ready (hub only)."),
   harness_response: Obj({ type: Type.Literal("harness_response"), id: Str(), ok: Type.Boolean(), data: Opt(Any("The result")), error: Opt(Any("{ code, message }")) }, "The answer to a harness request."),
   harness_state: Obj({ type: Type.Literal("harness_state"), state: Any("HarnessState: variant, madness, implementer, mode, model, tasks, subagents") }, "The whole HarnessState after a change."),
   harness_session: Obj({ type: Type.Literal("harness_session"), session: Any("SessionView: id, file, name, cwd, model, thinking, activity, queue, usage") }, "pi's view of the session changed."),

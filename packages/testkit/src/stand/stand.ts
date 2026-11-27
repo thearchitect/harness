@@ -1,4 +1,4 @@
-// A test stand: a temporary user (its ~/.harness), a project directory, a node with agents that
+// A test stand: a temporary user (its ~/.harness), a project directory, a hub with agents that
 // answer from a scripted model, and clients connected to it. Everything lives under one temporary
 // directory removed by `down()` unless the test keeps it for its report.
 
@@ -8,10 +8,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Clock } from "#protocol/clock.ts";
 import type { HapRecord } from "#protocol/hap.ts";
-import { NodeConnection } from "#client/connection.ts";
-import { HarnessNode } from "#node/node.ts";
-import { inProcessTransport, unixTransport } from "#node/endpoints/transports.ts";
-import { listenUnix, socketPath } from "#node/endpoints/unix.ts";
+import { HubConnection } from "#client/connection.ts";
+import { Hub } from "#hub/hub.ts";
+import { inProcessTransport, unixTransport } from "#hub/endpoints/transports.ts";
+import { listenUnix, socketPath } from "#hub/endpoints/unix.ts";
 import type { ScriptedTurn } from "./scenario-model.ts";
 import type { Server } from "node:net";
 
@@ -24,7 +24,7 @@ export type Stand = {
   root: string;
   dataDir: string;
   project: string;
-  node: HarnessNode;
+  hub: Hub;
   /** Queues the model's next turns (each request plays the next queued turn, across agents). */
   script(turns: ScriptedTurn[]): void;
   /** Models of the scenario provider besides `scripted`, for agents started from now on. */
@@ -39,7 +39,7 @@ export type Stand = {
   claudeInputs(): string[];
   /** The requests the model received, in order: { agent: "main" | <profile>, context }. */
   requests(): unknown[];
-  connect(via?: "inproc" | "unix"): Promise<NodeConnection>;
+  connect(via?: "inproc" | "unix"): Promise<HubConnection>;
   down(): Promise<void>;
 };
 
@@ -47,14 +47,12 @@ export type StandOptions = {
   name?: string;
   /** A built bundle (its directory): agents run its sources with its manifest — packages, MCP servers, tools. */
   bundle?: string;
-  /** Hub users allowed on the stand's node through a hub. */
-  users?: string[];
-  /** The node's clock (summaries, idle unloading, backoff); the system's by default. */
+  /** The hub's clock (summaries, idle unloading, backoff); the system's by default. */
   clock?: Clock;
   maxAgents?: number;
-  /** Entries of an attach's snapshot (the node's default when absent): small, to test loading older ones. */
+  /** Entries of an attach's snapshot (the hub's default when absent): small, to test loading older ones. */
   snapshotEntries?: number;
-  /** A node declared a shared server (its agents get the `server` skill). */
+  /** A hub declared a shared server (its agents get the `server` skill). */
   server?: boolean;
   /** A real Claude Code instead of the fake (the live check, tests/live/): its path. */
   claudeCommand?: string;
@@ -93,7 +91,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
   writeFileSync(claudeScript, "[]");
   writeFileSync(claudeCommand, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_CLAUDE_PATH)} "$@"\n`, { mode: 0o755 });
 
-  const node = new HarnessNode({
+  const hub = new Hub({
     name: options.name ?? "test",
     dataDir,
     harnessVersion: "test",
@@ -127,19 +125,18 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
       ANTHROPIC_API_KEY: "sk-must-not-pass",
     },
     summaryIntervalMs: 20,
-    users: options.users,
     clock: options.clock,
     maxAgents: options.maxAgents,
     snapshotEntries: options.snapshotEntries,
   });
-  const connections: NodeConnection[] = [];
+  const connections: HubConnection[] = [];
   let server: Server | undefined;
 
   return {
     root,
     dataDir,
     project,
-    node,
+    hub,
     models(ids) {
       writeFileSync(modelsPath, JSON.stringify(ids));
     },
@@ -180,13 +177,13 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
         : [];
     },
     async connect(via = "inproc") {
-      let connection: NodeConnection;
+      let connection: HubConnection;
       if (via === "unix") {
-        const path = socketPath(dataDir, node.config.name);
-        server ??= await listenUnix(node, path);
-        connection = await NodeConnection.open(await unixTransport(path), "test");
+        const path = socketPath(dataDir, hub.config.name);
+        server ??= await listenUnix(hub, path);
+        connection = await HubConnection.open(await unixTransport(path), "test");
       } else {
-        connection = await NodeConnection.open(inProcessTransport(node), "test");
+        connection = await HubConnection.open(inProcessTransport(hub), "test");
       }
       connections.push(connection);
       return connection;
@@ -196,20 +193,20 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
         connection.close();
       }
       server?.close();
-      await node.close();
+      await hub.close();
       rmSync(root, { recursive: true, force: true });
     },
   };
 }
 
 /** Waits for the first HAP record of an agent that matches; the timeout only guards against a hang. */
-export function nextRecord(connection: NodeConnection, agent: string, match: (record: HapRecord & { type: string; [key: string]: unknown }) => boolean, timeoutMs = 20_000): Promise<HapRecord & { [key: string]: unknown }> {
+export function nextRecord(connection: HubConnection, agent: string, match: (record: HapRecord & { type: string; [key: string]: unknown }) => boolean, timeoutMs = 20_000): Promise<HapRecord & { [key: string]: unknown }> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       off();
       reject(new Error(`no matching record from ${agent} within ${timeoutMs} ms`));
     }, timeoutMs);
-    const off = connection.onHap((_node, from, record) => {
+    const off = connection.onHap((from, record) => {
       if (from === agent && match(record as never)) {
         clearTimeout(timer);
         off();

@@ -1,5 +1,5 @@
 // Logging in to a provider from a client (plan 5.6, the agent's half of /login): the login runs on
-// the node, each step reaches the operator as a `login` interaction, the key lands in the node user's
+// the hub, each step reaches the operator as a `login` interaction, the key lands in the hub user's
 // auth.json; cancelling fails the login with its reason; back from the first step ends it with back.
 
 import assert from "node:assert/strict";
@@ -28,10 +28,10 @@ export const scenario = defineScenario({
   clients: { raw: { kind: "raw" } },
   steps: [
     {
-      name: "an API key login asks for the key and stores it on the node",
+      name: "an API key login asks for the key and stores it on the hub",
       async run({ stand, clients: { raw }, memo }) {
         const { agent } = await raw.api.request("agent_start", { cwd: stand.project });
-        const model = await raw.client.follow(raw.node, agent.id);
+        const model = await raw.client.follow(raw.hub, agent.id);
         memo.agent = agent.id;
         memo.model = model;
         const { providers } = await raw.api.call<{ providers: LoginProvider[] }>(agent.id, { type: "harness_login_providers" });

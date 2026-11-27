@@ -1,8 +1,8 @@
 # harness documentation
 
-harness is a multi-session coding agent platform on pi: nodes run agents (pi sessions with the
-harness extension), a hub connects nodes and devices, the TUI (`harness`) and the app are clients
-of one protocol. These documents describe what harness adds or changes; for pi's own contracts
+harness is a multi-session coding agent platform on pi: a user's hub runs their agents (pi
+sessions with the harness extension) on its machine and serves their devices; the TUI
+(`harness`) and the app are clients of one protocol. These documents describe what harness adds or changes; for pi's own contracts
 they link to pi's documents of the version in this bundle (`../pi/coding-agent/docs/`), read with
 the translations in [pi-mapping.md](pi-mapping.md).
 
@@ -19,8 +19,8 @@ the translations in [pi-mapping.md](pi-mapping.md).
 | Name a model without its version | [extending/models.md](extending/models.md) |
 | Test a change, look at the screens, drive a stand | [extending/testkit.md](extending/testkit.md) |
 | Talk to an agent (records, snapshot and stream) | [protocol/hap.md](protocol/hap.md), [reference](protocol/reference/hap.md) |
-| Talk to a node or a hub | [protocol/node.md](protocol/node.md), [protocol/hub.md](protocol/hub.md), [reference](protocol/reference/node.md) |
-| Run nodes and a hub, pair devices | [operations/nodes.md](operations/nodes.md) |
+| Talk to a hub | [protocol/hub.md](protocol/hub.md), [reference](protocol/reference/hub.md) |
+| Run a hub, pair devices | [operations/hub.md](operations/hub.md) |
 | Open the app (`harness web-app`, a hub's address), its settings | [operations/app.md](operations/app.md) |
 | NixOS | [operations/nixos.md](operations/nixos.md) |
 | Fly.io | [operations/fly.md](operations/fly.md) |

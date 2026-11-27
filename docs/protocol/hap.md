@@ -1,6 +1,6 @@
 # HAP: the harness agent protocol
 
-HAP is the stream between an agent and its node, and through the node between the agent and each
+HAP is the stream between an agent and its hub, and through the hub between the agent and each
 client that follows it in full. It is pi's RPC ([rpc.md](../../pi/coding-agent/docs/rpc.md)) with
 records added: pi's commands, responses, session events and extension UI records pass unchanged
 ([rpc-commands.md](../../pi/coding-agent/docs/rpc-commands.md),
@@ -10,13 +10,13 @@ records, listed with their fields in the [reference](reference/hap.md).
 ## Framing
 
 JSON objects, one per line ([framing](../../pi/coding-agent/docs/rpc.md#framing)): LF separates
-records, a CR before it is dropped, U+2028 and U+2029 are not separators. Between agent and node
+records, a CR before it is dropped, U+2028 and U+2029 are not separators. Between agent and hub
 the stream runs on file descriptor 3, so nothing an extension prints can break it.
 
 ## Requests and answers
 
 A client's `harness_*` request carries an `id` and gets exactly one `harness_response` with that
-id (`ok` with `data`, or `error` with `code` and `message`). The node rewrites ids on the way to
+id (`ok` with `data`, or `error` with `code` and `message`). The hub rewrites ids on the way to
 the agent and back, so clients choose ids freely and only the asking client gets the answer. pi's
 commands get pi's `response` records the same way.
 
@@ -49,5 +49,5 @@ client sends keys (`harness_component_input`) and its width (`harness_component_
 
 ## Versions
 
-`harness_hello` carries the agent's protocol version and harness version. A node refuses agents
+`harness_hello` carries the agent's protocol version and harness version. A hub refuses agents
 and clients of an incompatible protocol version (`version_mismatch`).

@@ -1,7 +1,7 @@
 // What the harness extension needs from the process that runs it (harness-agent, or a test).
-// The extension never talks to clients, nodes or transports: it asks the operator through
+// The extension never talks to clients, hubs or transports: it asks the operator through
 // `interactions`, publishes its state through `publishState`, and starts subagents' agents through
-// `children`; the host turns these into HAP records and node requests.
+// `children`; the host turns these into HAP records and hub requests.
 
 import type { InteractionKind, InteractionMap } from "#protocol/interactions.ts";
 import type { HarnessState, SubagentLaunch } from "#protocol/state.ts";
@@ -34,7 +34,7 @@ export type ChildLaunch = {
   subagent: Omit<SubagentLaunch, "depth">;
 };
 
-/** A subagent's agent on the node, followed by its parent. */
+/** A subagent's agent on the hub, followed by its parent. */
 export interface ChildAgent {
   readonly agentId: string;
   readonly sessionId: string;
@@ -63,7 +63,7 @@ export interface ExtensionHost {
   publishClaude(session: string, entries: TranscriptEntry[], streaming: TranscriptMessage | null): void;
   /** The user's data directory (`~/.harness`). */
   readonly dataDir: string;
-  /** Agents of subagents (engine `harness`), started through the node. */
+  /** Agents of subagents (engine `harness`), started through the hub. */
   readonly children: ChildAgents;
   /** This agent's own launch when it runs as a subagent. */
   readonly subagent: SubagentLaunch | undefined;

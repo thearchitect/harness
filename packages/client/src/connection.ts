@@ -1,10 +1,10 @@
-// A client's connection to a node (or a hub): the handshake, operations with answers, node events,
+// A client's connection to a node: the handshake, operations with answers, node events,
 // and the HAP records of attached agents. Transport-neutral and isomorphic: a unix socket, a
-// WebSocket and an in-process node all deliver frames through the same Transport.
+// WebSocket and an in-process hub all deliver frames through the same Transport.
 
 import type { ProtocolError } from "#protocol/errors.ts";
 import type { HapRecord } from "#protocol/hap.ts";
-import type { ClientCapability, NodeEvent, NodeFrame, NodeOp, NodeOps, Transport } from "#protocol/node.ts";
+import type { ClientCapability, HubEvent, HubFrame, HubOp, HubOps, Transport } from "#protocol/hub.ts";
 import { PROTOCOL_VERSION } from "#protocol/version.ts";
 
 export type { Transport };
@@ -18,16 +18,16 @@ export class RequestError extends Error {
   }
 }
 
-export type Welcome = Extract<NodeFrame, { k: "welcome" }>;
+export type Welcome = Extract<HubFrame, { k: "welcome" }>;
 
 type Waiter = { resolve(data: unknown): void; reject(error: Error): void };
 
-export class NodeConnection {
+export class HubConnection {
   private readonly transport: Transport;
   private readonly waiters = new Map<string, Waiter>();
   private readonly hapWaiters = new Map<string, Waiter>();
-  private readonly eventListeners = new Set<(node: string, event: NodeEvent) => void>();
-  private readonly hapListeners = new Set<(node: string, agent: string, record: HapRecord) => void>();
+  private readonly eventListeners = new Set<(event: HubEvent) => void>();
+  private readonly hapListeners = new Set<(agent: string, record: HapRecord) => void>();
   private readonly closeListeners = new Set<(reason: string) => void>();
   private counter = 0;
   welcome: Welcome | undefined;
@@ -50,9 +50,9 @@ export class NodeConnection {
     });
   }
 
-  /** Connects and exchanges hello/welcome; rejects with the node's reason when refused. */
-  static open(transport: Transport, client: string, token?: string, capabilities?: ClientCapability[]): Promise<NodeConnection> {
-    const connection = new NodeConnection(transport);
+  /** Connects and exchanges hello/welcome; rejects with the hub's reason when refused. */
+  static open(transport: Transport, client: string, token?: string, capabilities?: ClientCapability[]): Promise<HubConnection> {
+    const connection = new HubConnection(transport);
     return new Promise((resolve, reject) => {
       connection.handshake = { resolve: () => resolve(connection), reject };
       transport.send({ k: "hello", protocol: PROTOCOL_VERSION, client, token, ...(capabilities !== undefined ? { capabilities } : {}) });
@@ -61,7 +61,7 @@ export class NodeConnection {
 
   private handshake: { resolve(): void; reject(error: Error): void } | undefined;
 
-  private receive(frame: NodeFrame): void {
+  private receive(frame: HubFrame): void {
     switch (frame.k) {
       case "welcome":
         this.welcome = frame;
@@ -88,7 +88,7 @@ export class NodeConnection {
       }
       case "evt":
         for (const listener of this.eventListeners) {
-          listener(frame.node, frame.event);
+          listener(frame.event);
         }
         break;
       case "hap": {
@@ -106,7 +106,7 @@ export class NodeConnection {
           }
         } else {
           for (const listener of this.hapListeners) {
-            listener(frame.node, frame.agent, frame.rec);
+            listener(frame.agent, frame.rec);
           }
         }
         break;
@@ -116,36 +116,36 @@ export class NodeConnection {
     }
   }
 
-  request<K extends NodeOp>(op: K, args: NodeOps[K]["args"], node?: string): Promise<NodeOps[K]["result"]> {
+  request<K extends HubOp>(op: K, args: HubOps[K]["args"]): Promise<HubOps[K]["result"]> {
     this.counter += 1;
     const id = `r${this.counter}`;
     return new Promise((resolve, reject) => {
-      this.waiters.set(id, { resolve: (data) => resolve(data as NodeOps[K]["result"]), reject });
-      this.transport.send({ k: "req", id, node, op, args });
+      this.waiters.set(id, { resolve: (data) => resolve(data as HubOps[K]["result"]), reject });
+      this.transport.send({ k: "req", id, op, args });
     });
   }
 
   /** Sends a HAP request or pi command to an agent and waits for its answer. */
-  call<T = unknown>(agent: string, record: { type: string; [key: string]: unknown }, node?: string): Promise<T> {
+  call<T = unknown>(agent: string, record: { type: string; [key: string]: unknown }): Promise<T> {
     this.counter += 1;
     const id = `h${this.counter}`;
     return new Promise((resolve, reject) => {
       this.hapWaiters.set(`${agent}.${id}`, { resolve: (data) => resolve(data as T), reject });
-      this.transport.send({ k: "hap", node, agent, rec: { ...record, id } as HapRecord });
+      this.transport.send({ k: "hap", agent, rec: { ...record, id } as HapRecord });
     });
   }
 
   /** Sends a record that has no answer. */
-  tell(agent: string, record: { type: string; [key: string]: unknown }, node?: string): void {
-    this.transport.send({ k: "hap", node, agent, rec: record as HapRecord });
+  tell(agent: string, record: { type: string; [key: string]: unknown }): void {
+    this.transport.send({ k: "hap", agent, rec: record as HapRecord });
   }
 
-  onEvent(listener: (node: string, event: NodeEvent) => void): () => void {
+  onEvent(listener: (event: HubEvent) => void): () => void {
     this.eventListeners.add(listener);
     return () => this.eventListeners.delete(listener);
   }
 
-  onHap(listener: (node: string, agent: string, record: HapRecord) => void): () => void {
+  onHap(listener: (agent: string, record: HapRecord) => void): () => void {
     this.hapListeners.add(listener);
     return () => this.hapListeners.delete(listener);
   }

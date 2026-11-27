@@ -1,17 +1,15 @@
-# The deployment: who may use it and their initial settings. lib.mkRemoteImage builds the hub
-# and one node per user from it; changes take effect with the next deploy.
+# The deployment: whose hub it is and their initial settings. lib.mkRemoteImage builds the
+# user's hub from it; changes take effect with the next deploy.
 #
-# Each user gets a uid of their own, a home on the volume (/data/home/<name>) and a node running
-# as that uid; uids must never be reused. Devices are paired by an admin on the machine:
-#   fly ssh console -C "setpriv --reuid=harness --regid=harness --clear-groups env HOME=/data/home/harness harness hub device add alice --name laptop"
-# and on the device: harness remote add <name> wss://<fly app>.fly.dev (the token is asked for).
-users:
-  - name: alice
-    uid: 1001
-    # Admins see every node of the hub and may use the hub's own node.
-    admin: true
+# The user's home is on the volume (/data/home/<name>) and the hub runs as their uid. Devices
+# are paired on the machine:
+#   fly ssh console -C "su alice -c 'harness hub device add --name laptop'"
+# and on the device: harness remote add <name> wss://<fly app>.fly.dev (the code is asked for).
+user:
+  name: alice
+  uid: 1001
 
-# ~/.harness/settings.json of a new user (an existing file is never touched).
+# ~/.harness/settings.json of the user (an existing file is never touched).
 defaultSettings:
   defaultProvider: deepseek
   defaultModel: deepseek-v4-pro

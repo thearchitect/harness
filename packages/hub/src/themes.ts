@@ -5,7 +5,7 @@
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ThemeColors } from "#protocol/node.ts";
+import type { ThemeColors } from "#protocol/hub.ts";
 
 type ThemeModule = {
   getResolvedThemeColors(name: string): Record<string, string>;

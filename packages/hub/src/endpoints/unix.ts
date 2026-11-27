@@ -1,14 +1,13 @@
-// The node's local endpoint: a unix socket in ~/.harness/sockets (a directory only the user can
-// enter, which is the whole authorization: whoever reaches the socket is the node's user).
+// The hub's local endpoint: a unix socket in ~/.harness/sockets (a directory only the user can
+// enter, which is the whole authorization: whoever reaches the socket is the hub's user).
 
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { userInfo } from "node:os";
 import { join } from "node:path";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
-import type { ClientFrame, NodeFrame } from "#protocol/node.ts";
-import type { Connection, HarnessNode } from "../node.ts";
+import type { ClientFrame, HubFrame } from "#protocol/hub.ts";
+import type { Connection, Hub } from "../hub.ts";
 
 /** Longest unix socket path the kernel takes (sun_path, with its terminator). */
 const MAX_SOCKET_PATH = process.platform === "darwin" ? 103 : 107;
@@ -20,9 +19,7 @@ export function socketPath(dataDir: string, name: string): string {
 function socketConnection(socket: Socket): Connection {
   return {
     id: randomUUID(),
-    user: userInfo().username,
-    trusted: true,
-    send(frame: NodeFrame) {
+    send(frame: HubFrame) {
       if (!socket.destroyed) {
         socket.write(encodeRecord(frame));
       } else {
@@ -35,7 +32,7 @@ function socketConnection(socket: Socket): Connection {
   };
 }
 
-/** Whether a node answers on the socket (a leftover file of a dead node does not). */
+/** Whether a hub answers on the socket (a leftover file of a dead hub does not). */
 export function socketAlive(path: string): Promise<boolean> {
   return new Promise((resolve) => {
     if (!existsSync(path)) {
@@ -51,7 +48,7 @@ export function socketAlive(path: string): Promise<boolean> {
   });
 }
 
-export async function listenUnix(node: HarnessNode, path: string): Promise<Server> {
+export async function listenUnix(node: Hub, path: string): Promise<Server> {
   if (Buffer.byteLength(path) > MAX_SOCKET_PATH) {
     throw new Error(`the socket path ${path} is ${Buffer.byteLength(path)} bytes; unix sockets take at most ${MAX_SOCKET_PATH}: set HARNESS_HOME to a shorter directory`);
   } else if (await socketAlive(path)) {

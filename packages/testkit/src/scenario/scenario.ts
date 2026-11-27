@@ -1,11 +1,11 @@
-// Scenarios: a stand, its clients and named steps. The same definition runs under node's test
+// Scenarios: a stand, its clients and named steps. The same definition runs under hub's test
 // runner (`runScenario`, one test per step) and under the stand host of `harness-test up`, which
 // stops between steps for an operator or an agent to look and act. A step boundary is where
 // captures and reports are taken; a failure writes the report (report.ts) before it fails.
 
 import { after, before, describe, test } from "node:test";
-import { NodeConnection } from "#client/connection.ts";
-import { inProcessTransport } from "#node/endpoints/transports.ts";
+import { HubConnection } from "#client/connection.ts";
+import { inProcessTransport } from "#hub/endpoints/transports.ts";
 import { TuiDriver } from "../drivers/tui.ts";
 import { RawDriver } from "../drivers/raw.ts";
 import { WebDriver } from "../drivers/web.ts";
@@ -61,7 +61,7 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
     const report = new Report(scenario.name, stand);
     const clients: Clients = {};
     for (const [name, spec] of Object.entries(scenario.clients)) {
-      const open = (): Promise<NodeConnection> => NodeConnection.open(report.record(name, inProcessTransport(stand.node)), name, undefined, spec.kind === "tui" ? ["component-bridge"] : undefined);
+      const open = (): Promise<HubConnection> => HubConnection.open(report.record(name, inProcessTransport(stand.hub)), name, undefined, spec.kind === "tui" ? ["component-bridge"] : undefined);
       switch (spec.kind) {
         case "tui":
           clients[name] = await TuiDriver.start(open, { cwd: stand.project, columns: spec.columns, rows: spec.rows });
@@ -71,7 +71,7 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
           break;
         case "web":
           // the page's connections go through the web app's relay, recorded like the others
-          clients[name] = await WebDriver.start(async () => report.record(name, inProcessTransport(stand.node)), { width: spec.columns, height: spec.rows });
+          clients[name] = await WebDriver.start(async () => report.record(name, inProcessTransport(stand.hub)), { width: spec.columns, height: spec.rows });
           break;
         default:
           throw new Error(`unknown client kind: ${String(spec.kind satisfies never)}`);
@@ -122,7 +122,7 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
   }
 }
 
-/** The scenario under node's test runner: a suite with one test per step. */
+/** The scenario under hub's test runner: a suite with one test per step. */
 export function runScenario<C extends Record<string, ClientSpec>>(scenario: Scenario<C>): void {
   if (process.env.HARNESS_TEST_HOST === "1") {
     return; // loaded by the stand host of `harness-test up`, which runs the steps itself

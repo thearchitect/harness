@@ -38,7 +38,7 @@ an invitation.
 
 ## Engines
 
-- **harness**: a child agent on the same node — a pi session with harness, the profile's role as
+- **harness**: a child agent on the same hub — a pi session with harness, the profile's role as
   a prompt section, its tools (declared and enforced), its mode and model. Its interactions reach
   the operator signed with its name; the TUI shows its session when its row is selected, and the
   editor steers it.

@@ -1,16 +1,16 @@
-// A harness node: the agents of one OS user on one machine and the clients connected to them.
-// Every endpoint (unix socket, WebSocket, in-process) hands its connections here; the node speaks
-// the node protocol on them, runs agents as child processes, and fans each agent's HAP stream out
+// A harness hub: the agents of one OS user on one machine and the clients connected to them.
+// Every endpoint (unix socket, WebSocket, in-process) hands its connections here; the hub speaks
+// the hub protocol on them, runs agents as child processes, and fans each agent's HAP stream out
 // to the connections attached to it — the whole stream ("full") or its summary ("summary").
 
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir, tmpdir, userInfo } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
-import type { AgentInfo, AttachLevel, ClientFrame, NodeEvent, NodeFrame, NodeHost, NodeInfo, NodeOp, NodeOps } from "#protocol/node.ts";
-import { NODE_OPS } from "#protocol/node.ts";
+import type { AgentInfo, AttachLevel, ClientFrame, HubEvent, HubFrame, HubHost, HubOp, HubOps } from "#protocol/hub.ts";
+import { HUB_OPS } from "#protocol/hub.ts";
 import { settingRevision } from "#protocol/settings.ts";
 import { listDirs } from "./dirs.ts";
 import { SNAPSHOT_ENTRIES } from "#protocol/hap.ts";
@@ -27,34 +27,23 @@ import { systemClock, type Clock } from "#protocol/clock.ts";
 import { SummaryTracker } from "./summary.ts";
 import { Telemetry } from "./telemetry.ts";
 
-/** One client connection, whatever carries it. */
+/**
+ * One client connection, whatever carries it. The hub is its user's alone: whoever reached it (a
+ * local endpoint, a paired device) is that user.
+ */
 export interface Connection {
   readonly id: string;
-  /** Who is on the other end: the node's own OS user (trusted), or a hub user. */
-  readonly user: string;
-  /** The node's own user through a local endpoint (unix socket, in-process): no access check. */
-  readonly trusted: boolean;
+  /** The paired device on the other end of a network connection (for the log). */
+  readonly device?: string;
   /** The agent on the other end, when an agent is the client (for its subagents). */
   readonly agent?: string;
-  /** A client in the node's own process (the window that holds it). */
+  /** A client in the hub's own process (the window that holds it). */
   readonly inProcess?: boolean;
-  send(frame: NodeFrame): void;
+  send(frame: HubFrame): void;
   close(): void;
 }
 
-/** What a hub adds to its node: other nodes behind it, its users and their settings. */
-export interface HubRole {
-  /** A frame for another node: routed to it, or answered with an error. */
-  route(connection: Connection, frame: ClientFrame & { node?: string }): void;
-  nodes(user: string): NodeInfo[];
-  /** Whether a hub user may use the hub's own node. */
-  mayUseLocal(user: string): boolean;
-  isAdmin(user: string): boolean;
-  settingsFor(user: string): SettingsStore;
-  disconnect(connection: Connection): void;
-}
-
-export type NodeConfig = {
+export type HubConfig = {
   name: string;
   /** The user's harness directory (~/.harness). */
   dataDir: string;
@@ -65,8 +54,6 @@ export type NodeConfig = {
   agentEnv?: Record<string, string>;
   /** Summaries go out at most this often per agent. */
   summaryIntervalMs?: number;
-  /** Hub users allowed on this node through its hubs (the node checks again what the hub checked). */
-  users?: string[];
   clock?: Clock;
   /** Unload agents idle this long (default IDLE_UNLOAD_MS). */
   idleUnloadMs?: number;
@@ -74,15 +61,15 @@ export type NodeConfig = {
   maxAgents?: number;
   /** Entries of an attach's snapshot; older ones load page by page (default SNAPSHOT_ENTRIES). */
   snapshotEntries?: number;
-  /** Who runs the node (welcome's `host`): a client window holding it, or a service (default). */
-  host?: NodeHost;
-  /** node_restart: stops the agents and starts the node again (a holder in its process, a service by exiting). */
+  /** Who runs the hub (welcome's `host`): a client window holding it, or a service (default). */
+  host?: HubHost;
+  /** hub_restart: stops the agents and starts the hub again (a holder in its process, a service by exiting). */
   restart?: () => Promise<void>;
 };
 
 type Attachment = { level: AttachLevel; live: boolean };
 
-/** A subagent's start: its parent, its launch (with the depth the node set), whether it outlives the parent. */
+/** A subagent's start: its parent, its launch (with the depth the hub set), whether it outlives the parent. */
 type ChildStart = { parent: AgentEntry; launch: SubagentLaunch; background: boolean };
 
 type AgentEntry = {
@@ -111,56 +98,35 @@ export function defaultAgentCommand(): string[] {
   return [process.execPath, fileURLToPath(new URL("../../agent/src/main.ts", import.meta.url))];
 }
 
-export class HarnessNode {
-  readonly config: NodeConfig;
+export class Hub {
+  readonly config: HubConfig;
   private readonly agents = new Map<string, AgentEntry>();
-  /** Each agent's own client connection to the node (for its subagents), by agent id. */
+  /** Each agent's own client connection to the hub (for its subagents), by agent id. */
   private readonly agentConnections = new Map<string, Connection>();
   private readonly agentReceivers = new Map<string, (frame: ClientFrame) => void>();
   private readonly connections = new Map<string, { connection: Connection; welcomed: boolean; capabilities: Set<string> }>();
   private readonly locks: SessionLocks;
   readonly settings: SettingsStore;
   private counter = 0;
-  hub: HubRole | undefined;
   readonly clock: Clock;
   private unloadTimer: unknown;
   readonly telemetry: Telemetry;
   private readonly terminals: Terminals;
   private closing = false;
 
-  constructor(config: NodeConfig) {
+  constructor(config: HubConfig) {
     this.config = config;
     this.clock = config.clock ?? systemClock;
     this.telemetry = new Telemetry(config.dataDir, config.name, () => this.clock.now());
     // the sessions' terminals: their events to the connections that show them
     this.terminals = new Terminals(
-      (viewer, event) => (viewer as Connection).send({ k: "evt", node: this.config.name, event }),
+      (viewer, event) => (viewer as Connection).send({ k: "evt", event }),
       (event) => this.telemetry.log(event),
     );
     this.scheduleUnload();
     this.locks = new SessionLocks(config.dataDir);
     this.settings = new SettingsStore(config.dataDir);
-    this.settings.onChange((settings) => this.settingsChanged(this.settings, settings));
-  }
-
-  /** The settings a connection's user keeps here: a hub user's own, or the node user's. */
-  settingsOf(connection: Connection): SettingsStore {
-    return this.hub !== undefined && !connection.trusted ? this.hub.settingsFor(connection.user) : this.settings;
-  }
-
-  settingsChanged(store: SettingsStore, settings: Record<string, unknown>): void {
-    for (const { connection, welcomed } of this.connections.values()) {
-      if (welcomed && this.settingsOf(connection) === store) {
-        connection.send({ k: "evt", node: this.config.name, event: { ev: "settings", settings } });
-      } else {
-        // another user's settings, or not through the handshake yet
-      }
-    }
-  }
-
-  /** Whether a connection may use this node's agents, sessions and files. */
-  private allowed(connection: Connection): boolean {
-    return connection.trusted || (this.config.users ?? []).includes(connection.user) || (this.hub?.mayUseLocal(connection.user) ?? false);
+    this.settings.onChange((settings) => this.broadcast({ ev: "settings", settings }));
   }
 
   /* ----- connections ----- */
@@ -185,7 +151,6 @@ export class HarnessNode {
     this.connections.delete(connection.id);
     this.terminals.disconnect(connection);
     this.telemetry.log({ event: "disconnect", connection: connection.id });
-    this.hub?.disconnect(connection);
     for (const entry of this.agents.values()) {
       entry.attachments.delete(connection);
       this.reportClients(entry);
@@ -222,17 +187,9 @@ export class HarnessNode {
       } else {
         state.welcomed = true;
         state.capabilities = new Set(frame.capabilities ?? []);
-        this.telemetry.log({ event: "connect", connection: connection.id, client: frame.client, user: connection.user, trusted: connection.trusted });
-        connection.send({ k: "welcome", protocol: PROTOCOL_VERSION, harness: this.config.harnessVersion, node: this.config.name, user: connection.user, host: this.config.host ?? "service", pid: process.pid });
+        this.telemetry.log({ event: "connect", connection: connection.id, client: frame.client, ...(connection.device !== undefined ? { device: connection.device } : {}) });
+        connection.send({ k: "welcome", protocol: PROTOCOL_VERSION, harness: this.config.harnessVersion, hub: this.config.name, host: this.config.host ?? "service", pid: process.pid });
       }
-    } else if (frame.k !== "hello" && frame.node !== undefined && frame.node !== this.config.name) {
-      if (this.hub !== undefined) {
-        this.hub.route(connection, frame);
-      } else {
-        this.refuse(connection, frame, { code: "not_found", message: `no node ${frame.node} here: ${this.config.name} is not a hub` });
-      }
-    } else if (frame.k !== "hello" && !(frame.k === "req" && (frame.op === "nodes_list" || frame.op === "settings_get" || frame.op === "settings_set" || frame.op === "theme_get" || frame.op === "logs_tail")) && !this.allowed(connection)) {
-      this.refuse(connection, frame, { code: "forbidden", message: `${connection.user} may not use node ${this.config.name}` });
     } else {
       switch (frame.k) {
         case "hello":
@@ -251,15 +208,15 @@ export class HarnessNode {
   }
 
   /** Answers a frame with an error: an operation's response, or the HAP response of an agent request. */
-  refuse(connection: Connection, frame: ClientFrame, error: { code: "not_found" | "forbidden" | "node_offline" | "unauthorized" | "invalid_record"; message: string }): void {
+  refuse(connection: Connection, frame: ClientFrame, error: { code: "invalid_record"; message: string }): void {
     // the frame may be malformed: only what is there is echoed back
-    const loose = frame as { k?: unknown; id?: unknown; node?: unknown; agent?: unknown; rec?: { id?: unknown } };
+    const loose = frame as { k?: unknown; id?: unknown; agent?: unknown; rec?: { id?: unknown } };
     switch (loose.k) {
       case "req":
         connection.send({ k: "res", id: String(loose.id ?? ""), ok: false, error });
         break;
       case "hap":
-        connection.send({ k: "hap", node: typeof loose.node === "string" ? loose.node : this.config.name, agent: String(loose.agent ?? ""), rec: { type: "harness_response", id: String(loose.rec?.id ?? ""), ok: false, error } });
+        connection.send({ k: "hap", agent: String(loose.agent ?? ""), rec: { type: "harness_response", id: String(loose.rec?.id ?? ""), ok: false, error } });
         break;
       case "hello":
         connection.send({ k: "refused", error });
@@ -269,8 +226,8 @@ export class HarnessNode {
     }
   }
 
-  private async request(connection: Connection, id: string, op: NodeOp, args: unknown): Promise<void> {
-    if (!NODE_OPS.includes(op)) {
+  private async request(connection: Connection, id: string, op: HubOp, args: unknown): Promise<void> {
+    if (!HUB_OPS.includes(op)) {
       connection.send({ k: "res", id, ok: false, error: { code: "invalid_record", message: `unknown operation ${String(op)}` } });
     } else {
       try {
@@ -287,30 +244,26 @@ export class HarnessNode {
   }
 
   /** Runs one operation; undefined when the answer comes later under the same id (agent_attach). */
-  private async operate<K extends NodeOp>(connection: Connection, id: string, op: K, args: NodeOps[K]["args"]): Promise<NodeOps[K]["result"] | undefined> {
+  private async operate<K extends HubOp>(connection: Connection, id: string, op: K, args: HubOps[K]["args"]): Promise<HubOps[K]["result"] | undefined> {
     switch (op) {
-      case "nodes_list": {
-        const own = this.allowed(connection) ? [{ name: this.config.name, online: true, roles: this.hub !== undefined ? ["node", "hub"] : ["node"] }] : [];
-        return { nodes: [...own, ...(this.hub?.nodes(connection.user) ?? [])] } as NodeOps[K]["result"];
-      }
       case "sessions_list": {
-        const { cwd } = args as NodeOps["sessions_list"]["args"];
+        const { cwd } = args as HubOps["sessions_list"]["args"];
         const sessions = await listSessions(this.config.dataDir, cwd);
         const served = new Map([...this.agents.values()].map((entry) => [entry.info.sessionId, entry.info.id]));
-        return { sessions: sessions.map((session) => ({ ...session, agent: served.get(session.id) })) } as NodeOps[K]["result"];
+        return { sessions: sessions.map((session) => ({ ...session, agent: served.get(session.id) })) } as HubOps[K]["result"];
       }
       case "session_read": {
-        const { file, cursor, limit } = args as NodeOps["session_read"]["args"];
-        return readSession(this.config.dataDir, file, cursor, limit ?? SNAPSHOT_ENTRIES) as NodeOps[K]["result"];
+        const { file, cursor, limit } = args as HubOps["session_read"]["args"];
+        return readSession(this.config.dataDir, file, cursor, limit ?? SNAPSHOT_ENTRIES) as HubOps[K]["result"];
       }
       case "agents_list":
-        return { agents: this.agentList() } as NodeOps[K]["result"];
+        return { agents: this.agentList() } as HubOps[K]["result"];
       case "agent_start": {
-        const { cwd, sessionFile, subagent, background } = args as NodeOps["agent_start"]["args"];
+        const { cwd, sessionFile, subagent, background } = args as HubOps["agent_start"]["args"];
         const parent = connection.agent !== undefined ? this.agents.get(connection.agent) : undefined;
         if (subagent === undefined) {
-          // a client on another machine may not know this node's paths: "~" is the node user's home
-          return { agent: await this.startAgent(this.expandHome(cwd), sessionFile) } as NodeOps[K]["result"];
+          // a client on another machine may not know this hub's paths: "~" is the hub user's home
+          return { agent: await this.startAgent(this.expandHome(cwd), sessionFile) } as HubOps[K]["result"];
         } else if (parent === undefined) {
           throw new HarnessError("forbidden", "only an agent starts subagents");
         } else {
@@ -319,28 +272,28 @@ export class HarnessNode {
             throw new HarnessError("forbidden", `a subagent of depth ${depth - 1} cannot start subagents`);
           } else {
             const child = { parent, launch: { ...subagent, depth }, background: background === true };
-            return { agent: await this.startAgent(this.expandHome(cwd), sessionFile, child) } as NodeOps[K]["result"];
+            return { agent: await this.startAgent(this.expandHome(cwd), sessionFile, child) } as HubOps[K]["result"];
           }
         }
       }
       case "agent_attach": {
-        const { agent, level } = args as NodeOps["agent_attach"]["args"];
-        return this.attach(connection, id, agent, level) as NodeOps[K]["result"] | undefined;
+        const { agent, level } = args as HubOps["agent_attach"]["args"];
+        return this.attach(connection, id, agent, level) as HubOps[K]["result"] | undefined;
       }
       case "agent_detach": {
-        const { agent } = args as NodeOps["agent_detach"]["args"];
+        const { agent } = args as HubOps["agent_detach"]["args"];
         const entry = this.requireAgent(agent);
         entry.attachments.delete(connection);
         this.reportClients(entry);
-        return {} as NodeOps[K]["result"];
+        return {} as HubOps[K]["result"];
       }
       case "agent_close": {
-        const { agent } = args as NodeOps["agent_close"]["args"];
+        const { agent } = args as HubOps["agent_close"]["args"];
         await this.requireAgent(agent).link.stop();
-        return {} as NodeOps[K]["result"];
+        return {} as HubOps[K]["result"];
       }
       case "files_list": {
-        const { path } = args as NodeOps["files_list"]["args"];
+        const { path } = args as HubOps["files_list"]["args"];
         const dir = this.userPath(path);
         const entries = await readdir(dir, { withFileTypes: true });
         const items = await Promise.all(
@@ -350,111 +303,104 @@ export class HarnessNode {
             return { name: entry.name, path: full, kind: entry.isDirectory() ? "dir" : entry.isSymbolicLink() ? "link" : "file", size: info?.size ?? 0 } as const;
           }),
         );
-        return { path: dir, items } as NodeOps[K]["result"];
+        return { path: dir, items } as HubOps[K]["result"];
       }
       case "dirs_list": {
-        const { path, hidden } = args as NodeOps["dirs_list"]["args"];
+        const { path, hidden } = args as HubOps["dirs_list"]["args"];
         const full = this.expandHome(path);
         try {
-          return { ...(await listDirs(full, hidden === true)), home: homedir() } as NodeOps[K]["result"];
+          return { ...(await listDirs(full, hidden === true)), home: homedir() } as HubOps[K]["result"];
         } catch (error) {
           throw new HarnessError("not_found", `${full}: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
       case "files_get": {
-        const { path } = args as NodeOps["files_get"]["args"];
+        const { path } = args as HubOps["files_get"]["args"];
         const full = this.userPath(path);
-        return { path: full, base64: (await readFile(full)).toString("base64") } as NodeOps[K]["result"];
+        return { path: full, base64: (await readFile(full)).toString("base64") } as HubOps[K]["result"];
       }
       case "files_put": {
-        const { path, base64 } = args as NodeOps["files_put"]["args"];
+        const { path, base64 } = args as HubOps["files_put"]["args"];
         const full = this.userPath(path);
         await mkdir(dirname(full), { recursive: true });
         await writeFile(full, Buffer.from(base64, "base64"));
-        return { path: full } as NodeOps[K]["result"];
+        return { path: full } as HubOps[K]["result"];
       }
       case "files_upload": {
-        const { name, base64 } = args as NodeOps["files_upload"]["args"];
+        const { name, base64 } = args as HubOps["files_upload"]["args"];
         // the name only: no directories from the client
         const safe = basename(name).replace(/[^\w.@+-]/g, "_") || "file";
         const full = join(this.config.dataDir, "uploads", `${new Date().toISOString().replace(/[:.]/g, "-")}-${safe}`);
         await mkdir(dirname(full), { recursive: true });
         await writeFile(full, Buffer.from(base64, "base64"));
-        return { path: full } as NodeOps[K]["result"];
+        return { path: full } as HubOps[K]["result"];
       }
       case "settings_get":
-        return { settings: this.settingsOf(connection).read() } as NodeOps[K]["result"];
+        return { settings: this.settings.read() } as HubOps[K]["result"];
       case "settings_set": {
-        const { key, value, ifRevision } = args as NodeOps["settings_set"]["args"];
-        const store = this.settingsOf(connection);
-        if (ifRevision !== undefined && settingRevision(store.read()[key]) !== ifRevision) {
+        const { key, value, ifRevision } = args as HubOps["settings_set"]["args"];
+        if (ifRevision !== undefined && settingRevision(this.settings.read()[key]) !== ifRevision) {
           throw new HarnessError("conflict", `${key} changed meanwhile: apply the change to its current value`);
         } else {
-          return { settings: store.set(key, value) } as NodeOps[K]["result"];
+          return { settings: this.settings.set(key, value) } as HubOps[K]["result"];
         }
       }
       case "transcribe": {
-        const { base64, mime } = args as NodeOps["transcribe"]["args"];
-        return { text: await transcribe(this.config.dataDir, Buffer.from(base64, "base64"), mime) } as NodeOps[K]["result"];
+        const { base64, mime } = args as HubOps["transcribe"]["args"];
+        return { text: await transcribe(this.config.dataDir, Buffer.from(base64, "base64"), mime) } as HubOps[K]["result"];
       }
       case "logs_tail": {
-        const { lines } = args as NodeOps["logs_tail"]["args"];
-        if (connection.trusted || this.hub?.isAdmin(connection.user) === true) {
-          return { lines: this.telemetry.tail(lines ?? 200) } as NodeOps[K]["result"];
-        } else {
-          throw new HarnessError("forbidden", `the log of ${this.config.name} is for its own user and a hub's admins`);
-        }
+        const { lines } = args as HubOps["logs_tail"]["args"];
+        return { lines: this.telemetry.tail(lines ?? 200) } as HubOps[K]["result"];
       }
       case "theme_get": {
-        const { name } = args as NodeOps["theme_get"]["args"];
-        const chosen = name ?? this.settingsOf(connection).read()["ui.theme"];
-        return (await themeColors(this.config.dataDir, typeof chosen === "string" ? chosen : undefined)) as NodeOps[K]["result"];
+        const { name } = args as HubOps["theme_get"]["args"];
+        const chosen = name ?? this.settings.read()["ui.theme"];
+        return (await themeColors(this.config.dataDir, typeof chosen === "string" ? chosen : undefined)) as HubOps[K]["result"];
       }
-      case "node_restart": {
+      case "hub_restart": {
         const restart = this.config.restart;
-        if (!connection.trusted && this.hub?.isAdmin(connection.user) !== true) {
-          throw new HarnessError("forbidden", `restarting ${this.config.name} is for its own user and a hub's admins`);
-        } else if (restart === undefined) {
+        if (restart === undefined) {
           throw new HarnessError("invalid_record", `${this.config.name} cannot restart itself`);
         } else {
-          this.telemetry.log({ event: "node_restart", user: connection.user });
+          this.telemetry.log({ event: "hub_restart", connection: connection.id });
           // after the answer: the restart closes this connection too
           setImmediate(() => void restart());
-          return {} as NodeOps[K]["result"];
+          return {} as HubOps[K]["result"];
         }
       }
       case "terminal_open": {
-        const { session, cwd, cols, rows } = args as NodeOps["terminal_open"]["args"];
-        return (await this.terminals.open(connection, session, this.expandHome(cwd), cols, rows)) as NodeOps[K]["result"];
+        const { session, cwd, cols, rows } = args as HubOps["terminal_open"]["args"];
+        return (await this.terminals.open(connection, session, this.expandHome(cwd), cols, rows)) as HubOps[K]["result"];
       }
       case "terminal_input": {
-        const { session, data } = args as NodeOps["terminal_input"]["args"];
+        const { session, data } = args as HubOps["terminal_input"]["args"];
         this.terminals.input(session, data);
-        return {} as NodeOps[K]["result"];
+        return {} as HubOps[K]["result"];
       }
       case "terminal_resize": {
-        const { session, cols, rows } = args as NodeOps["terminal_resize"]["args"];
+        const { session, cols, rows } = args as HubOps["terminal_resize"]["args"];
         this.terminals.resize(session, cols, rows);
-        return {} as NodeOps[K]["result"];
+        return {} as HubOps[K]["result"];
       }
       case "terminal_detach": {
-        const { session } = args as NodeOps["terminal_detach"]["args"];
+        const { session } = args as HubOps["terminal_detach"]["args"];
         this.terminals.detach(connection, session);
-        return {} as NodeOps[K]["result"];
+        return {} as HubOps[K]["result"];
       }
       default:
         throw new HarnessError("invalid_record", `unknown operation ${String(op satisfies never)}`);
     }
   }
 
-  /** Paths of the files operations: inside the home directory of the node's user. */
-  /** "~" and "~/…" are the node user's home; a relative path is relative to it. */
+  /** Paths of the files operations: inside the home directory of the hub's user. */
+  /** "~" and "~/…" are the hub user's home; a relative path is relative to it. */
   private expandHome(path: string): string {
     const home = homedir();
     return path === "~" ? home : path.startsWith("~/") ? join(home, path.slice(2)) : resolve(home, path);
   }
 
-  /** A path of the node user's files: their home, or the temporary directory (where agents put files they send). */
+  /** A path of the hub user's files: their home, or the temporary directory (where agents put files they send). */
   private userPath(path: string): string {
     const full = this.expandHome(path);
     const within = (root: string): boolean => full === root || full.startsWith(`${root}/`);
@@ -474,7 +420,7 @@ export class HarnessNode {
   private requireAgent(id: string): AgentEntry {
     const entry = this.agents.get(id);
     if (entry === undefined) {
-      throw new HarnessError("not_found", `no agent ${id} on node ${this.config.name}`);
+      throw new HarnessError("not_found", `no agent ${id} on hub ${this.config.name}`);
     } else {
       return entry;
     }
@@ -535,7 +481,7 @@ export class HarnessNode {
       // the oldest idle agent makes room; with none idle the start is refused
       const oldest = [...this.agents.values()].filter((entry) => this.idle(entry)).sort((a, b) => a.idleSince(this.clock.now()) - b.idleSince(this.clock.now()))[0];
       if (oldest === undefined) {
-        throw new HarnessError("agent_failed", `${max} agents run on node ${this.config.name} and none is idle: close a session first`);
+        throw new HarnessError("agent_failed", `${max} agents run on hub ${this.config.name} and none is idle: close a session first`);
       } else {
         await oldest.link.stop();
         return this.launchAgent(cwd, sessionFile, child);
@@ -586,7 +532,7 @@ export class HarnessNode {
       const entry: AgentEntry = {
         info: {
           id,
-          node: this.config.name,
+          hub: this.config.name,
           sessionId: session.sessionId,
           sessionFile: session.sessionFile,
           cwd: session.cwd,
@@ -670,7 +616,7 @@ export class HarnessNode {
   private forward(connection: Connection, agentId: string, record: AgentRecord): void {
     const entry = this.agents.get(agentId);
     if (entry === undefined) {
-      connection.send({ k: "hap", node: this.config.name, agent: agentId, rec: { type: "harness_response", id: String(record.id ?? ""), ok: false, error: { code: "not_found", message: `no agent ${agentId}` } } });
+      connection.send({ k: "hap", agent: agentId, rec: { type: "harness_response", id: String(record.id ?? ""), ok: false, error: { code: "not_found", message: `no agent ${agentId}` } } });
     } else {
       if (record.type === "harness_prompt" || record.type === "prompt") {
         entry.summary.titleFrom(String(record.text ?? record.message ?? ""));
@@ -687,7 +633,7 @@ export class HarnessNode {
     }
   }
 
-  /** An agent's own client connection to this node (for its subagents), made on its first frame. */
+  /** An agent's own client connection to this hub (for its subagents), made on its first frame. */
   private agentConnection(entry: AgentEntry): (frame: ClientFrame) => void {
     const existing = this.agentReceivers.get(entry.info.id);
     if (existing !== undefined) {
@@ -696,12 +642,10 @@ export class HarnessNode {
       let open = true;
       const connection: Connection = {
         id: `agent.${entry.info.id}`,
-        user: userInfo().username,
-        trusted: true,
         agent: entry.info.id,
         send: (frame) => {
           if (open) {
-            entry.link.send({ type: "harness_node", frame });
+            entry.link.send({ type: "harness_hub", frame });
           } else {
             // the agent is gone
           }
@@ -725,7 +669,7 @@ export class HarnessNode {
   }
 
   private fromAgent(entry: AgentEntry, record: AgentRecord): void {
-    if (record.type === "harness_node") {
+    if (record.type === "harness_hub") {
       this.agentConnection(entry)(record.frame as ClientFrame);
       return;
     } else {
@@ -749,7 +693,7 @@ export class HarnessNode {
           routed.connection.send({ k: "res", id: original.slice("attach:".length), ok: false, error: (record.error as never) ?? { code: "agent_failed", message: "no snapshot" } });
         }
       } else {
-        routed.connection.send({ k: "hap", node: this.config.name, agent: entry.info.id, rec: { ...record, id: routed.id } as never });
+        routed.connection.send({ k: "hap", agent: entry.info.id, rec: { ...record, id: routed.id } as never });
       }
     } else {
       if (record.type === "harness_session") {
@@ -766,7 +710,7 @@ export class HarnessNode {
       }
       for (const [connection, attachment] of entry.attachments) {
         if (attachment.level === "full" && attachment.live) {
-          connection.send({ k: "hap", node: this.config.name, agent: entry.info.id, rec: record as never });
+          connection.send({ k: "hap", agent: entry.info.id, rec: record as never });
         } else {
           // summary level, or waiting for its snapshot
         }
@@ -801,11 +745,11 @@ export class HarnessNode {
     this.broadcast({ ev: "summary", agent: entry.info.id, summary: entry.summary.current });
   }
 
-  /** Agent events go to every connection allowed here (settings go only to their user: settingsChanged). */
-  private broadcast(event: NodeEvent): void {
+  /** Events go to every connection through the handshake. */
+  private broadcast(event: HubEvent): void {
     for (const { connection, welcomed } of this.connections.values()) {
-      if (welcomed && this.allowed(connection)) {
-        connection.send({ k: "evt", node: this.config.name, event });
+      if (welcomed) {
+        connection.send({ k: "evt", event });
       } else {
         // not through the handshake yet
       }
@@ -815,7 +759,7 @@ export class HarnessNode {
   /** Starts in progress, by session file. */
   private readonly starting = new Map<string, Promise<AgentInfo>>();
 
-  /** What closing the node would stop: its working agents, and the clients of other processes (windows) on it. */
+  /** What closing the hub would stop: its working agents, and the clients of other processes (windows) on it. */
   activity(): { running: number; otherClients: number } {
     const running = [...this.agents.values()].filter((entry) => entry.summary.current.status === "running" || entry.summary.current.status === "waiting" || entry.summary.current.tasks.running > 0).length;
     const otherClients = [...this.connections.values()].filter(({ connection, welcomed }) => welcomed && connection.inProcess !== true && connection.agent === undefined).length;
@@ -824,7 +768,7 @@ export class HarnessNode {
 
   async close(): Promise<void> {
     this.closing = true;
-    this.telemetry.log({ event: "node_stop" });
+    this.telemetry.log({ event: "hub_stop" });
     this.clock.clearTimeout(this.unloadTimer);
     await Promise.all([...this.agents.values()].map((entry) => entry.link.stop()));
     this.terminals.closeAll();

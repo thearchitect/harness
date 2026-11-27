@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { HAP_REQUEST_TYPES } from "./hap.ts";
-import { NODE_OPS } from "./node.ts";
+import { HUB_OPS } from "./hub.ts";
 import { checkClientFrame, checkHapRequest, HAP_REQUEST_SCHEMAS, OP_SCHEMAS } from "./schemas.ts";
 
 test("every operation and every harness request has a schema", () => {
-  assert.deepEqual(Object.keys(OP_SCHEMAS).sort(), [...NODE_OPS].sort());
+  assert.deepEqual(Object.keys(OP_SCHEMAS).sort(), [...HUB_OPS].sort());
   assert.deepEqual(Object.keys(HAP_REQUEST_SCHEMAS).sort(), [...HAP_REQUEST_TYPES].sort());
 });
 

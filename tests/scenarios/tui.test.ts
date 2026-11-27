@@ -87,7 +87,7 @@ export const scenario = defineScenario({
         // open it again: the snapshot holds the latest 8 entries
         const tab = tui.workbench.activeTab();
         assert.ok(tab?.agent !== undefined);
-        await tui.client.unfollow(tab.node, tab.agent.id);
+        await tui.client.unfollow(tab.hub, tab.agent.id);
         await tui.workbench.activate(0);
         const agent = tui.screen().agent;
         assert.ok(agent?.cursor !== undefined, "older entries exist");
@@ -144,7 +144,7 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "/export writes the session as an HTML page on its node",
+      name: "/export writes the session as an HTML page on its hub",
       async run({ clients: { tui } }) {
         await tui.type("/export");
         await tui.submit();
@@ -197,7 +197,7 @@ export const scenario = defineScenario({
       name: "the panel's SESSION: the name field takes typing at once, its cursor moves with the arrows and names the tab without Enter; the implementer is the session's alone",
       async run({ stand, clients: { tui } }) {
         await tui.act("panel.toggle");
-        await tui.waitForText((screen) => screen.includes("SESSION") && screen.includes("implementer") && screen.includes("restart node"));
+        await tui.waitForText((screen) => screen.includes("SESSION") && screen.includes("implementer") && screen.includes("restart hub"));
         await tui.press("\x1b[B"); // simple
         await tui.press("\x1b[B"); // name
         for (const key of "rnamed") {
@@ -261,7 +261,7 @@ export const scenario = defineScenario({
         await tui.workbench.newTab(tui.client.home ?? "", stand.project);
         const tab = tui.workbench.activeTab();
         assert.ok(tab?.agent !== undefined);
-        await tui.client.connection(tab.node).call(tab.agent.id, { type: "harness_set", model: "scenario/thinker:low" });
+        await tui.client.connection(tab.hub).call(tab.agent.id, { type: "harness_set", model: "scenario/thinker:low" });
         await tui.waitForText(() => tui.screen().agent?.session?.thinkingLevel === "low");
         const before = tui.screen().agent?.session?.thinkingLevel;
         await tui.press("\x1b[9;2u");

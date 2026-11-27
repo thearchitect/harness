@@ -4,22 +4,22 @@
 
 - **Agent** (`harness-agent`, `packages/agent`): one pi session with the harness extension, run
   through pi's SDK. It speaks HAP ([protocol/hap.md](protocol/hap.md)) on file descriptor 3 to
-  its node; its stdout and stderr go to its log (`~/.harness/log/agents/<id>.log`).
-- **Node** (`harness node`, `packages/node`): the agents of one OS user — it starts them, keeps
-  one agent per session (`~/.harness/locks/`), unloads idle ones, and serves clients on a unix
-  socket (`~/.harness/sockets/<name>.sock`) or in-process. It runs as whoever started it; there is
-  no uid switching.
-- **Hub** (`harness hub`): a node with the hub role — users, device tokens and node keys, a
-  WebSocket endpoint for devices (`/client`) and for nodes that link to it (`/uplink`), routing of
-  a client's frames to the node they name, and each hub user's UI settings.
+  its hub; its stdout and stderr go to its log (`~/.harness/log/agents/<id>.log`).
+- **Hub** (`harness hub`, `packages/hub`): one OS user's harness on one machine — it starts the
+  user's agents, keeps one agent per session (`~/.harness/locks/`), unloads idle ones, keeps the
+  user's settings and paired devices, and serves clients on a unix socket
+  (`~/.harness/sockets/default.sock`), in-process, or over the network for paired devices. A
+  user has one hub per machine: a service, or held inside the first window. It runs as whoever
+  started it; there is no uid switching.
 - **Clients**: the TUI (`harness`, `packages/tui`), the app, test drivers. A client reaches its
-  local node (the running one, or one it runs inside itself) and any number of hubs at once.
+  machine's hub (the running one, or one it runs inside itself) and any number of other
+  machines' hubs at once.
 
 ## Packages
 
 ```
 protocol ◄── client ◄── tui
-protocol ◄── node ◄── cli
+protocol ◄── hub ◄── cli
 protocol ◄── extension ◄── agent ──► pi SDK
 extension/presentation ◄── tui
 testkit ──► all (tests only)
@@ -27,11 +27,11 @@ testkit ──► all (tests only)
 
 | Package | Responsibility |
 |---|---|
-| `protocol` | Types and schemas of HAP and the node protocol, framing, versions, errors, model references. Isomorphic. |
-| `client` | `NodeConnection`, `ClientModel` (nodes, agents, summaries, full transcripts of followed agents), `Workbench` (the screen every UI draws: tabs, items, zones, actions), the keymap. Isomorphic. |
-| `extension` | harness inside pi: modes and the gate, the prompt, interactions through the host, HarnessState, background tasks, tools, model references, presentation (renderers and TUI dialogs). Knows nothing of nodes. |
+| `protocol` | Types and schemas of HAP and the hub protocol, framing, versions, errors, model references. Isomorphic. |
+| `client` | `HubConnection`, `ClientModel` (hubs, agents, summaries, full transcripts of followed agents), `Workbench` (the screen every UI draws: tabs, items, zones, actions), the keymap. Isomorphic. |
+| `extension` | harness inside pi: modes and the gate, the prompt, interactions through the host, HarnessState, background tasks, tools, model references, presentation (renderers and TUI dialogs). Knows nothing of hubs. |
 | `agent` | The pi runtime of a session, the HAP server, the extension UI context, the component bridge. |
-| `node` | The node and hub roles: agents, sessions, locks, endpoints, auth, routing, uplinks, settings, the event log. |
+| `hub` | The hub: agents, sessions, locks, endpoints, paired devices, settings, terminals, the event log. |
 | `tui` | The full-screen terminal UI over `Workbench`. |
 | `cli` | `harness` and its subcommands. |
 | `testkit` | Stands, scenarios, drivers, captures, reports, galleries, `harness-test`. |

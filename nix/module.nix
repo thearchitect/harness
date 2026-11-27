@@ -1,8 +1,9 @@
-# NixOS module: any number of harness nodes, each a systemd service running as its own user
-# (agents run as that user; sessions and settings live in that user's ~/.harness).
+# NixOS module: a harness hub for each user who wants one running without a window — a systemd
+# service as that user (agents run as that user; sessions and settings live in that user's
+# ~/.harness). A user has one hub on a machine: the service, or else the first harness window.
 #
-#   services.harness.nodes.work = { user = "alice"; hubs = [ { url = "wss://hub.example"; keyFile = "/run/keys/harness-work"; } ]; };
-#   services.harness.nodes.hub  = { user = "harness"; hub.listen = "127.0.0.1:8790"; };
+#   services.harness.hubs.alice = { };
+#   services.harness.hubs.bob = { listen = "127.0.0.1:8790"; url = "https://bob.example.ts.net"; };
 { self }:
 {
   config,
@@ -12,54 +13,34 @@
 }:
 let
   cfg = config.services.harness;
-  nodeOptions =
+  hubOptions =
     { name, ... }:
     {
       options = {
-        user = lib.mkOption {
-          type = lib.types.str;
-          description = "The user the node and its agents run as; its home holds ~/.harness.";
-        };
-        users = lib.mkOption {
-          type = lib.types.listOf lib.types.str;
-          default = [ ];
-          description = "Hub users allowed on this node through its hubs.";
-        };
-        hubs = lib.mkOption {
-          type = lib.types.listOf (
-            lib.types.submodule {
-              options = {
-                url = lib.mkOption {
-                  type = lib.types.str;
-                  description = "The hub's WebSocket base (ws:// or wss://).";
-                };
-                keyFile = lib.mkOption {
-                  type = lib.types.str;
-                  description = "A file with the node's key from `harness hub node add` (outside the Nix store).";
-                };
-              };
-            }
-          );
-          default = [ ];
-          description = "Hubs the node connects out to.";
-        };
-        hub.listen = lib.mkOption {
+        listen = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
           default = null;
           example = "127.0.0.1:8790";
-          description = "Run the node as a hub listening here (behind a TLS reverse proxy).";
+          description = "Network access for the user's devices, behind a TLS proxy (tailscale serve, Caddy); the unix socket only when null.";
+        };
+        url = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "https://alice.example.ts.net";
+          description = "The address devices reach the hub at (pairing links).";
         };
       };
     };
   configFile =
-    name: node:
-    pkgs.writeText "harness-node-${name}.json" (
+    user: hub:
+    pkgs.writeText "harness-hub-${user}.json" (
       builtins.toJSON (
-        {
-          inherit (node) users;
-          hubs = map (hub: { inherit (hub) url keyFile; }) node.hubs;
+        lib.optionalAttrs (hub.listen != null) {
+          hub = {
+            inherit (hub) listen;
+          }
+          // lib.optionalAttrs (hub.url != null) { inherit (hub) url; };
         }
-        // lib.optionalAttrs (node.hub.listen != null) { hub.listen = node.hub.listen; }
       )
     );
 in
@@ -71,36 +52,34 @@ in
       defaultText = lib.literalExpression "harness.packages.\${system}.default";
       description = "The harness bundle.";
     };
-    nodes = lib.mkOption {
-      type = lib.types.attrsOf (lib.types.submodule nodeOptions);
+    hubs = lib.mkOption {
+      type = lib.types.attrsOf (lib.types.submodule hubOptions);
       default = { };
-      description = "Harness nodes by name.";
+      description = "A harness hub service by user name.";
     };
   };
 
-  config = lib.mkIf (cfg.nodes != { }) {
-    # the command for clients and administration (harness hub user|device|node …)
+  config = lib.mkIf (cfg.hubs != { }) {
+    # the command for clients and administration (harness hub device …)
     environment.systemPackages = [ cfg.package ];
 
     systemd.services = lib.mapAttrs' (
-      name: node:
-      lib.nameValuePair "harness-${name}" {
-        description = "harness node ${name} (${node.user})";
+      user: hub:
+      lib.nameValuePair "harness-${user}" {
+        description = "harness hub of ${user}";
         wantedBy = [ "multi-user.target" ];
         after = [ "network-online.target" ];
         wants = [ "network-online.target" ];
         serviceConfig = {
-          User = node.user;
-          ExecStart = "${lib.getExe' cfg.package "harness"} ${
-            if node.hub.listen != null then "hub" else "node"
-          } --name ${lib.escapeShellArg name} --config ${configFile name node}";
+          User = user;
+          ExecStart = "${lib.getExe' cfg.package "harness"} hub --config ${configFile user hub}";
           Restart = "on-failure";
           RestartSec = 5;
-          # agents and background tasks are the node's children: stopping the node stops them
+          # agents and background tasks are the hub's children: stopping the hub stops them
           KillMode = "control-group";
           TimeoutStopSec = 30;
         };
       }
-    ) cfg.nodes;
+    ) cfg.hubs;
   };
 }

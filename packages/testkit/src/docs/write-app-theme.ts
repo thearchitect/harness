@@ -1,11 +1,11 @@
 // Writes the app's first-paint theme (packages/app/src/theme/fallback.generated.ts): pi's dark theme
-// as hex, used until the node sends the user's theme (theme_get):
+// as hex, used until the hub sends the user's theme (theme_get):
 //   node packages/testkit/src/docs/write-app-theme.ts
 
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { themeColors } from "#node/themes.ts";
+import { themeColors } from "#hub/themes.ts";
 
 export const APP_THEME_FILE = join(import.meta.dirname, "..", "..", "..", "app", "src", "theme", "fallback.generated.ts");
 

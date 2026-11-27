@@ -1,7 +1,7 @@
-// The hub's network endpoint: HTTP with WebSockets on it — `/client` for users' devices (the hello
-// carries a device token), `/uplink` for nodes (the hello carries the node's key). TLS comes from
-// the reverse proxy in front (Fly, a local proxy). Other HTTP paths are served by `http` (the web
-// app), when given.
+// The hub's network endpoint: HTTP with a WebSocket on it — `/client` for the user's devices (the
+// hello carries a device token) — and `/pair`, where a device exchanges its one-time code for its
+// token. TLS comes from the reverse proxy in front (Fly, a local proxy). Other HTTP paths are
+// served by `http` (the web app), when given.
 
 import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
@@ -9,10 +9,9 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { decodeRecord, encodeRecord } from "#protocol/framing.ts";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
 import { systemClock, type Clock } from "#protocol/clock.ts";
-import type { ClientFrame, NodeToHubFrame } from "#protocol/node.ts";
-import { compatibleProtocol, PROTOCOL_VERSION } from "#protocol/version.ts";
-import type { Hub, UplinkPeer } from "../hub.ts";
-import type { Connection, HarnessNode } from "../node.ts";
+import type { ClientFrame } from "#protocol/hub.ts";
+import type { HubAuth } from "../auth.ts";
+import type { Connection, Hub } from "../hub.ts";
 
 export type WsEndpointOptions = {
   host: string;
@@ -42,22 +41,21 @@ function refuse(socket: WebSocket, error: unknown): void {
   socket.close();
 }
 
-async function acceptClient(node: HarnessNode, hub: Hub, socket: WebSocket): Promise<void> {
+async function acceptClient(node: Hub, auth: HubAuth, socket: WebSocket): Promise<void> {
   const hello = (await firstFrame(socket)) as ClientFrame;
   if (hello.k !== "hello" || typeof hello.token !== "string") {
     refuse(socket, new Error("the first frame must be hello with a device token"));
   } else {
-    let user: string;
+    let device: string;
     try {
-      user = hub.auth.userOfToken(hello.token);
+      device = auth.deviceOfToken(hello.token);
     } catch (error) {
       refuse(socket, error);
       return;
     }
     const connection: Connection = {
       id: randomUUID(),
-      user,
-      trusted: false,
+      device,
       send: (frame) => {
         if (socket.readyState === socket.OPEN) {
           socket.send(encodeRecord(frame));
@@ -68,7 +66,6 @@ async function acceptClient(node: HarnessNode, hub: Hub, socket: WebSocket): Pro
       close: () => socket.close(),
     };
     const receive = node.accept(connection);
-    hub.track(connection);
     socket.on("message", (data) => {
       const decoded = decodeRecord(String(data));
       if (decoded.ok) {
@@ -82,45 +79,10 @@ async function acceptClient(node: HarnessNode, hub: Hub, socket: WebSocket): Pro
   }
 }
 
-async function acceptUplink(hub: Hub, socket: WebSocket): Promise<void> {
-  const hello = (await firstFrame(socket)) as NodeToHubFrame;
-  if (hello.k !== "hello" || typeof hello.token !== "string") {
-    refuse(socket, new Error("the first frame must be hello with the node key"));
-  } else if (!compatibleProtocol(hello.protocol)) {
-    socket.send(encodeRecord({ k: "refused", error: { code: "version_mismatch", message: `protocol ${hello.protocol} is not ${PROTOCOL_VERSION}` } }));
-    socket.close();
-  } else {
-    let name: string;
-    try {
-      name = hub.auth.nodeOfKey(hello.token).name;
-    } catch (error) {
-      refuse(socket, error);
-      return;
-    }
-    const peer: UplinkPeer = {
-      name,
-      send: (frame) => socket.send(encodeRecord(frame)),
-      close: () => socket.close(),
-    };
-    socket.send(encodeRecord({ k: "welcome", protocol: PROTOCOL_VERSION, harness: "", node: name, user: "" }));
-    hub.attachUplink(peer);
-    socket.on("message", (data) => {
-      const decoded = decodeRecord(String(data));
-      const frame = decoded.ok ? (decoded.record as NodeToHubFrame) : undefined;
-      if (frame?.k === "route") {
-        hub.fromNode(name, frame.conn, frame.frame);
-      } else {
-        // nothing else travels from a node after its hello
-      }
-    });
-    socket.on("close", () => hub.detachUplink(peer));
-  }
-}
-
 const PAIR_BODY_LIMIT = 1024;
 
-/** POST /pair { code } → { user, device, token }: a device exchanges its one-time code (no other credential). */
-function redeem(hub: Hub, clock: Clock, request: IncomingMessage, response: ServerResponse): void {
+/** POST /pair { code } → { device, token }: a device exchanges its one-time code (no other credential). */
+function redeem(auth: HubAuth, clock: Clock, request: IncomingMessage, response: ServerResponse): void {
   const reply = (status: number, body: object): void => {
     response.writeHead(status, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(body));
   };
@@ -142,7 +104,7 @@ function redeem(hub: Hub, clock: Clock, request: IncomingMessage, response: Serv
         if (typeof code !== "string") {
           reply(400, { error: { code: "invalid_record", message: "POST { code }" } });
         } else {
-          reply(200, hub.auth.redeemPairing(code, clock.now()));
+          reply(200, auth.redeemPairing(code, clock.now()));
         }
       } catch (error) {
         const known = error instanceof HarnessError;
@@ -152,12 +114,12 @@ function redeem(hub: Hub, clock: Clock, request: IncomingMessage, response: Serv
   }
 }
 
-export async function listenWs(node: HarnessNode, hub: Hub, options: WsEndpointOptions): Promise<Server> {
+export async function listenWs(node: Hub, auth: HubAuth, options: WsEndpointOptions): Promise<Server> {
   const clock = options.clock ?? systemClock;
   const server = createServer((request, response) => {
     const path = new URL(request.url ?? "/", "http://hub").pathname;
     if (path === "/pair") {
-      redeem(hub, clock, request, response);
+      redeem(auth, clock, request, response);
     } else if (options.http !== undefined) {
       options.http(request, response);
     } else {
@@ -167,10 +129,9 @@ export async function listenWs(node: HarnessNode, hub: Hub, options: WsEndpointO
   const sockets = new WebSocketServer({ noServer: true, maxPayload: 64 * 1024 * 1024 });
   server.on("upgrade", (request, socket, head) => {
     const path = new URL(request.url ?? "/", "http://hub").pathname;
-    if (path === "/client" || path === "/uplink") {
+    if (path === "/client") {
       sockets.handleUpgrade(request, socket, head, (ws) => {
-        const accepting = path === "/client" ? acceptClient(node, hub, ws) : acceptUplink(hub, ws);
-        accepting.catch(() => ws.close());
+        acceptClient(node, auth, ws).catch(() => ws.close());
       });
     } else {
       socket.destroy();

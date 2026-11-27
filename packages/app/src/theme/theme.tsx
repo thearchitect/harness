@@ -1,4 +1,4 @@
-// The app's look: pi's theme tokens (the user's theme, from the node) and the fonts of the two
+// The app's look: pi's theme tokens (the user's theme, from the hub) and the fonts of the two
 // zones — `chrome` (strips, lists, footer, dialogs) and `chat` (transcript, editor). Components take
 // every color and font from here; none has its own.
 

@@ -8,7 +8,7 @@ import { formatCost } from "#extension/presentation/modes.ts";
 
 export class Footer implements Component {
   model: AgentModel | undefined;
-  node = "";
+  hub = "";
   private readonly theme: () => Theme;
 
   constructor(theme: () => Theme) {
@@ -26,7 +26,7 @@ export class Footer implements Component {
       const session = model.session;
       const home = process.env.HOME ?? "";
       const cwd = home !== "" && session.cwd.startsWith(home) ? `~${session.cwd.slice(home.length)}` : session.cwd;
-      const left = `${this.node}:${cwd}`;
+      const left = `${this.hub}:${cwd}`;
       const context = session.usage.contextPercent !== undefined ? `${Math.round(session.usage.contextPercent)}%` : "?%";
       const right = [
         model.state.model !== undefined

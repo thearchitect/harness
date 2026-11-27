@@ -33,7 +33,7 @@ import type { ComponentMouse } from "#protocol/hap.ts";
 import type { ClientModel } from "#client/model/client-model.ts";
 import type { AgentModel } from "#client/model/agent-model.ts";
 import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
-import { LEFT_STRIP_MIN, subagentHeading, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Tab, type Workbench } from "#client/workbench/workbench.ts";
+import { LEFT_STRIP_MIN, subagentHeading, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Tab, type TabKey, type Workbench } from "#client/workbench/workbench.ts";
 import type { ScrollAnchor, TabView } from "#client/workbench/view-state.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { modeOfText } from "#protocol/modes.ts";
@@ -271,7 +271,7 @@ export class App {
   private editor: Editor;
   private readonly editors = new Map<string, Editor>();
   /** The tab shown now (`node/sessionId`), whose editor and scroll are in use. */
-  private shownTab: { node: string; sessionId: string } | undefined;
+  private shownTab: TabKey | undefined;
   /** The scroll of a tab that came back, applied once its transcript is drawn. */
   private pendingScroll: ScrollAnchor | undefined;
   /** The call last scrolled to (agent:call), so a screen does not scroll to it again. */
@@ -399,8 +399,8 @@ export class App {
    */
   private switchTab(tab: Tab | undefined, view: TabView | undefined): void {
     this.keepScroll();
-    this.shownTab = tab !== undefined ? { node: tab.node, sessionId: tab.sessionId } : undefined;
-    const key = tab !== undefined ? `${tab.node}/${tab.sessionId}` : "";
+    this.shownTab = tab !== undefined ? { hub: tab.hub, sessionId: tab.sessionId } : undefined;
+    const key = tab !== undefined ? `${tab.hub}/${tab.sessionId}` : "";
     let editor = this.editors.get(key);
     if (editor === undefined) {
       editor = this.newEditor();
@@ -458,7 +458,7 @@ export class App {
         // older than what is loaded: the entries before it come first
         this.loadingOlder = true;
         void this.client
-          .loadOlder(tab.node, tab.agent.id)
+          .loadOlder(tab.hub, tab.agent.id)
           .catch(() => (this.pendingScroll = "follow"))
           .finally(() => {
             this.loadingOlder = false;
@@ -539,15 +539,15 @@ export class App {
     } else {
       // nothing unseen in the active tab
     }
-    if ((tab === undefined) !== (this.shownTab === undefined) || (tab !== undefined && (tab.node !== this.shownTab?.node || tab.sessionId !== this.shownTab.sessionId))) {
+    if ((tab === undefined) !== (this.shownTab === undefined) || (tab !== undefined && (tab.hub !== this.shownTab?.hub || tab.sessionId !== this.shownTab.sessionId))) {
       this.switchTab(tab, screen.view);
     } else {
       // the same tab
     }
 
     this.strip.content = {
-      nodes: screen.nodes,
-      node: screen.node,
+      hubs: screen.hubs,
+      hub: screen.hub,
       tabs: screen.tabs,
       active: screen.active,
       newSession: screen.newSession !== undefined,
@@ -556,7 +556,7 @@ export class App {
       mode: screen.agent?.state.mode ?? tab?.mode ?? "plan",
     };
     this.footer.model = screen.zones.footer.agent;
-    this.footer.node = screen.zones.footer.node;
+    this.footer.hub = screen.zones.footer.hub;
 
     this.drawMain(screen);
     this.drawAboveEditor(screen);
@@ -694,7 +694,7 @@ export class App {
     } else {
       this.loadingOlder = true;
       this.olderLoad = this.client
-        .loadOlder(tab.node, tab.agent.id)
+        .loadOlder(tab.hub, tab.agent.id)
         .then(() => {
           this.transcript.show(agent);
           const line = this.transcript.lineOf(first);
@@ -844,7 +844,7 @@ export class App {
       case "pi-dialog":
         return piDialog(this.tui, request.payload, answer);
       case "login":
-        this.loginCallback.follow(request, this.workbench.activeTab()?.node);
+        this.loginCallback.follow(request, this.workbench.activeTab()?.hub);
         return new LoginView(this.tui, getTheme, request.payload, answer, {
           open: (url) => this.openUrl(url),
           copy: (text) => this.copyText(text),
@@ -1117,9 +1117,9 @@ export class App {
   private async paste(): Promise<void> {
     const tab = this.workbench.activeTab();
     const target: PasteTarget =
-      tab === undefined || tab.node === this.client.home
+      tab === undefined || tab.hub === this.client.home
         ? { local: true }
-        : { local: false, upload: async (name, base64) => (await this.client.connection(tab.node).request("files_upload", { name, base64 })).path };
+        : { local: false, upload: async (name, base64) => (await this.client.connection(tab.hub).request("files_upload", { name, base64 })).path };
     try {
       const inserted = await clipboardInsert(this.clipboard, target, this.editor.getText().trimStart().startsWith("!"));
       if (inserted === undefined) {
@@ -1156,20 +1156,20 @@ export class App {
     }
   }
 
-  /** A strip row opened (Enter, a click): a node, `+ add`, a session, `+ new`, an item. */
+  /** A strip row opened (Enter, a click): a hub, `+ add`, a session, `+ new`, an item. */
   private async openStripRow(row: StripRow): Promise<void> {
     switch (row.kind) {
-      case "node":
-        // the keyboard stays: the node's sessions are what comes next
-        await this.workbench.chooseNode(row.node.name);
+      case "hub":
+        // the keyboard stays: the hub's sessions are what comes next
+        await this.workbench.chooseHub(row.hub.name);
         break;
       case "add":
         this.leaveStrip();
-        this.workbench.addNode();
+        this.workbench.pairHub();
         break;
       case "tab":
         this.leaveStrip();
-        await this.workbench.act(`tabs.goto.${this.workbench.nodeTabs().findIndex((tab) => tab.index === row.tab.index) + 1}` as ActionId);
+        await this.workbench.act(`tabs.goto.${this.workbench.hubTabs().findIndex((tab) => tab.index === row.tab.index) + 1}` as ActionId);
         await this.loadCompletions().catch(() => undefined);
         break;
       case "new":
@@ -1231,12 +1231,12 @@ export class App {
     if (tab?.agent !== undefined) {
       const commands = await this.workbench.commands();
       const agentId = tab.agent.id;
-      // a session on this machine: pi's provider reads its directory; another machine's: its node does
+      // a session on this machine: pi's provider reads its directory; another machine's: its hub does
       this.editor.setAutocompleteProvider(
-        tab.node === this.client.home
+        tab.hub === this.client.home
           ? new CombinedAutocompleteProvider(commands, tab.cwd)
           : new RemoteAutocompleteProvider(commands, async (prefix) =>
-              (await this.client.connection(tab.node).call<{ items: string[] }>(agentId, { type: "harness_complete", kind: "file", prefix }).catch(() => ({ items: [] }))).items,
+              (await this.client.connection(tab.hub).call<{ items: string[] }>(agentId, { type: "harness_complete", kind: "file", prefix }).catch(() => ({ items: [] }))).items,
             ),
       );
     } else {

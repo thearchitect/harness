@@ -32,7 +32,7 @@ export type RuntimeOptions = {
   extensionPaths: string[];
   /** Skill files or directories added to discovery. */
   skillPaths: string[];
-  /** A link for the operator's browser (an MCP server's sign-in): the clients open it where they run, not the node. */
+  /** A link for the operator's browser (an MCP server's sign-in): the clients open it where they run, not the hub. */
   openUrl: (url: string) => void;
 };
 

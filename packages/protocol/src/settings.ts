@@ -1,5 +1,5 @@
 // A setting's revision: a hash of its value as JSON. A client changes a setting from the value it
-// has (settings_set ifRevision); the node refuses with `conflict` when another client changed it
+// has (settings_set ifRevision); the hub refuses with `conflict` when another client changed it
 // meanwhile, and the client applies its change to the current value again.
 
 /** FNV-1a (32 bits) of the value's JSON; `undefined` (no value) has its own revision. */

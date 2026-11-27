@@ -1,17 +1,13 @@
-// A node's configuration (~/.harness/nodes/<name>.json, written by hand or by the NixOS module):
-// the hub users allowed on it and the hubs it links to. Missing file: no users, no hubs.
+// A hub's configuration (~/.harness/nodes/<name>.json, written by hand or by the NixOS module):
+// its network access. Missing file: the unix socket only.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export type NodeFileConfig = {
-  /** Hub users allowed on this node through its hubs. */
-  users?: string[];
-  /** Hubs this node connects out to. */
-  hubs?: { url: string; key?: string; keyFile?: string }[];
+export type HubFileConfig = {
   /**
-   * A hub besides the node, listening for devices and nodes; `url`: the address devices reach it
-   * at (pairing links), e.g. https://my-harness.fly.dev.
+   * Network access for the user's devices besides the unix socket; `url`: the address devices
+   * reach it at (pairing links), e.g. https://my-harness.fly.dev.
    */
   hub?: { listen: string; url?: string };
   /** A shared server (the Fly image): agents get the `server` skill (no root, installing into ~, credentials). */
@@ -19,25 +15,15 @@ export type NodeFileConfig = {
 };
 
 /** `path`: an explicit file (the NixOS module's); otherwise ~/.harness/nodes/<name>.json. */
-export function readNodeConfig(home: string, name: string, path?: string): NodeFileConfig {
+export function readHubConfig(home: string, name: string, path?: string): HubFileConfig {
   try {
-    return JSON.parse(readFileSync(path ?? join(home, "nodes", `${name}.json`), "utf8")) as NodeFileConfig;
+    return JSON.parse(readFileSync(path ?? join(home, "nodes", `${name}.json`), "utf8")) as HubFileConfig;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT" && path === undefined) {
       return {};
     } else {
       throw new Error(`nodes/${name}.json: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
-}
-
-export function hubKey(hub: { url: string; key?: string; keyFile?: string }): string {
-  if (hub.key !== undefined) {
-    return hub.key;
-  } else if (hub.keyFile !== undefined) {
-    return readFileSync(hub.keyFile, "utf8").trim();
-  } else {
-    throw new Error(`hub ${hub.url}: no key or keyFile`);
   }
 }
 

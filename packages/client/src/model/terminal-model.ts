@@ -1,18 +1,18 @@
 // A session's terminal as a client shows it (plan polish-3 F), the same for the TUI and the app: its
-// own headless xterm gets the node's screen (terminal_open) and then the stream; the UIs draw its
+// own headless xterm gets the hub's screen (terminal_open) and then the stream; the UIs draw its
 // visible rows as ANSI lines and put the cursor where it stands. Scrolling the history is this
-// client's own. Input and the size go to the node's shell.
+// client's own. Input and the size go to the hub's shell.
 
 import * as headless from "@xterm/headless";
-import type { NodeApi } from "./client-model.ts";
+import type { HubApi } from "./client-model.ts";
 
 /**
- * The package is CommonJS marked __esModule: node's ESM puts it under `default`, Metro's interop
+ * The package is CommonJS marked __esModule: Node's ESM puts it under `default`, Metro's interop
  * gives its exports directly.
  */
 const xterm = (headless as { default?: typeof headless }).default ?? headless;
 
-/** History lines a client keeps (the node keeps as many). */
+/** History lines a client keeps (the hub keeps as many). */
 const SCROLLBACK = 10_000;
 
 type Cell = NonNullable<ReturnType<NonNullable<ReturnType<InstanceType<typeof xterm.Terminal>["buffer"]["active"]["getLine"]>>["getCell"]>>;
@@ -44,19 +44,21 @@ function sgr(cell: Cell): string {
 export type TerminalState = "closed" | "opening" | "open" | "exited";
 
 export class TerminalModel {
-  readonly node: string;
+  readonly hub: string;
   readonly session: string;
   readonly cwd: string;
-  private readonly api: () => NodeApi;
+  private readonly api: () => HubApi;
   private readonly term: InstanceType<typeof xterm.Terminal>;
   private readonly changed: () => void;
   state: TerminalState = "closed";
   exitCode: number | undefined;
   /** Lines scrolled up from the bottom (this client's own). */
   private scrolled = 0;
+  /** Input typed while the shell starts: sent, in order, once it runs. */
+  private held: string[] = [];
 
-  constructor(node: string, session: string, cwd: string, api: () => NodeApi, changed: () => void) {
-    this.node = node;
+  constructor(node: string, session: string, cwd: string, api: () => HubApi, changed: () => void) {
+    this.hub = node;
     this.session = session;
     this.cwd = cwd;
     this.api = api;
@@ -72,7 +74,7 @@ export class TerminalModel {
     return this.term.rows;
   }
 
-  /** Shows it at a size: the node starts the shell (again after it exited) and sends its screen. */
+  /** Shows it at a size: the hub starts the shell (again after it exited) and sends its screen. */
   async open(cols: number, rows: number): Promise<void> {
     if (this.state === "opening" || this.state === "open") {
       return;
@@ -81,6 +83,11 @@ export class TerminalModel {
       this.exitCode = undefined;
       this.term.resize(Math.max(2, cols), Math.max(1, rows));
       const { screen } = await this.api().request("terminal_open", { session: this.session, cwd: this.cwd, cols: this.term.cols, rows: this.term.rows });
+      const held = this.held;
+      this.held = [];
+      for (const data of held) {
+        this.send(data);
+      }
       this.term.reset();
       this.scrolled = 0;
       this.term.write(screen, () => {
@@ -90,7 +97,7 @@ export class TerminalModel {
     }
   }
 
-  /** Hidden: the node stops sending it here; the shell runs on. */
+  /** Hidden: the hub stops sending it here; the shell runs on. */
   detach(): void {
     if (this.state === "open" || this.state === "opening") {
       this.state = "closed";
@@ -114,6 +121,14 @@ export class TerminalModel {
 
   input(data: string): void {
     this.scrolled = 0; // typing shows the bottom
+    if (this.state === "opening") {
+      this.held.push(data);
+    } else {
+      this.send(data);
+    }
+  }
+
+  private send(data: string): void {
     void this.api()
       .request("terminal_input", { session: this.session, data })
       .catch(() => undefined);

@@ -4,7 +4,7 @@
 
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import type { TaskDetails } from "#protocol/claude-transcript.ts";
-import type { Item, NodeRow, Tab } from "#client/workbench/workbench.ts";
+import type { Item, HubRow, Tab } from "#client/workbench/workbench.ts";
 
 const at = 1_700_000_000_000;
 
@@ -107,7 +107,7 @@ export const INTERACTIONS: Record<string, InteractionRequest> = {
 
 function summary(status: "idle" | "running" | "waiting" | "error", extra: Partial<Tab> = {}): Tab {
   return {
-    node: "laptop",
+    hub: "laptop",
     sessionId: `s-${status}`,
     cwd: "/home/u/project",
     agent: undefined,
@@ -123,15 +123,15 @@ function summary(status: "idle" | "running" | "waiting" | "error", extra: Partia
 
 export const TABS: Tab[] = [
   summary("running", { glyph: "●", title: "harness", mode: "build" }),
-  summary("waiting", { glyph: "◆", title: "infra", node: "hub", mode: "plan" }),
-  summary("idle", { glyph: "✓", title: "api", node: "work", mode: "simple" }),
-  summary("error", { glyph: "✗", title: "docs", node: "work" }),
-  summary("idle", { glyph: "⊘", title: "offline-box", node: "nas", unavailable: "node nas is offline" }),
+  summary("waiting", { glyph: "◆", title: "infra", hub: "hub", mode: "plan" }),
+  summary("idle", { glyph: "✓", title: "api", hub: "work", mode: "simple" }),
+  summary("error", { glyph: "✗", title: "docs", hub: "work" }),
+  summary("idle", { glyph: "⊘", title: "offline-box", hub: "nas", unavailable: "hub nas is offline" }),
   summary("idle", { glyph: " ", title: "a very long session name that will not fit into the strip at all" }),
 ];
 
-/** The nodes block: this window's own node, one with a session waiting, one offline. */
-export const NODES: NodeRow[] = [
+/** The hubs block: this window's own hub, one with a session waiting, one offline. */
+export const HUBS: HubRow[] = [
   { name: "laptop", label: "inprocess", glyph: "●" },
   { name: "hub", label: "hub", glyph: "◆" },
   { name: "work", label: "work", glyph: "⊘" },

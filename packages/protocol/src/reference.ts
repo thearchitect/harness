@@ -4,7 +4,7 @@
 
 import type { TSchema } from "typebox";
 import { PROTOCOL_VERSION } from "./version.ts";
-import { FRAME_SCHEMAS, HAP_EVENT_SCHEMAS, HAP_REQUEST_SCHEMAS, NODE_EVENT_SCHEMAS, NODE_FRAME_SCHEMAS, OP_SCHEMAS } from "./schemas.ts";
+import { FRAME_SCHEMAS, HAP_EVENT_SCHEMAS, HAP_REQUEST_SCHEMAS, HUB_EVENT_SCHEMAS, HUB_FRAME_SCHEMAS, OP_SCHEMAS } from "./schemas.ts";
 
 type Json = { type?: string; const?: unknown; anyOf?: Json[]; items?: Json; properties?: Record<string, Json>; required?: string[]; description?: string; minimum?: number };
 
@@ -47,11 +47,11 @@ function page(title: string, intro: string, groups: [string, Record<string, TSch
 /** The pages, by file name. */
 export function referencePages(): Record<string, string> {
   return {
-    "node.md": page("Node protocol reference", "Frames between a client and a node (or a hub routing to nodes), one JSON object per line ([behavior](../node.md)).", [
+    "hub.md": page("Hub protocol reference", "Frames between a client and a hub, one JSON object per line ([behavior](../hub.md)).", [
       ["Client frames", FRAME_SCHEMAS],
-      ["Node frames", NODE_FRAME_SCHEMAS],
+      ["Hub frames", HUB_FRAME_SCHEMAS],
       ["Operations", OP_SCHEMAS],
-      ["Node events", NODE_EVENT_SCHEMAS],
+      ["Hub events", HUB_EVENT_SCHEMAS],
     ]),
     "hap.md": page("HAP reference", "The records harness adds to pi's RPC between a client and an agent ([behavior](../hap.md)).", [
       ["Requests", HAP_REQUEST_SCHEMAS],

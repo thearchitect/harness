@@ -1,7 +1,7 @@
 // The HAP server of one harness-agent: pi's RPC commands, responses and session events pass
 // through as pi defines them (docs/rpc.md); harness requests (harness_*) are answered here. One
 // ordered stream: a snapshot answered at some point is followed by every later event, which is
-// what makes "snapshot + tail" consistent for a client the node attaches mid-run.
+// what makes "snapshot + tail" consistent for a client the hub attaches mid-run.
 
 import { resolveModelScopeWithDiagnostics, type AgentSession, type AgentSessionEvent, type AgentSessionRuntime, type RpcCommand } from "@earendil-works/pi-coding-agent";
 import { readdir } from "node:fs/promises";
@@ -32,7 +32,7 @@ export type HapServerOptions = {
   hub: InteractionHub;
   harnessVersion: string;
   output: Output;
-  /** A frame of the agent's own client connection to its node. */
+  /** A frame of the agent's own client connection to its hub. */
   onNodeFrame(frame: unknown): void;
 };
 
@@ -224,7 +224,7 @@ export class HapServer {
     };
   }
 
-  /** One input line from the node. */
+  /** One input line from the hub. */
   async handle(record: Record<string, unknown>): Promise<void> {
     if (isHapRequest(record as { type?: unknown })) {
       const request = record as HapRequest;
@@ -240,7 +240,7 @@ export class HapServer {
       } catch (error) {
         this.output({ type: "harness_response", id: request.id, ok: false, error: toProtocolError(error) });
       }
-    } else if (record.type === "harness_node") {
+    } else if (record.type === "harness_hub") {
       this.onNodeFrame(record.frame);
     } else if (record.type === "harness_clients") {
       this.bridge.setClients(Number(record.componentBridge ?? 0));
@@ -532,7 +532,7 @@ export class HapServer {
       case "get_session_stats":
         return ok(session.getSessionStats());
       case "export_html":
-        // an absolute path: clients fetch it from the node
+        // an absolute path: clients fetch it from the hub
         return ok({ path: resolve(session.sessionManager.getCwd(), await session.exportToHtml(command.outputPath)) });
       case "switch_session":
         return ok(await this.runtime.switchSession(command.sessionPath));

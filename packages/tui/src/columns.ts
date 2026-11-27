@@ -1,5 +1,5 @@
 // The strip on the left of the workbench, in three blocks under one another, divided by rules and
-// with no titles: the nodes (as tall as their rows, `+ add` last), the chosen node's sessions (two
+// with no titles: the hubs (as tall as their rows, `+ add` last), the chosen hub's sessions (two
 // thirds of the rest, `+ new` last) and the active session's items (a third: `session` first, then
 // its tasks and subagents). One glyph, then the name; the active row on the selection background;
 // a session's mode in its name's color.
@@ -22,7 +22,7 @@ import {
   type TuiMouseEvent,
   type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
-import type { Item, NodeRow, Tab } from "#client/workbench/workbench.ts";
+import type { Item, HubRow, Tab } from "#client/workbench/workbench.ts";
 import type { RunMode } from "#protocol/state.ts";
 import { modeColor } from "#extension/presentation/modes.ts";
 
@@ -50,7 +50,7 @@ function glyphColor(theme: Theme, glyph: string): string {
 
 /** A row of the strip: what it opens. */
 export type StripRow =
-  | { kind: "node"; node: NodeRow }
+  | { kind: "hub"; hub: HubRow }
   | { kind: "add" }
   | { kind: "tab"; tab: Tab }
   | { kind: "new" }
@@ -67,8 +67,8 @@ export type StripActions = {
 
 /** What the strip shows, from the workbench's screen. */
 export type StripContent = {
-  nodes: NodeRow[];
-  node: string | undefined;
+  hubs: HubRow[];
+  hub: string | undefined;
   tabs: Tab[];
   /** The active tab among `tabs` (-1: none, a new session is being placed). */
   active: number;
@@ -78,17 +78,17 @@ export type StripContent = {
   mode: RunMode;
 };
 
-const EMPTY: StripContent = { nodes: [], node: undefined, tabs: [], active: -1, newSession: false, items: [], selected: "session", mode: "plan" };
+const EMPTY: StripContent = { hubs: [], hub: undefined, tabs: [], active: -1, newSession: false, items: [], selected: "session", mode: "plan" };
 
 /** A row's identity, kept across refreshes (the cursor stays on it). */
 function rowKey(row: StripRow): string {
   switch (row.kind) {
-    case "node":
-      return `node:${row.node.name}`;
+    case "hub":
+      return `hub:${row.hub.name}`;
     case "add":
       return "add";
     case "tab":
-      return `tab:${row.tab.node}/${row.tab.sessionId}`;
+      return `tab:${row.tab.hub}/${row.tab.sessionId}`;
     case "new":
       return "new";
     case "item":
@@ -118,10 +118,10 @@ export class SideStrip implements Component, Focusable {
   }
 
   /** The three blocks' rows. */
-  blocks(): { nodes: StripRow[]; sessions: StripRow[]; items: StripRow[] } {
+  blocks(): { hubs: StripRow[]; sessions: StripRow[]; items: StripRow[] } {
     const content = this.content;
     return {
-      nodes: [...content.nodes.map((node): StripRow => ({ kind: "node", node })), { kind: "add" }],
+      hubs: [...content.hubs.map((hub): StripRow => ({ kind: "hub", hub })), { kind: "add" }],
       sessions: [...content.tabs.map((tab): StripRow => ({ kind: "tab", tab })), { kind: "new" }],
       items: content.newSession ? [] : content.items.map((item): StripRow => ({ kind: "item", item })),
     };
@@ -129,7 +129,7 @@ export class SideStrip implements Component, Focusable {
 
   private rows(): StripRow[] {
     const blocks = this.blocks();
-    return [...blocks.nodes, ...blocks.sessions, ...blocks.items];
+    return [...blocks.hubs, ...blocks.sessions, ...blocks.items];
   }
 
   /** The row that is open now: the active session's selected item, else its tab. */
@@ -139,18 +139,18 @@ export class SideStrip implements Component, Focusable {
     if (content.newSession) {
       return "new";
     } else if (tab !== undefined) {
-      return `tab:${tab.node}/${tab.sessionId}`;
+      return `tab:${tab.hub}/${tab.sessionId}`;
     } else {
-      return content.node !== undefined ? `node:${content.node}` : "add";
+      return content.hub !== undefined ? `hub:${content.hub}` : "add";
     }
   }
 
-  /** Whether a row is open now: the chosen node, the active tab, the selected item. */
+  /** Whether a row is open now: the chosen hub, the active tab, the selected item. */
   private isOpen(row: StripRow): boolean {
     const content = this.content;
     switch (row.kind) {
-      case "node":
-        return row.node.name === content.node;
+      case "hub":
+        return row.hub.name === content.hub;
       case "tab":
         return !content.newSession && content.tabs[content.active] === row.tab;
       case "new":
@@ -175,8 +175,8 @@ export class SideStrip implements Component, Focusable {
     const theme = this.theme();
     let text: string;
     switch (row.kind) {
-      case "node":
-        text = `${row.node.glyph !== "" ? glyphColor(theme, row.node.glyph) : " "} ${row.node.label}`;
+      case "hub":
+        text = `${row.hub.glyph !== "" ? glyphColor(theme, row.hub.glyph) : " "} ${row.hub.label}`;
         break;
       case "add":
         text = theme.fg("dim", "+ add");
@@ -217,13 +217,13 @@ export class SideStrip implements Component, Focusable {
     const theme = this.theme();
     const blocks = this.blocks();
     const height = Math.max(6, this.height());
-    const nodes = Math.min(blocks.nodes.length, Math.max(1, height - 6));
-    const rest = Math.max(2, height - nodes - 2);
+    const hubs = Math.min(blocks.hubs.length, Math.max(1, height - 6));
+    const rest = Math.max(2, height - hubs - 2);
     const sessions = Math.ceil((rest * 2) / 3);
     const items = rest - sessions;
     const rule: StripRow | undefined = undefined;
-    this.lineRows = [...this.window(blocks.nodes, nodes), rule, ...this.window(blocks.sessions, sessions), rule, ...this.window(blocks.items, items)];
-    const ruleAt = new Set([nodes, nodes + 1 + sessions]);
+    this.lineRows = [...this.window(blocks.hubs, hubs), rule, ...this.window(blocks.sessions, sessions), rule, ...this.window(blocks.items, items)];
+    const ruleAt = new Set([hubs, hubs + 1 + sessions]);
     return this.lineRows.map((row, index) => (ruleAt.has(index) ? theme.fg("borderMuted", "─".repeat(width)) : row !== undefined ? this.drawRow(row, width) : " ".repeat(width)));
   }
 

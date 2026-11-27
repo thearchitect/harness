@@ -8,8 +8,8 @@ import assert from "node:assert/strict";
 import { realpathSync } from "node:fs";
 import { after, test } from "node:test";
 import { setKittyProtocolActive } from "@earendil-works/pi-tui";
-import { NodeConnection } from "#client/connection.ts";
-import { inProcessTransport } from "#node/endpoints/transports.ts";
+import { HubConnection } from "#client/connection.ts";
+import { inProcessTransport } from "#hub/endpoints/transports.ts";
 import { TuiDriver } from "#testkit/drivers/tui.ts";
 import { createStand, type Stand } from "#testkit/stand/stand.ts";
 
@@ -32,7 +32,7 @@ test("the session's terminal: shown and hidden by its key, the shell runs on, Ta
   process.env.SHELL = "/bin/sh"; // the user's shell is theirs; this scenario speaks sh
   const stand = await createStand({});
   stands.push(stand);
-  const tui = await TuiDriver.start(() => NodeConnection.open(inProcessTransport(stand.node), "tui", undefined, ["component-bridge"]), { cwd: stand.project });
+  const tui = await TuiDriver.start(() => HubConnection.open(inProcessTransport(stand.hub), "tui", undefined, ["component-bridge"]), { cwd: stand.project });
   drivers.push(tui);
   const project = realpathSync(stand.project);
   const framed = (text: string): boolean => text.includes("╭─ terminal · ");

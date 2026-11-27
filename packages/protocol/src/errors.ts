@@ -5,7 +5,6 @@ export const ERROR_CODES = [
   "unauthorized",
   "forbidden",
   "not_found",
-  "node_offline",
   "version_mismatch",
   "session_locked",
   "invalid_record",

@@ -1,15 +1,15 @@
 // What each tab leaves stays with it: the message being written and where its transcript was
 // scrolled come back when the tab does, and a TUI started again (its state in ui-state/tui.json)
-// has its tabs' drafts and scroll, its active tab and node as they were.
+// has its tabs' drafts and scroll, its active tab and hub as they were.
 
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
-import { NodeConnection } from "#client/connection.ts";
+import { HubConnection } from "#client/connection.ts";
 import { mergeWindowStates, type WindowState } from "#client/workbench/view-state.ts";
-import { inProcessTransport } from "#node/endpoints/transports.ts";
+import { inProcessTransport } from "#hub/endpoints/transports.ts";
 import { TuiDriver } from "#testkit/drivers/tui.ts";
 import { createStand, type Stand } from "#testkit/stand/stand.ts";
 import { tuiViewStore } from "#tui/view-store.ts";
@@ -34,12 +34,12 @@ function transcriptLines(tui: TuiDriver): string[] {
     .map((line) => line.slice(19).trimEnd());
 }
 
-test("drafts and scroll stay with their tabs; a TUI started again has them, its active tab and node", async () => {
+test("drafts and scroll stay with their tabs; a TUI started again has them, its active tab and hub", async () => {
   const stand = await createStand({ snapshotEntries: 40 });
   stands.push(stand);
   const store = tuiViewStore(mkdtempSync(join(tmpdir(), "ws-")));
   const start = async (): Promise<TuiDriver> => {
-    const driver = await TuiDriver.start(() => NodeConnection.open(inProcessTransport(stand.node), "tui", undefined, ["component-bridge"]), { cwd: stand.project, viewStore: store });
+    const driver = await TuiDriver.start(() => HubConnection.open(inProcessTransport(stand.hub), "tui", undefined, ["component-bridge"]), { cwd: stand.project, viewStore: store });
     drivers.push(driver);
     return driver;
   };
@@ -99,7 +99,7 @@ test("drafts and scroll stay with their tabs; a TUI started again has them, its 
   const again = await start();
   await again.settle();
   assert.equal(again.workbench.activeTab()?.sessionId, a.sessionId, "the active tab");
-  assert.equal(again.screen().node, node, "the node");
+  assert.equal(again.screen().hub, node, "the hub");
   assert.equal(again.app.editorText(), "draft of A", "its draft (the cursor at its end)");
   await again.waitForText(() => transcriptLines(again).join("\n") === scrolledA.join("\n"));
   await again.workbench.activate(again.workbench.tabs().findIndex((tab) => tab.sessionId === b.sessionId));
@@ -109,10 +109,10 @@ test("drafts and scroll stay with their tabs; a TUI started again has them, its 
 
 test("two windows' states merge by tab: each keeps the other's tabs; the last saved names the active tab", () => {
   const view = (draft: string) => ({ draft, scroll: "follow" as const, expanded: false, selected: "session" });
-  const first: WindowState = { version: 1, tabs: { "n/a": view("a1"), "n/b": view("b1") }, active: { node: "n", sessionId: "a" }, drafts: [] };
-  const second: WindowState = { version: 1, tabs: { "n/b": view("b2"), "n/c": view("c2") }, active: { node: "n", sessionId: "c" }, drafts: [] };
+  const first: WindowState = { version: 1, tabs: { "n/a": view("a1"), "n/b": view("b1") }, active: { hub: "n", sessionId: "a" }, drafts: [] };
+  const second: WindowState = { version: 1, tabs: { "n/b": view("b2"), "n/c": view("c2") }, active: { hub: "n", sessionId: "c" }, drafts: [] };
   const merged = mergeWindowStates(first, second);
   assert.deepEqual(Object.keys(merged.tabs).sort(), ["n/a", "n/b", "n/c"]);
   assert.equal(merged.tabs["n/b"]?.draft, "b2");
-  assert.deepEqual(merged.active, { node: "n", sessionId: "c" });
+  assert.deepEqual(merged.active, { hub: "n", sessionId: "c" });
 });

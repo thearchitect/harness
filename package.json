@@ -17,7 +17,7 @@
   "imports": {
     "#protocol/*": "./packages/protocol/src/*",
     "#client/*": "./packages/client/src/*",
-    "#node/*": "./packages/node/src/*",
+    "#hub/*": "./packages/hub/src/*",
     "#agent/*": "./packages/agent/src/*",
     "#extension/*": "./packages/extension/src/*",
     "#tui/*": "./packages/tui/src/*",

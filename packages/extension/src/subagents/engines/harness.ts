@@ -1,4 +1,4 @@
-// The `harness` engine (plan 12.3): the subagent is a child agent on the same node — a pi session
+// The `harness` engine (plan 12.3): the subagent is a child agent on the same hub — a pi session
 // with harness, the profile's model, tools, role and mode — that this agent follows in full and
 // prompts. Its records become SubagentEvents; its interactions reach the operator on their own.
 
