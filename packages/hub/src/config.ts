@@ -1,15 +1,19 @@
-// A hub's configuration (~/.harness/nodes/<name>.json, written by hand or by the NixOS module):
-// its network access. Missing file: the unix socket only.
+// A hub service's configuration (~/.harness/nodes/<name>.json, or the file the NixOS module and the
+// Fly image give with --config). Missing file: everything from the user's settings.
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import type { NetworkSettings } from "#protocol/hub.ts";
 
 export type HubFileConfig = {
   /**
-   * Network access for the user's devices besides the unix socket; `url`: the address devices
-   * reach it at (pairing links), e.g. https://my-harness.fly.dev.
+   * The network access for the user's devices (on when given), instead of the user's setting:
+   * `listen` behind a TLS proxy, `url` the address devices reach it at (pairing links), e.g.
+   * https://my-harness.fly.dev.
    */
-  hub?: { listen: string; url?: string };
+  network?: Partial<NetworkSettings>;
+  /** Minutes without clients and without working agents after which the service exits (Fly's machine then stops). */
+  idleExit?: number;
   /** A shared server (the Fly image): agents get the `server` skill (no root, installing into ~, credentials). */
   server?: boolean;
 };

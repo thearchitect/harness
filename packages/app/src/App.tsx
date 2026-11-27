@@ -1,6 +1,7 @@
 // The app: pairs with a hub (or takes the local token of `harness web-app`), connects, and draws the
 // workbench — the same model, zones and actions as the TUI — in the user's theme and fonts.
 
+import * as Clipboard from "expo-clipboard";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { KeyboardAvoidingView, Linking, Platform, useWindowDimensions, View } from "react-native";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
@@ -12,7 +13,9 @@ import { wsTransport } from "#client/ws-transport.ts";
 import type { ActionId } from "#client/keymap.ts";
 import { modeOfText } from "#protocol/modes.ts";
 // platform modules (`*.web.ts` next to the native one) are imported without an extension: Metro picks the file
-import { forgetDevice, readEndpoint, saveDevice, type Endpoint } from "./connect/endpoint";
+import { forgetDevice, onPhone, readEndpoint, saveDevice, type Endpoint } from "./connect/endpoint";
+import { parsePairingLink } from "./connect/pairing.ts";
+import * as AppLinking from "expo-linking";
 import { listenKeys } from "./keyboard";
 import {
   addressedSession,
@@ -54,6 +57,7 @@ async function connect(endpoint: Endpoint): Promise<Connected> {
     viewStore: viewStore(),
     uiSettings: () => appSettings(client, workbench, { supported: NOTIFICATIONS_SUPPORTED, request: requestNotifications }),
     // an exported session comes to this device
+    copyText: (text) => void Clipboard.setStringAsync(text),
     offerFile: (node, path) =>
       void client
         .connection(node)
@@ -114,6 +118,8 @@ function GalleryApp({ fixture }: { fixture: string }) {
 function WorkbenchApp() {
   const [fontsReady, setFontsReady] = useState(false);
   const [endpoint, setEndpoint] = useState<Endpoint | undefined | null>(null);
+  /** A pairing link opened on a phone's browser: the app may take it, or this page. */
+  const [offered, setOffered] = useState<{ code: string; hub: string } | undefined>(undefined);
   const [connected, setConnected] = useState<Connected | undefined>(undefined);
   const [error, setError] = useState<string | undefined>(undefined);
   const [version, setVersion] = useState(0);
@@ -126,13 +132,43 @@ function WorkbenchApp() {
 
   useEffect(() => {
     void loadFonts().finally(() => setFontsReady(true));
+    const pairWith = (code: string, hub: string): void =>
+      void saveDevice(code, hub)
+        .then(setEndpoint)
+        .catch((reason: unknown) => {
+          // a pairing link whose code failed: say why and ask for a code
+          setError(reason instanceof Error ? reason.message : String(reason));
+          setEndpoint(undefined);
+        });
     void readEndpoint()
-      .then((found) => setEndpoint(found))
+      .then((arrival) => {
+        if (arrival.kind === "endpoint") {
+          setEndpoint(arrival.endpoint);
+        } else if (arrival.kind === "pair" && onPhone()) {
+          setOffered({ code: arrival.code, hub: arrival.hub });
+          setEndpoint(undefined);
+        } else if (arrival.kind === "pair") {
+          pairWith(arrival.code, arrival.hub);
+        } else {
+          setEndpoint(undefined);
+        }
+      })
       .catch((reason: unknown) => {
-        // a pairing link whose code failed: say why and ask for a code
         setError(reason instanceof Error ? reason.message : String(reason));
         setEndpoint(undefined);
       });
+    // a pairing link handed to the app (harness://pair?…, a hub's link on the phone)
+    const take = (url: string | null): void => {
+      const link = url !== null ? parsePairingLink(url) : undefined;
+      if (link !== undefined) {
+        pairWith(link.code, link.hub);
+      } else {
+        // another link (a session's), or none
+      }
+    };
+    void AppLinking.getInitialURL().then(take);
+    const subscription = AppLinking.addEventListener("url", ({ url }) => take(url));
+    return () => subscription.remove();
   }, []);
 
   useEffect(() => {
@@ -411,6 +447,8 @@ function WorkbenchApp() {
     (action: ActionId): void => {
       if (connected === undefined) {
         return;
+      } else if (action === "run.abort" && screen?.zones.editor.kind === "hub") {
+        connected.workbench.dismiss(); // Esc with the focus outside the dialog's rows closes it too
       } else if ((action === "run.abort" || action === "editor.submit") && (screen?.input === "dialog" || screen?.input === "newSession")) {
         return; // Esc and Enter belong to the dialog, or to choosing a new session's folder
       } else if (action === "strip.tabs") {
@@ -460,9 +498,13 @@ function WorkbenchApp() {
   ) : endpoint === undefined ? (
     <Pairing
       error={error}
+      offered={offered}
       onPair={(code, url) =>
         void saveDevice(code, url)
-          .then(setEndpoint)
+          .then((made) => {
+            setOffered(undefined);
+            setEndpoint(made);
+          })
           .catch((reason: unknown) => setError(reason instanceof Error ? reason.message : String(reason)))
       }
     />

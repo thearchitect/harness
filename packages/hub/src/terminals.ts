@@ -25,7 +25,17 @@ type Term = {
   serializer: InstanceType<typeof serialize.SerializeAddon>;
   viewers: Set<Viewer>;
   exited: number | undefined;
+  /**
+   * Input that came before the shell was ready, written once it is: a starting shell sets its
+   * terminal up (readline, fish) and discards what was typed before (TCSAFLUSH). Ready: its first
+   * output, then a pause of READY_QUIET_MS (the prompt drawn). Undefined: ready.
+   */
+  held: string[] | undefined;
+  readyTimer: ReturnType<typeof setTimeout> | undefined;
 };
+
+/** The pause after a starting shell's output that says its prompt is drawn. */
+const READY_QUIET_MS = 40;
 
 export type TerminalLog = (event: { event: "terminal_started"; session: string; cwd: string; pid: number } | { event: "terminal_exited"; session: string; code: number }) => void;
 
@@ -61,7 +71,12 @@ export class Terminals {
   }
 
   input(session: string, data: string): void {
-    this.terms.get(session)?.pty?.write(data);
+    const term = this.terms.get(session);
+    if (term?.held !== undefined) {
+      term.held.push(data);
+    } else {
+      term?.pty?.write(data);
+    }
   }
 
   resize(session: string, cols: number, rows: number): void {
@@ -90,6 +105,7 @@ export class Terminals {
   /** The hub closes: every shell ends. */
   closeAll(): void {
     for (const term of this.terms.values()) {
+      clearTimeout(term.readyTimer);
       term.pty?.kill();
       term.mirror.dispose();
     }
@@ -100,7 +116,7 @@ export class Terminals {
     const mirror = new xterm.Terminal({ cols: Math.max(2, cols), rows: Math.max(1, rows), scrollback: TERMINAL_SCROLLBACK, allowProposedApi: true });
     const serializer = new serialize.SerializeAddon();
     mirror.loadAddon(serializer as never);
-    const term: Term = { session, cwd, pty: undefined, mirror, serializer, viewers: new Set(), exited: undefined };
+    const term: Term = { session, cwd, pty: undefined, mirror, serializer, viewers: new Set(), exited: undefined, held: undefined, readyTimer: undefined };
     this.terms.set(session, term);
     return term;
   }
@@ -116,11 +132,25 @@ export class Terminals {
     });
     term.pty = pty;
     term.exited = undefined;
+    term.held = [];
     term.mirror.resize(Math.max(2, cols), Math.max(1, rows));
     // the mirror answers what the shell asks the terminal (device attributes, colors, the cursor's place): shells wait for it
     const answers = term.mirror.onData((data) => (term.pty === pty ? pty.write(data) : undefined));
     this.log({ event: "terminal_started", session: term.session, cwd: term.cwd, pid: pty.pid });
     pty.onData((data) => {
+      if (term.held !== undefined && term.pty === pty) {
+        // starting: ready once its output pauses
+        clearTimeout(term.readyTimer);
+        term.readyTimer = setTimeout(() => {
+          const held = term.held ?? [];
+          term.held = undefined;
+          for (const typed of held) {
+            pty.write(typed);
+          }
+        }, READY_QUIET_MS);
+      } else {
+        // ready
+      }
       // to the viewers in the mirror's order: a viewer added after a screen gets what came after it
       term.mirror.write(data, () => {
         for (const viewer of term.viewers) {
@@ -130,6 +160,8 @@ export class Terminals {
     });
     pty.onExit(({ exitCode }) => {
       answers.dispose();
+      clearTimeout(term.readyTimer);
+      term.held = undefined;
       term.mirror.write("", () => {
         if (term.pty === pty) {
           term.pty = undefined;

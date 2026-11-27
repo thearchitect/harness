@@ -48,6 +48,7 @@ import type { Renderers } from "./presentation.ts";
 import { HarnessPanel, PANEL_MIN_WIDTH, PANEL_WIDTH } from "./panel.ts";
 import { hintLine, PickerView } from "./picker.ts";
 import { LoginView } from "./login.ts";
+import { HubDialogView } from "./hub-dialog.ts";
 import { MainScroll, MainSlot } from "./main-area.ts";
 import { TerminalView } from "./terminal-view.ts";
 import { LoginCallback } from "./login-callback.ts";
@@ -767,7 +768,9 @@ export class App {
             ? `component:${zone.component.componentId}`
             : zone.kind === "hint"
               ? "hint"
-              : `picker:${zone.picker.id}:${zone.picker.scope ?? 0}`;
+              : zone.kind === "hub"
+                ? `hub:${zone.dialog.hub}`
+                : `picker:${zone.picker.id}:${zone.picker.scope ?? 0}`;
     if (id === this.editorShown) {
       return;
     } else {
@@ -806,6 +809,13 @@ export class App {
         }
         case "picker": {
           const view = new PickerView(zone.picker, getTheme, { scope: () => this.workbench.nextPickerScope(), cancel: () => this.workbench.closePicker() });
+          this.editorComponent = view;
+          this.editorZone.addChild(view);
+          this.tui.setFocus(view);
+          break;
+        }
+        case "hub": {
+          const view = new HubDialogView(this.tui, getTheme, zone.dialog);
           this.editorComponent = view;
           this.editorZone.addChild(view);
           this.tui.setFocus(view);

@@ -9,7 +9,9 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { HarnessError, toProtocolError } from "#protocol/errors.ts";
-import type { AgentInfo, AttachLevel, ClientFrame, HubEvent, HubFrame, HubHost, HubOp, HubOps } from "#protocol/hub.ts";
+import type { AgentInfo, AttachLevel, ClientFrame, HubEvent, HubFrame, HubHost, HubOp, HubOps, HubStatus, NetworkSettings } from "#protocol/hub.ts";
+import { HubAuth } from "./auth.ts";
+import { HubNetwork, pairingLink, qrModules } from "./network.ts";
 import { HUB_OPS } from "#protocol/hub.ts";
 import { settingRevision } from "#protocol/settings.ts";
 import { listDirs } from "./dirs.ts";
@@ -65,6 +67,8 @@ export type HubConfig = {
   host?: HubHost;
   /** hub_restart: stops the agents and starts the hub again (a holder in its process, a service by exiting). */
   restart?: () => Promise<void>;
+  /** The network access the service's configuration sets (the user's `hub.network` setting otherwise). */
+  network?: NetworkSettings;
 };
 
 type Attachment = { level: AttachLevel; live: boolean };
@@ -112,6 +116,8 @@ export class Hub {
   private unloadTimer: unknown;
   readonly telemetry: Telemetry;
   private readonly terminals: Terminals;
+  private readonly auth: HubAuth;
+  readonly network: HubNetwork;
   private closing = false;
 
   constructor(config: HubConfig) {
@@ -126,7 +132,57 @@ export class Hub {
     this.scheduleUnload();
     this.locks = new SessionLocks(config.dataDir);
     this.settings = new SettingsStore(config.dataDir);
-    this.settings.onChange((settings) => this.broadcast({ ev: "settings", settings }));
+    this.auth = new HubAuth(config.dataDir);
+    this.network = new HubNetwork(this, this.auth, config.network);
+    this.settings.onChange((settings) => {
+      this.broadcast({ ev: "settings", settings });
+      void this.network.apply();
+    });
+    void this.network.apply();
+  }
+
+  /* ----- network access and devices ----- */
+
+  status(): HubStatus {
+    const connected = new Set([...this.connections.values()].flatMap(({ connection }) => (connection.device !== undefined ? [connection.device] : [])));
+    return {
+      network: { ...this.network.settings(), ...this.network.status() },
+      devices: this.auth.devices().map((device) => ({ ...device, connected: connected.has(device.name) })),
+      pairings: this.auth.pairings(this.clock.now()),
+    };
+  }
+
+  /** Tells every client what the /hub dialog shows changed. */
+  devicesChanged(): void {
+    if (!this.closing) {
+      this.broadcast({ ev: "hub", status: this.status() });
+    } else {
+      // closing: nobody to tell
+    }
+  }
+
+  /** Revokes a device: its token is forgotten and its connections close at once. */
+  revokeDevice(name: string): void {
+    this.auth.revokeDevice(name);
+    this.telemetry.log({ event: "device_revoked", device: name });
+    for (const { connection } of [...this.connections.values()]) {
+      if (connection.device === name) {
+        connection.send({ k: "refused", error: { code: "unauthorized", message: "this device was revoked: pair it again" } });
+        connection.close();
+      } else {
+        // another device, or a local client
+      }
+    }
+    this.devicesChanged();
+  }
+
+  /**
+   * Whether the hub may go to sleep (`hub.idleExit`): no client is connected and no agent works —
+   * no run, no question waiting, no background task.
+   */
+  asleepAllowed(): boolean {
+    const clients = [...this.connections.values()].filter(({ connection, welcomed }) => welcomed && connection.agent === undefined).length;
+    return clients === 0 && this.activity().running === 0;
   }
 
   /* ----- connections ----- */
@@ -182,7 +238,7 @@ export class Hub {
         connection.close();
       } else if (!compatibleProtocol(frame.protocol)) {
         this.telemetry.log({ event: "refused", connection: connection.id, code: "version_mismatch" });
-        connection.send({ k: "refused", error: { code: "version_mismatch", message: `protocol ${frame.protocol} is not ${PROTOCOL_VERSION}: update the client or the node` } });
+        connection.send({ k: "refused", error: { code: "version_mismatch", message: `protocol ${frame.protocol} is not ${PROTOCOL_VERSION}: update the client or the hub` } });
         connection.close();
       } else {
         state.welcomed = true;
@@ -387,6 +443,44 @@ export class Hub {
         const { session } = args as HubOps["terminal_detach"]["args"];
         this.terminals.detach(connection, session);
         return {} as HubOps[K]["result"];
+      }
+      case "hub_status":
+        return this.status() as HubOps[K]["result"];
+      case "hub_network_set": {
+        const change = args as HubOps["hub_network_set"]["args"];
+        if (this.network.settings().source === "service") {
+          throw new HarnessError("forbidden", "the service's configuration sets the network access: change it there");
+        } else {
+          const { source: _source, ...current } = this.network.settings();
+          this.settings.set("hub.network", { ...current, ...change });
+          await this.network.apply();
+          return this.status() as HubOps[K]["result"];
+        }
+      }
+      case "device_pair": {
+        const { name } = args as HubOps["device_pair"]["args"];
+        const pairing = this.auth.addPairing(name, this.clock.now());
+        const url = this.network.settings().url;
+        this.telemetry.log({ event: "pairing_created", pairing: pairing.id, ...(name !== undefined ? { name } : {}) });
+        this.devicesChanged();
+        if (url !== undefined) {
+          const link = pairingLink(url, pairing.code);
+          return { ...pairing, link, qr: await qrModules(link) } as HubOps[K]["result"];
+        } else {
+          return pairing as HubOps[K]["result"];
+        }
+      }
+      case "device_rename": {
+        const { name, to } = args as HubOps["device_rename"]["args"];
+        this.auth.renameDevice(name, to);
+        this.telemetry.log({ event: "device_renamed", device: name, to });
+        this.devicesChanged();
+        return this.status() as HubOps[K]["result"];
+      }
+      case "device_revoke": {
+        const { name } = args as HubOps["device_revoke"]["args"];
+        this.revokeDevice(name);
+        return this.status() as HubOps[K]["result"];
       }
       default:
         throw new HarnessError("invalid_record", `unknown operation ${String(op satisfies never)}`);
@@ -770,6 +864,7 @@ export class Hub {
     this.closing = true;
     this.telemetry.log({ event: "hub_stop" });
     this.clock.clearTimeout(this.unloadTimer);
+    await this.network.close();
     await Promise.all([...this.agents.values()].map((entry) => entry.link.stop()));
     this.terminals.closeAll();
     this.locks.releaseAll();

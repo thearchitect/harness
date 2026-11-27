@@ -18,7 +18,17 @@ export type TelemetryEvent =
   | { event: "agent_exit"; agent: string; code: number | null; error?: string }
   | { event: "agent_unload"; agent: string }
   | { event: "terminal_started"; session: string; cwd: string; pid: number }
-  | { event: "terminal_exited"; session: string; code: number };
+  | { event: "terminal_exited"; session: string; code: number }
+  | { event: "network_started"; listen: string; proxy: boolean }
+  | { event: "network_stopped" }
+  | { event: "network_problem"; problem: string }
+  | { event: "pairing_created"; pairing: string; name?: string }
+  | { event: "paired"; pairing: string; device: string; address: string }
+  | { event: "pairing_failed"; address: string; reason: string }
+  | { event: "device_refused"; address: string; reason: string }
+  | { event: "device_renamed"; device: string; to: string }
+  | { event: "device_revoked"; device: string }
+  | { event: "idle_exit"; minutes: number };
 
 export class Telemetry {
   private readonly path: string;

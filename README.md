@@ -73,7 +73,8 @@ playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools)
   keeps running); Ctrl+Q quits.
 - Sessions live on their hub: closing the TUI leaves a hub started as a service (and its
   agents) running; reopening shows everything again. Every client of a user sees the same tabs.
-- `harness hub`, `harness remote add`: [docs/operations/hub.md](docs/operations/hub.md).
+- Other machines: `harness connect ssh://user@host` (their hub over SSH) or a pairing link from
+  `/hub` there (browsers and phones too, behind a TLS proxy): [docs/operations/hub.md](docs/operations/hub.md).
 - Provider accounts: `/login` in any client (the login runs on the session's hub; its steps show in
   the editor's place: open the sign-in link in this machine's browser or copy it, ← goes back a
   step, Esc cancels), or `harness auth login` (pi's command on `~/.harness`).

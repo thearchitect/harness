@@ -3,7 +3,7 @@
 // recently visited ones; the rest at summary level). Isomorphic: no Node API.
 
 import { SNAPSHOT_ENTRIES, type HapRecord, type SnapshotData } from "#protocol/hap.ts";
-import type { AgentInfo, AgentSummary, HubEvent, HubOp, HubOps, SessionListItem } from "#protocol/hub.ts";
+import type { AgentInfo, AgentSummary, HubEvent, HubOp, HubOps, HubStatus, SessionListItem } from "#protocol/hub.ts";
 import { RequestError, type HubConnection } from "../connection.ts";
 import { AgentModel } from "./agent-model.ts";
 import { TerminalModel } from "./terminal-model.ts";
@@ -55,6 +55,8 @@ export class ClientModel {
   readonly connections = new Map<string, HubApi>();
   /** The hub whose settings this client uses (the local one). */
   home: string | undefined;
+  /** Each hub's network access and devices, as its last `hub` event told (the /hub dialog). */
+  readonly hubStatus = new Map<string, HubStatus>();
   private homeConnection: HubConnection | undefined;
   readonly agents = new Map<AgentKey, AgentInfo>();
   readonly full = new Map<AgentKey, AgentModel>();
@@ -242,6 +244,9 @@ export class ClientModel {
       case "terminal_exit":
         this.terminals.get(`${node}\u0000${event.session}`)?.exited(event.code);
         return;
+      case "hub":
+        this.hubStatus.set(node, event.status);
+        break;
       default:
         break; // an event of a newer node
     }

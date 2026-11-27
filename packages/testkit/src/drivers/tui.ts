@@ -47,11 +47,16 @@ export class TuiDriver {
     const terminal = new VirtualTerminal(options.columns ?? 140, options.rows ?? 40);
     const client = new ClientModel();
     const node = await client.addEndpoint(open, { home: true });
-    const workbench = new Workbench(client, { cwd: options.cwd, themes: () => ["dark", "light"], ...(options.viewStore !== undefined ? { viewStore: options.viewStore } : {}) });
+    const outside = { opened: [] as string[], copied: [] as string[] };
+    const workbench = new Workbench(client, {
+      cwd: options.cwd,
+      themes: () => ["dark", "light"],
+      copyText: (text) => outside.copied.push(text),
+      ...(options.viewStore !== undefined ? { viewStore: options.viewStore } : {}),
+    });
     await workbench.restoreViews();
     // pi's dark theme: the virtual terminal reports no colors of its own
     const settings = SettingsManager.inMemory({ theme: "dark" });
-    const outside = { opened: [] as string[], copied: [] as string[] };
     const app = new App({
       client,
       workbench,

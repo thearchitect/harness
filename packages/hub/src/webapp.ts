@@ -1,4 +1,4 @@
-// `harness web-app`'s server (plan 10.6): the app's web build and its /client endpoint on
+// `harness web-app`'s server (plan 10.6): the app's web build and its /ws endpoint on
 // 127.0.0.1, for one window on this machine. The page proves itself with the token in its address's
 // fragment (never sent in a request line); each of its connections is relayed to this user's hub —
 // the hub running under its socket, or one inside this process — as a local client.
@@ -27,7 +27,7 @@ export async function startWebApp(options: { staticDir: string; open: () => Prom
   server.on("upgrade", (request, socket, head) => {
     const url = new URL(request.url ?? "/", "http://app");
     // only this machine's pages: the Host names the loopback address this server listens on
-    if (url.pathname !== "/client" || !/^127\.0\.0\.1:\d+$/.test(request.headers.host ?? "")) {
+    if (url.pathname !== "/ws" || !/^127\.0\.0\.1:\d+$/.test(request.headers.host ?? "")) {
       socket.destroy();
     } else {
       sockets.handleUpgrade(request, socket, head, (page) => {

@@ -15,7 +15,8 @@ wants one without a window open:
 
 Each hub becomes `harness-<user>.service` (`harness hub`) running as that user, with its
 configuration in the Nix store. `listen` gives the user's devices network access behind a TLS
-proxy (`tailscale serve`, Caddy); `url` is the address pairing links carry. Agents and their
+proxy (`tailscale serve`, Caddy; `proxy = true` for an address off loopback); `url` is the address
+pairing links carry. Set here, the network access is read-only in the user's `/hub` dialog. Agents and their
 background tasks are the service's children and stop with it. A user has one hub on a machine:
 with the service running, that user's harness windows connect to it instead of holding one. The
 `harness` command is installed for `harness hub device …`. The module's VM test

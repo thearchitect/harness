@@ -10,8 +10,10 @@
 #   }
 #
 # s6-svscan supervises the user's hub: `harness hub` as the user's own uid (s6-setuidgid) with the
-# user's cage env, listening on 8080 behind Fly's TLS proxy. At boot, harness-boot prepares the
-# home on the volume (/data/home/<name>) and starts s6. Plaintext secrets never enter the image;
+# user's cage env, listening on 8080 behind Fly's TLS proxy. Ten minutes without clients and
+# without working agents the hub exits; its finish script then ends s6, so the machine stops, and
+# Fly starts it again at the next request. At boot, harness-boot prepares the home on the volume
+# (/data/home/<name>) and starts s6. Plaintext secrets never enter the image;
 # devices are paired on the machine (`fly ssh console`, `harness hub device add --name <device>`).
 self:
 {
@@ -55,7 +57,13 @@ let
 
     # The hub: the user's uid, network access on 8080 (Fly terminates TLS), the user's cage env
     # (decrypted by root's machine identity, then the identity is out of reach of the hub).
-    jq -n '{ server: true, hub: { listen: "0.0.0.0:8080" } }' > $out/etc/harness-remote/hub.json
+    jq -n '{ server: true, network: { listen: "0.0.0.0:8080", proxy: true }, idleExit: 10 }' > $out/etc/harness-remote/hub.json
+    # the hub's exit when idle (0) ends the container; hub_restart (75) and failures are restarted
+    cat > $out/etc/s6/hub/finish <<EOF
+    #!/bin/sh
+    if [ "\$1" = 0 ]; then exec ${pkgs.s6}/bin/s6-svscanctl -t /etc/s6; else exit 0; fi
+    EOF
+    chmod +x $out/etc/s6/hub/finish
     envfile=""
     if [ -f ${envs}/user-$user.cage ]; then
       cp ${envs}/user-$user.cage $out/etc/harness-remote/envs/

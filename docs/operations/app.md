@@ -13,12 +13,13 @@ builds are not published yet.
 - **On this machine**: `harness web-app` opens the app in a window of the bundled browser, on
   this user's hub (the running one, or one inside the process). The window's address carries a
   one-time token in its fragment; closing the window ends the command.
-- **Over the network**: a hub with network access serves the web build on its address. Pair a
-  browser with `harness hub device add --name <device> --url <hub address>`: it prints a one-time code,
-  a link with the code in its fragment (`#pair=…`) and the link's QR code; opening the link (within
-  ten minutes, once) exchanges the code for this browser's device token and removes it from the
-  address. Without `--url`, enter the code into the pairing form.
-  `hub.url` in the hub's `nodes/default.json` sets the address once.
+- **Over the network**: a hub with network access ([hub.md](hub.md)) serves the web build on its
+  address. `/hub`, add device (or `harness hub device add`) makes a one-time code, a link with the
+  code in its fragment (`#pair=…`) and the link's QR code. Opening the link (within ten minutes,
+  once) pairs this browser — its token an HttpOnly cookie the page never sees — and removes the code
+  from the address; on a phone the page offers to hand the link to the installed app instead. The
+  pairing form scans the QR code with the camera, takes the link pasted, or the code typed (in the
+  phone apps with the hub's address).
 
 ## The strips and the panel, by keyboard and pointer
 

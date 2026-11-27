@@ -114,6 +114,19 @@ export const OP_SCHEMAS: Record<HubOp, TSchema> = {
     },
     "Changes one setting; every client of the user receives a settings event. → { settings }",
   ),
+  hub_status: Obj({}, "The hub's network access (settings, where they come from, whether it runs and why not) and its paired devices and pairing codes. → HubStatus"),
+  hub_network_set: Obj(
+    {
+      enabled: Opt(Type.Boolean()),
+      listen: Opt(Str("host:port of the HTTP endpoint; off loopback only with proxy")),
+      proxy: Opt(Type.Boolean({ description: "Only a TLS proxy in front reaches the port (Fly, tailscale serve, Caddy)" })),
+      url: Opt(Str("The address devices use, for pairing links")),
+    },
+    "Changes the network access (the user's hub.network setting); refused when the service's configuration sets it. → HubStatus",
+  ),
+  device_pair: Obj({ name: Opt(Str("The device's name; else the one it gives when it pairs")) }, "A one-time code for a new device, for ten minutes. → { id, code, expires, link? }"),
+  device_rename: Obj({ name: Str(), to: Str() }, "Renames a paired device. → HubStatus"),
+  device_revoke: Obj({ name: Str() }, "Revokes a paired device; its connections close at once. → HubStatus"),
 };
 
 const Image = Type.Object({ type: Type.Literal("image"), data: Str("base64"), mimeType: Str() });
@@ -218,6 +231,7 @@ export const HUB_EVENT_SCHEMAS = {
   settings: Obj({ ev: Type.Literal("settings"), settings: Any("The user's settings") }, "The user's settings changed."),
   terminal_output: Obj({ ev: Type.Literal("terminal_output"), session: Str(), data: Str("Bytes of the shell as text") }, "Output of a session's terminal this client shows."),
   terminal_exit: Obj({ ev: Type.Literal("terminal_exit"), session: Str(), code: Type.Integer() }, "A session's terminal shell exited; terminal_open starts another."),
+  hub: Obj({ ev: Type.Literal("hub"), status: Any("HubStatus") }, "The network access or the devices changed (one paired, connected, was revoked)."),
 } as const;
 
 export const HAP_EVENT_SCHEMAS = {

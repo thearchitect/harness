@@ -4,6 +4,8 @@
 #
 #   services.harness.hubs.alice = { };
 #   services.harness.hubs.bob = { listen = "127.0.0.1:8790"; url = "https://bob.example.ts.net"; };
+#
+# The network access set here wins over the user's own (the /hub dialog shows it read-only).
 { self }:
 {
   config,
@@ -29,6 +31,11 @@ let
           example = "https://alice.example.ts.net";
           description = "The address devices reach the hub at (pairing links).";
         };
+        proxy = lib.mkOption {
+          type = lib.types.bool;
+          default = false;
+          description = "Only a TLS proxy reaches `listen` (required for an address off loopback: the hub has no TLS of its own).";
+        };
       };
     };
   configFile =
@@ -36,8 +43,8 @@ let
     pkgs.writeText "harness-hub-${user}.json" (
       builtins.toJSON (
         lib.optionalAttrs (hub.listen != null) {
-          hub = {
-            inherit (hub) listen;
+          network = {
+            inherit (hub) listen proxy;
           }
           // lib.optionalAttrs (hub.url != null) { inherit (hub) url; };
         }

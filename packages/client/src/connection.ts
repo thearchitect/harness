@@ -39,6 +39,9 @@ export class HubConnection {
     transport.onClose((reason) => {
       this.closed = true;
       const error = new Error(`connection closed: ${reason}`);
+      // closed before the welcome: the handshake fails with why (no hub there, ssh refused)
+      this.handshake?.reject(new Error(reason));
+      this.handshake = undefined;
       for (const waiter of [...this.waiters.values(), ...this.hapWaiters.values()]) {
         waiter.reject(error);
       }

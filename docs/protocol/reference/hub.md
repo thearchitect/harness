@@ -286,6 +286,48 @@ Changes one setting; every client of the user receives a settings event. → { s
 | `value` | any | yes | Its new value; null removes it |
 | `ifRevision` | string |  | The revision (settings.ts settingRevision) of the value this change was made from: another current one answers conflict |
 
+### `hub_status`
+
+The hub's network access (settings, where they come from, whether it runs and why not) and its paired devices and pairing codes. → HubStatus
+
+No fields.
+
+### `hub_network_set`
+
+Changes the network access (the user's hub.network setting); refused when the service's configuration sets it. → HubStatus
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `enabled` | boolean |  |  |
+| `listen` | string |  | host:port of the HTTP endpoint; off loopback only with proxy |
+| `proxy` | boolean |  | Only a TLS proxy in front reaches the port (Fly, tailscale serve, Caddy) |
+| `url` | string |  | The address devices use, for pairing links |
+
+### `device_pair`
+
+A one-time code for a new device, for ten minutes. → { id, code, expires, link? }
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string |  | The device's name; else the one it gives when it pairs |
+
+### `device_rename`
+
+Renames a paired device. → HubStatus
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes |  |
+| `to` | string | yes |  |
+
+### `device_revoke`
+
+Revokes a paired device; its connections close at once. → HubStatus
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | yes |  |
+
 ## Hub events
 
 ### `agents`
@@ -346,3 +388,12 @@ A session's terminal shell exited; terminal_open starts another.
 | `ev` | `"terminal_exit"` | yes |  |
 | `session` | string | yes |  |
 | `code` | integer | yes |  |
+
+### `hub`
+
+The network access or the devices changed (one paired, connected, was revoked).
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `ev` | `"hub"` | yes |  |
+| `status` | any | yes | HubStatus |

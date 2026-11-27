@@ -1,10 +1,12 @@
 // harness — the command line.
 //
 //   harness [-c | --continue] [--session <id>] [--model <ref>]   the TUI; a new session in the current directory
-//   harness hub [--listen h:p] [--config <f>]    the user's hub as a service: agents of this user, a unix
-//                                                socket, devices over the network when it listens
-//   harness hub device add|revoke|list           the devices paired with the hub
-//   harness remote add|remove|list               other machines' hubs this client connects to
+//   harness hub [--config <f>]                   the user's hub as a service: agents of this user, a unix
+//                                                socket, devices over the network when it is on
+//   harness hub attach                           stdio to this machine's running hub (ssh runs it)
+//   harness hub device|network …                 the devices paired with the hub, its network access
+//   harness connect <address>                    another machine's hub (ssh://, a pairing link)
+//   harness remote list|remove                   other machines' hubs this client connects to
 //
 // The TUI connects to the user's running hub (~/.harness/sockets/default.sock), or runs the hub
 // itself — agents as its children, the same socket for other clients — while it is open.
@@ -15,7 +17,9 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import type { KeybindingsConfig } from "@earendil-works/pi-tui";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appWebDir, serveStatic } from "#hub/endpoints/static.ts";
+import { createConnection } from "node:net";
+import { hostname } from "node:os";
+import { appWebDir } from "#hub/endpoints/static.ts";
 import { startWebApp } from "#hub/webapp.ts";
 import type { Transport } from "#protocol/hub.ts";
 import { parseArgs } from "node:util";
@@ -24,21 +28,22 @@ import { HubConnection } from "#client/connection.ts";
 import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench } from "#client/workbench/workbench.ts";
 import { wsTransport } from "#client/ws-transport.ts";
-import { HubAuth } from "#hub/auth.ts";
-import { parseListen, readHubConfig } from "#hub/config.ts";
+import { readHubConfig } from "#hub/config.ts";
 import { harnessHome, ensureHome } from "#hub/home.ts";
 import { LocalHub, quitQuestion, versionProblem } from "#hub/local.ts";
 import { Hub } from "#hub/hub.ts";
-import { listenUnix, socketPath } from "#hub/endpoints/unix.ts";
-import { listenWs } from "#hub/endpoints/ws.ts";
-import { hubAdmin, redeemPairing, remoteAdmin } from "./admin.ts";
+import { networkOf } from "#hub/network.ts";
+import { listenUnix, socketAlive, socketPath } from "#hub/endpoints/unix.ts";
+import { sshTransport } from "#hub/endpoints/transports.ts";
+import { connect, hubAdmin, redeemPairing, remoteAdmin } from "./admin.ts";
 import { claudeBridge } from "./claude-bridge.ts";
 import { piCommand } from "./pi-command.ts";
 import { canExecUpdate, checkUpdates, detectInstall, execUpdate, updateHint, updateLines, type Install, type UpdateState } from "./update.ts";
-import { readRemotes, writeRemotes } from "./remotes.ts";
+import { addRemote, readRemotes, type Remote } from "./remotes.ts";
 import { App, clientThemes } from "#tui/app.ts";
 import { loadRenderers } from "#tui/presentation.ts";
 import { tuiViewStore } from "#tui/view-store.ts";
+import { copyToClipboard } from "#tui/pi-internals.ts";
 
 const DEFAULT_HUB = "default";
 /** How a client names its own machine's hub (the strip reads `inprocess` while this window holds it). */
@@ -77,42 +82,91 @@ function piExtensions(): string[] {
 
 /** The user's hub as a service: its socket, and its network endpoint when it listens. */
 async function runHub(args: string[]): Promise<void> {
-  const { values } = parseArgs({ args, options: { listen: { type: "string" }, config: { type: "string" } } });
+  const { values } = parseArgs({ args, options: { config: { type: "string" } } });
   const home = harnessHome();
   ensureHome(home);
   const name = DEFAULT_HUB;
   const config = readHubConfig(home, name, values.config);
-  const node = new Hub({
+  const hub = new Hub({
     name,
     dataDir: home,
     harnessVersion: harnessVersion(),
     ...(config.server === true ? { agentEnv: { HARNESS_SERVER: "1" } } : {}),
+    // the configuration's network access wins over the user's setting (the /hub dialog shows it read-only)
+    ...(config.network !== undefined ? { network: networkOf({ enabled: true, ...config.network }) } : {}),
     // hub_restart: a service exits with a failure code; its supervisor (systemd, s6) starts it again
     restart: () => stop(EXIT_RESTART),
   });
   const path = socketPath(home, name);
-  const server = await listenUnix(node, path);
+  const server = await listenUnix(hub, path);
   process.stderr.write(`harness hub: ${path}\n`);
-
-  const listen = values.listen ?? config.hub?.listen;
-  // with network access the hub also serves the app's web build (devices open it in a browser)
-  const appWeb = appWebDir();
-  const web = listen !== undefined ? await listenWs(node, new HubAuth(home), { ...parseListen(listen), ...(appWeb !== undefined ? { http: serveStatic(appWeb) } : {}) }) : undefined;
-  if (web !== undefined) {
-    process.stderr.write(`harness hub: http://${listen}\n`);
-  } else {
-    // the unix socket only
-  }
-  node.telemetry.log({ event: "hub_start", network: web !== undefined });
+  await hub.network.apply();
+  const network = hub.network.status();
+  process.stderr.write(network.running ? `harness hub: network on ${hub.network.settings().listen}\n` : network.problem !== undefined ? `harness hub: network off: ${network.problem}\n` : "");
+  hub.telemetry.log({ event: "hub_start", network: network.running });
 
   const stop = async (code: number): Promise<void> => {
-    web?.close();
     server.close();
-    await node.close();
+    await hub.close();
     process.exit(code);
   };
   process.on("SIGTERM", () => void stop(0));
   process.on("SIGINT", () => void stop(0));
+
+  // asleep when nobody is there and nothing works (a Fly machine stops with it; the next request wakes it)
+  const idleExit = config.idleExit;
+  if (idleExit !== undefined) {
+    let idleSince = Date.now();
+    setInterval(() => {
+      if (!hub.asleepAllowed()) {
+        idleSince = Date.now();
+      } else if (Date.now() - idleSince >= idleExit * 60_000) {
+        hub.telemetry.log({ event: "idle_exit", minutes: idleExit });
+        void stop(EXIT_IDLE);
+      } else {
+        // idle, not long enough yet
+      }
+    }, IDLE_CHECK_MS).unref();
+  } else {
+    // always on
+  }
+}
+
+/** How often an idle service checks whether to go to sleep. */
+const IDLE_CHECK_MS = 15_000;
+
+/** A service's exit when idle: a success, so its supervisor lets it be (s6's finish stops the machine). */
+const EXIT_IDLE = 0;
+
+/**
+ * `harness hub attach`: this process's stdin and stdout joined to this machine's running hub (ssh
+ * runs it for a client elsewhere). It never starts a hub; with none running it says so and fails.
+ */
+async function attachHub(home: string): Promise<void> {
+  const path = socketPath(home, DEFAULT_HUB);
+  if (!(await socketAlive(path))) {
+    process.stderr.write(`harness: no hub runs for ${process.env.USER ?? "this user"}@${hostname()} (start the service, or open harness there)\n`);
+    process.exit(EXIT_NO_HUB);
+  } else {
+    const socket = createConnection(path);
+    process.stdin.pipe(socket);
+    socket.pipe(process.stdout);
+    socket.on("close", () => process.exit(0));
+    socket.on("error", (error) => {
+      process.stderr.write(`harness: the hub's socket: ${error.message}\n`);
+      process.exit(EXIT_NO_HUB);
+    });
+    process.stdin.on("end", () => socket.end());
+  }
+}
+
+/** `harness hub attach` without a running hub. */
+const EXIT_NO_HUB = 69;
+
+/** Another machine's hub: over the network with this device's token, or over SSH (never asking: BatchMode). */
+async function openRemote(remote: Remote): Promise<HubConnection> {
+  const transport = "ssh" in remote ? await sshTransport(remote) : await wsTransport(remote.url);
+  return await HubConnection.open(transport, "tui", "ssh" in remote ? undefined : remote.token, TUI_CAPABILITIES);
 }
 
 /** A service's exit for hub_restart: a failure, so `Restart=on-failure` starts it again. */
@@ -222,7 +276,7 @@ async function runTui(args: string[]): Promise<void> {
   const localHub = await client.addEndpoint(open, { home: true, name: LOCAL_HUB });
   for (const remote of readRemotes(home)) {
     await client
-      .addEndpoint(async () => HubConnection.open(await wsTransport(remote.url), "tui", remote.token, TUI_CAPABILITIES), { home: false, name: remote.name })
+      .addEndpoint(() => openRemote(remote), { home: false, name: remote.name })
       .catch((error: unknown) => client.offline.set(remote.name, error instanceof Error ? error.message : String(error)));
   }
   // the bundle's update: checked in the background, upgraded from the panel
@@ -242,12 +296,15 @@ async function runTui(args: string[]): Promise<void> {
   workbench = new Workbench(client, {
     cwd,
     holdsHome: () => local.hub !== undefined,
+    // OSC 52: the terminal puts it on this machine's clipboard (over SSH too)
+    copyText: (text) => void copyToClipboard(text),
     // + add in the strip: a hub's address and its one-time code; the token goes to remotes.json
     addHub: async (url, code) => {
       const name = new URL(url).hostname;
-      const { token } = await redeemPairing(url, code);
-      writeRemotes(home, [...readRemotes(home).filter((remote) => remote.name !== name), { name, url, token }]);
-      await client.addEndpoint(async () => HubConnection.open(await wsTransport(url), "tui", token, TUI_CAPABILITIES), { home: false, name });
+      const { token } = await redeemPairing(url, code, hostname());
+      const remote: Remote = { name, url, token };
+      addRemote(home, remote);
+      await client.addEndpoint(() => openRemote(remote), { home: false, name });
     },
     themes: () => clientThemes(home),
     viewStore: tuiViewStore(home),
@@ -328,11 +385,17 @@ async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
   switch (command) {
     case "hub":
-      if (rest[0] === "device") {
+      if (rest[0] === "device" || rest[0] === "network") {
         await hubAdmin(harnessHome(), rest);
+      } else if (rest[0] === "attach") {
+        await attachHub(harnessHome());
       } else {
         await runHub(rest);
       }
+      break;
+    case "connect":
+      ensureHome(harnessHome());
+      await connect(harnessHome(), rest);
       break;
     case "remote":
       ensureHome(harnessHome());
@@ -365,9 +428,12 @@ async function main(): Promise<void> {
           "harness [dir] [-c] [--session <id>] [-m <model>]   the TUI: without dir the window as it was (no tabs:",
           "                                            choose a folder); with dir a new session in it (. is here);",
           "                                            -c the latest of dir; model: provider/family[:thinking] or an id",
-          "harness hub [--listen h:p]                  the user's hub as a service (devices over the network with --listen)",
-          "harness hub device add|revoke|list …        devices paired with the hub",
-          "harness remote add|remove|list              other machines' hubs this client connects to",
+          "harness hub [--config F]                    the user's hub as a service (without a window)",
+          "harness hub attach                          stdio to this machine's running hub (what ssh runs)",
+          "harness hub device add|list|rename|revoke …  devices paired with the hub",
+          "harness hub network [on|off] [--listen h:p] [--proxy] [--url U]   its network access (behind a TLS proxy)",
+          "harness connect <ssh://user@host | link>    another machine's hub, over SSH or by a pairing link",
+          "harness remote list|remove <name>           other machines' hubs this client connects to",
           "harness web-app                             the app in a window, on this user's hub",
           "harness auth|config|mcp|install|remove|list|update …   pi's commands on ~/.harness",
           "harness claude-bridge mcp|hook              run by Claude Code for harness (subagents)",

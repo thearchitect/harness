@@ -8,6 +8,7 @@ import type { BridgedComponent } from "#protocol/hap.ts";
 import { MODE_COLOR_HEX } from "#protocol/modes.ts";
 import { fontOf, useTheme } from "../theme/theme.tsx";
 import { InteractionBlock } from "./Interactions.tsx";
+import { HubDialogBlock } from "./HubDialog.tsx";
 import type { DeviceActions } from "./Shell.tsx";
 import { Button, Frame, ListRow, T } from "./primitives.tsx";
 
@@ -219,6 +220,8 @@ export function EditorZoneView(props: {
             );
           case "component":
             return props.component(zone.component);
+          case "hub":
+            return <HubDialogBlock dialog={zone.dialog} />;
           default:
             throw new Error(`unknown editor zone: ${JSON.stringify(zone satisfies never)}`);
         }

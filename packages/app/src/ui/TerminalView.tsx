@@ -5,7 +5,7 @@
 // workbench's own (tabs, the panel, Ctrl+I); pasted text arrives bracketed when the program asks for
 // it. On a phone a strip of keys (↑ ↓ ⏎ Esc Tab Ctrl+C) and a field for typing stand under it.
 
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useLayoutEffect, useReducer, useState } from "react";
 import { Platform, Text, TextInput, View, type LayoutChangeEvent } from "react-native";
 import { parseAnsiLine } from "#client/ansi.ts";
 import type { TerminalModel } from "#client/model/terminal-model.ts";
@@ -32,8 +32,8 @@ export function TerminalView({ terminal, client, onHide }: { terminal: TerminalM
   const [, redraw] = useReducer((count: number) => count + 1, 0);
   const [size, setSize] = useState<{ cols: number; rows: number } | undefined>(undefined);
   useEffect(() => client.onChange(redraw), [client]);
-  // the keys are the shell's; Enter after it exited starts another
-  useEffect(
+  // the keys are the shell's from the moment it shows (before the paint: no key slips past it); Enter after it exited starts another
+  useLayoutEffect(
     () =>
       listenComponentKeys(
         (bytes) => (terminal.state === "exited" && bytes === "\r" ? void terminal.open(terminal.cols, terminal.rows) : terminal.input(bytes)),

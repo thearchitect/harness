@@ -157,6 +157,53 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "/hub: the network on a free port, a device added: its QR code and link whole without padding, copied; a pairing shows it used",
+      async run({ stand, clients: { tui } }) {
+        await tui.type("/hub");
+        await tui.submit();
+        await tui.waitForText((screen) => screen.includes(`hub ${tui.client.home ?? ""}`) && screen.includes("network off") && screen.includes("+ add device"));
+        // the listen field (second row): typed, Enter applies; then the network on (first row)
+        await tui.press("\x1b[B");
+        for (const _ of "127.0.0.1:8790") {
+          await tui.press("\x7f");
+        }
+        await tui.type("127.0.0.1:0");
+        await tui.press("\r");
+        await tui.press("\x1b[A");
+        await tui.press("\r");
+        await tui.waitForText((screen) => screen.includes("network on"));
+        const port = stand.hub.network.address()?.port;
+        assert.ok(port !== undefined);
+        // the address for links (fourth row)
+        await tui.press("\x1b[B");
+        await tui.press("\x1b[B");
+        await tui.press("\x1b[B");
+        await tui.type(`http://127.0.0.1:${port}`);
+        await tui.press("\r");
+        // + add device, Enter on the empty name: the device names itself
+        await tui.press("\x1b[B");
+        await tui.press("\r");
+        await tui.waitForText((screen) => screen.includes("add device") && screen.includes("name (empty"));
+        await tui.press("\r");
+        const shown = await tui.waitForText((screen) => screen.includes("valid until") && screen.includes("▄"));
+        // the link starts the main area's line (right after the strip's edge): no padding
+        const link = new RegExp(`(?:^|│)(http://127\\.0\\.0\\.1:${port}/#pair=[0-9A-Z-]+)`, "m").exec(shown)?.[1];
+        assert.ok(link !== undefined, `the link starts its line, no padding:\n${shown}`);
+        await tui.press("\r"); // copy link
+        assert.deepEqual(tui.copied.at(-1), link);
+        const code = new URL(link).hash.replace("#pair=", "");
+        const { redeemPairing } = await import("#cli/admin.ts");
+        await redeemPairing(`http://127.0.0.1:${port}`, code, "Pixel 9");
+        await tui.waitForText((screen) => screen.includes("used: Pixel 9"));
+        await tui.press("\x1b[D"); // ← back to the name
+        await tui.press("\x1b[D"); // ← the main screen
+        await tui.waitForText((screen) => screen.includes("devices") && screen.includes("Pixel 9"));
+        await tui.press("\x1b");
+        assert.equal(tui.screen().zones.editor.kind, "editor");
+        await stand.hub.network.close();
+      },
+    },
+    {
       name: "the panel lists the subagent profiles and the dependencies in the editor's place",
       async run({ clients: { tui } }) {
         await tui.workbench.choosePanel("subagents");

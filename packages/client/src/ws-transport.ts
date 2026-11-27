@@ -4,10 +4,10 @@
 import { decodeRecord, encodeRecord } from "#protocol/framing.ts";
 import type { ClientFrame, HubFrame, Transport } from "#protocol/hub.ts";
 
-/** `url`: the hub's base, ws(s)://host[:port]; the client endpoint is its /client. */
+/** `url`: the hub's base, ws(s)://host[:port]; the protocol is its /ws (a paired browser's cookie goes along by itself). */
 export function wsTransport(url: string): Promise<Transport> {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(`${url.replace(/\/$/, "")}/client`);
+    const socket = new WebSocket(`${url.replace(/\/$/, "")}/ws`);
     const frameListeners = new Set<(frame: HubFrame) => void>();
     const closeListeners = new Set<(reason: string) => void>();
     let opened = false;

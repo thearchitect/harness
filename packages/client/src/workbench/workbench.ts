@@ -12,7 +12,8 @@ import type { AgentInfo, AgentSummary } from "#protocol/hub.ts";
 import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#protocol/state.ts";
 import type { ActionId } from "../keymap.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
-import { agentKey, type ClientModel } from "../model/client-model.ts";
+import { agentKey, type ClientModel, type HubApi } from "../model/client-model.ts";
+import { HubDialog } from "./hub-dialog.ts";
 import type { TerminalModel } from "../model/terminal-model.ts";
 import { Prefetch, PREFETCH_RECHECK_MS, prefetchMode, type PrefetchTarget } from "../model/prefetch.ts";
 import { NewSession } from "./new-session.ts";
@@ -120,6 +121,8 @@ export type EditorZone =
   /** `from`: the subagent that asks (an interaction of a subagent of this session). */
   | { kind: "interaction"; request: InteractionRequest; from?: string }
   | { kind: "picker"; picker: Picker }
+  /** The /hub dialog: a hub's network access and devices, adding a device. */
+  | { kind: "hub"; dialog: HubDialog }
   /** The keys of what the main zone shows in place of the editor (choosing a folder). */
   | { kind: "hint"; hints: KeyHint[] }
   /** An extension's component drawn in the agent (terminal clients only; others say they cannot show it). */
@@ -191,7 +194,7 @@ export type Screen = {
   terminal: TerminalModel | undefined;
 };
 
-export type PanelId = "madness" | "simple" | "name" | "implementer" | "subagents" | "dependencies" | "logs" | "restart" | "update";
+export type PanelId = "madness" | "simple" | "name" | "implementer" | "subagents" | "dependencies" | "hub" | "logs" | "restart" | "update";
 
 /**
  * A row of the harness panel (Ctrl+\): a toggle (on/off, its tone when on) keeps the panel open; an
@@ -308,14 +311,15 @@ export const CLIENT_COMMANDS: { name: string; description: string }[] = [
   { name: "new", description: "New session (Ctrl+T)" },
   { name: "open", description: "Open a session (Ctrl+O)" },
   { name: "model", description: "Choose the model (Ctrl+L)" },
-  { name: "login", description: "Log in to a provider on this session's node" },
-  { name: "logout", description: "Remove a provider's login on this session's node" },
+  { name: "login", description: "Log in to a provider on this session's hub" },
+  { name: "logout", description: "Remove a provider's login on this session's hub" },
+  { name: "hub", description: "The hub's network access and devices; add a device (a link and its QR code)" },
   { name: "tree", description: "Move to another point of the session's tree" },
   { name: "settings", description: "Theme, compaction, message queues" },
   { name: "bash", description: "Run a command yourself; the model sees it and its output" },
   { name: "bash-quiet", description: "Run a command yourself, kept out of the model's context" },
   { name: "export", description: "The session as an HTML page (optionally: where to write it)" },
-  { name: "quit", description: "Quit (a node this window holds stops with it)" },
+  { name: "quit", description: "Quit (a hub this window holds stops with it)" },
 ];
 
 /** A node of pi's session tree (get_tree), as far as the tree list reads it. */
@@ -376,6 +380,8 @@ export type WorkbenchOptions = {
   holdsHome?: () => boolean;
   /** `+ add` of the hubs block: pairs this client with a hub (its address, a one-time code). */
   addHub?: (url: string, code: string) => Promise<void>;
+  /** Puts text on the device's clipboard (a pairing link). */
+  copyText?: (text: string) => void;
   /** Where this window keeps its state between starts (view-state.ts); none: nothing is kept. */
   viewStore?: ViewStateStore;
   /** Loads sessions ahead in the background (prefetch.ts); on by default, `ui.prefetch` tunes it. */
@@ -402,7 +408,10 @@ export class Workbench {
   private newSessionChoice: NewSession | undefined;
   private readonly holdsHome: () => boolean;
   private readonly addHub: WorkbenchOptions["addHub"];
+  private readonly copyText: (text: string) => void;
   picker: Picker | undefined;
+  /** The /hub dialog, in the editor's place. */
+  hubDialog: HubDialog | undefined;
   overlays: OverlayKind[] = [];
   private searchState: { query: string; index: number } | undefined;
   /** The client's own directory (the TUI's); undefined: new sessions ask for one (the app). */
@@ -436,6 +445,7 @@ export class Workbench {
     this.offerFile = options.offerFile;
     this.holdsHome = options.holdsHome ?? (() => false);
     this.addHub = options.addHub;
+    this.copyText = options.copyText ?? (() => this.notify("warning", "this client cannot copy"));
     this.viewStore = options.viewStore;
     if (options.prefetch !== false) {
       const prefetch = new Prefetch(client, () => this.prefetchTargets(), () => this.clock.now());
@@ -714,8 +724,17 @@ export class Workbench {
     const request = asking?.request;
     const inline = agent?.components.filter((component) => !component.overlay).at(-1);
     const componentOverlay = agent?.components.filter((component) => component.overlay).at(-1);
+    const dialog = this.hubDialog;
+    const latest = dialog !== undefined ? this.client.hubStatus.get(dialog.hub) : undefined;
+    if (dialog !== undefined && latest !== undefined && latest !== dialog.status) {
+      dialog.update(latest);
+    } else {
+      // no dialog, or it shows the latest already
+    }
     const editorZone: EditorZone =
-      this.picker !== undefined
+      dialog !== undefined
+        ? { kind: "hub", dialog }
+        : this.picker !== undefined
         ? { kind: "picker", picker: this.picker }
         : choice !== undefined
           ? { kind: "hint", hints: NEW_SESSION_HINTS }
@@ -757,7 +776,7 @@ export class Workbench {
             ? "newSession"
             : componentOverlay !== undefined || editorZone.kind === "component"
             ? "component"
-            : editorZone.kind === "interaction"
+            : editorZone.kind === "interaction" || editorZone.kind === "hub"
             ? "dialog"
             : this.searchState !== undefined
               ? "search"
@@ -831,6 +850,9 @@ export class Workbench {
         } else {
           await this.logout(rest);
         }
+        return true;
+      case "/hub":
+        this.openHubDialog(rest !== "" ? rest : undefined);
         return true;
       case "/tree":
         await this.treePicker();
@@ -1257,6 +1279,9 @@ export class Workbench {
     } else if (this.picker !== undefined) {
       this.closePicker();
       return true;
+    } else if (this.hubDialog !== undefined) {
+      this.hubDialog.close();
+      return true;
     } else {
       return false;
     }
@@ -1302,6 +1327,7 @@ export class Workbench {
               { kind: "action" as const, id: "subagents" as const, label: "subagents", hint: "profiles" },
             ]
           : []),
+        { kind: "action", id: "hub", label: "hub…", hint: "network, devices" },
         { kind: "action", id: "logs", label: "logs", hint: "hub events" },
         { kind: "action", id: "restart", label: "restart hub", hint: this.panelHub() ?? "" },
       ],
@@ -1384,6 +1410,32 @@ export class Workbench {
     }
   }
 
+  /** The /hub dialog of a hub (default: the active session's, else the home one), in the editor's place. */
+  openHubDialog(name: string | undefined): void {
+    const hub = name ?? this.panelHub();
+    if (hub === undefined || !this.client.connections.has(hub)) {
+      this.notify("warning", hub === undefined ? "no hub" : `hub ${hub} is not connected`);
+    } else {
+      const api = (): HubApi => this.client.connection(hub);
+      this.hubDialog = new HubDialog(hub, {
+        status: () => api().request("hub_status", {}),
+        network: (change) => api().request("hub_network_set", change),
+        pair: (device) => api().request("device_pair", device !== undefined ? { name: device } : {}),
+        rename: (device, to) => api().request("device_rename", { name: device, to }),
+        revoke: (device) => api().request("device_revoke", { name: device }),
+        copy: (text) => this.copyText(text),
+        now: () => this.clock.now(),
+        changed: () => this.client.changed(),
+        notify: (message) => this.notify("info", message),
+        close: () => {
+          this.hubDialog = undefined;
+          this.client.changed();
+        },
+      });
+      this.client.changed();
+    }
+  }
+
   /** A read-only list in the editor's place (a report, the profiles). */
   private showList(id: string, title: string, lines: { label: string; description?: string }[]): void {
     this.openPicker({ id, title, items: lines.map((line, index) => ({ value: String(index), ...line })), choose: () => undefined });
@@ -1398,6 +1450,8 @@ export class Workbench {
       } else {
         this.notify("info", `update: ${this.update?.hint() ?? "not available here"}`);
       }
+    } else if (value === "hub") {
+      this.openHubDialog(undefined);
     } else if (value === "restart") {
       const hub = this.panelHub();
       if (hub === undefined) {

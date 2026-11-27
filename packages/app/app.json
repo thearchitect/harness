@@ -13,8 +13,9 @@
     "web": { "bundler": "metro", "output": "single", "name": "harness" },
     "plugins": [
       "./plugins/local-cleartext.js",
-      ["expo-audio", { "microphonePermission": "Voice messages to your sessions: harness records what you say and your node turns it into text." }],
-      ["expo-image-picker", { "photosPermission": "Photos you attach to a message go to the session's machine.", "cameraPermission": false }]
+      ["expo-audio", { "microphonePermission": "Voice messages to your sessions: harness records what you say and your hub turns it into text." }],
+      ["expo-image-picker", { "photosPermission": "Photos you attach to a message go to the session's machine.", "cameraPermission": false }],
+      ["expo-camera", { "cameraPermission": "The camera reads the QR code that pairs this device with your hub.", "microphonePermission": false, "recordAudioAndroid": false }]
     ]
   }
 }

@@ -100,6 +100,42 @@ export type HubOps = {
   terminal_resize: { args: { session: string; cols: number; rows: number }; result: Record<string, never> };
   /** Hides it from this client: the shell runs on. */
   terminal_detach: { args: { session: string }; result: Record<string, never> };
+  /** The hub's network access and paired devices (the /hub dialog). */
+  hub_status: { args: Record<string, never>; result: HubStatus };
+  /** Changes the network access (kept in the user's settings, `hub.network`); refused when the service's configuration sets it. */
+  hub_network_set: { args: Partial<NetworkSettings>; result: HubStatus };
+  /**
+   * A one-time code for a new device (`name`: its name, else the one it gives); `link` when the hub
+   * knows its address, and its QR code: `size`×`size` modules, row by row, "1" dark.
+   */
+  device_pair: { args: { name?: string }; result: { id: string; code: string; expires: number; link?: string; qr?: { size: number; modules: string } } };
+  device_rename: { args: { name: string; to: string }; result: HubStatus };
+  /** Revokes a device: its connections close at once. */
+  device_revoke: { args: { name: string }; result: HubStatus };
+};
+
+/**
+ * The hub's network access: `listen` host:port of its HTTP endpoint (the app, /ws, /pair; TLS by a
+ * proxy in front); an address off loopback needs `proxy` (only the proxy reaches the port);
+ * `url`: the address devices use (pairing links).
+ */
+export type NetworkSettings = { enabled: boolean; listen: string; proxy: boolean; url?: string };
+
+export type DeviceInfo = { name: string; created: number; lastSeen?: number; address?: string };
+
+/** A pairing code made in the last PAIRING_TTL_MS: open, or `used` by the device it paired. */
+export type PairingInfo = { id: string; expires: number; name?: string; used?: string };
+
+export type HubStatus = {
+  network: NetworkSettings & {
+    /** Where the settings come from: the user's (the /hub dialog) or the service's configuration (read-only). */
+    source: "settings" | "service";
+    running: boolean;
+    /** Why it does not run while enabled. */
+    problem?: string;
+  };
+  devices: (DeviceInfo & { connected: boolean })[];
+  pairings: PairingInfo[];
 };
 
 /** A directory in dirs_list: `hasChildren` when it holds directories itself (it opens with →). */
@@ -136,6 +172,11 @@ export const HUB_OPS: readonly HubOp[] = [
   "terminal_input",
   "terminal_resize",
   "terminal_detach",
+  "hub_status",
+  "hub_network_set",
+  "device_pair",
+  "device_rename",
+  "device_revoke",
 ];
 
 export type HubEvent =
@@ -146,7 +187,9 @@ export type HubEvent =
   /** Output of a session's terminal this client shows. */
   | { ev: "terminal_output"; session: string; data: string }
   /** Its shell exited; terminal_open starts another. */
-  | { ev: "terminal_exit"; session: string; code: number };
+  | { ev: "terminal_exit"; session: string; code: number }
+  /** The network access or the devices changed (one paired, connected, was revoked). */
+  | { ev: "hub"; status: HubStatus };
 
 /** What a client can draw besides the protocol's typed data: "component-bridge" — ANSI lines of an agent's pi-tui components (terminal clients). */
 export type ClientCapability = "component-bridge";
@@ -156,7 +199,7 @@ export type ClientFrame =
   | { k: "req"; id: string; op: HubOp; args: unknown }
   | { k: "hap"; agent: string; rec: HapRecord };
 
-/** What carries a client's frames to a node: a unix socket, a WebSocket, an in-process node. */
+/** What carries a client's frames to a hub: a unix socket, SSH, a WebSocket, an in-process hub. */
 export interface Transport {
   send(frame: ClientFrame): void;
   onFrame(listener: (frame: HubFrame) => void): void;

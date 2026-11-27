@@ -31,11 +31,12 @@ Inside `nix develop` (flyctl, skopeo, cage):
    cage dump -o ci.key ops:ci-cage-identity && gh secret set CAGE_SSH_IDENTITY < ci.key; rm ci.key
    ```
 5. **Deploy.** `cage run @root - ./deploy.sh` (or push).
-6. **Devices.** Pair each device on the machine (the code is printed once and lasts ten minutes):
+6. **Devices.** Pair the first device on the machine (the code lasts ten minutes, once):
    ```bash
    flyctl ssh console -a <app> -C "su alice -c 'harness hub device add --name laptop'"
    ```
-   On the device: `harness remote add fly wss://<app>.fly.dev` and type the code. `harness` then
-   shows the hub (`fly`) next to the local one.
+   It prints a link and its QR code: open it in a browser (it is the app, paired at once), scan it
+   with the app, or on a terminal `harness connect <link>`. Later devices: `/hub`, add device, in any
+   client already paired.
 
 Operations (build, test, deploy, secrets, devices): `AGENTS.md`.

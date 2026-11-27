@@ -54,7 +54,7 @@ export class TerminalModel {
   exitCode: number | undefined;
   /** Lines scrolled up from the bottom (this client's own). */
   private scrolled = 0;
-  /** Input typed while the shell starts: sent, in order, once it runs. */
+  /** Input typed before the shell runs (shown, not opened yet, or starting): sent, in order, once it runs. */
   private held: string[] = [];
 
   constructor(node: string, session: string, cwd: string, api: () => HubApi, changed: () => void) {
@@ -83,6 +83,8 @@ export class TerminalModel {
       this.exitCode = undefined;
       this.term.resize(Math.max(2, cols), Math.max(1, rows));
       const { screen } = await this.api().request("terminal_open", { session: this.session, cwd: this.cwd, cols: this.term.cols, rows: this.term.rows });
+      // open from here on: what was typed meanwhile goes first, in order, then typing goes straight
+      this.state = this.state === "opening" ? "open" : this.state;
       const held = this.held;
       this.held = [];
       for (const data of held) {
@@ -90,10 +92,7 @@ export class TerminalModel {
       }
       this.term.reset();
       this.scrolled = 0;
-      this.term.write(screen, () => {
-        this.state = this.state === "opening" ? "open" : this.state;
-        this.changed();
-      });
+      this.term.write(screen, () => this.changed());
     }
   }
 
@@ -101,6 +100,7 @@ export class TerminalModel {
   detach(): void {
     if (this.state === "open" || this.state === "opening") {
       this.state = "closed";
+      this.held = [];
       void this.api()
         .request("terminal_detach", { session: this.session })
         .catch(() => undefined);
@@ -121,7 +121,7 @@ export class TerminalModel {
 
   input(data: string): void {
     this.scrolled = 0; // typing shows the bottom
-    if (this.state === "opening") {
+    if (this.state === "closed" || this.state === "opening") {
       this.held.push(data);
     } else {
       this.send(data);

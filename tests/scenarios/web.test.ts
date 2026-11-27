@@ -85,6 +85,27 @@ export const scenario = defineScenario({
       },
     },
     {
+      name: "/hub: adding a device shows its QR code and its link whole; Esc closes the dialog",
+      async run({ stand, clients: { web } }) {
+        const local = await stand.connect();
+        await local.request("hub_network_set", { enabled: true, listen: "127.0.0.1:0" });
+        const port = stand.hub.network.address()?.port;
+        await local.request("hub_network_set", { url: `http://127.0.0.1:${port ?? 0}` });
+        const field = web.page.getByRole("textbox", { name: "Message" });
+        await field.fill("/hub");
+        await web.submit();
+        await web.page.getByText("network on").waitFor();
+        await web.page.getByRole("button", { name: "+ add device" }).click();
+        await web.page.getByRole("textbox", { name: "name (empty: the device's own)" }).fill("tablet");
+        await web.page.getByRole("textbox", { name: "name (empty: the device's own)" }).press("Enter");
+        await web.page.getByLabel("pairing QR code").waitFor();
+        await web.page.getByText(new RegExp(`^http://127\\.0\\.0\\.1:${port ?? 0}/#pair=`)).waitFor();
+        await web.page.keyboard.press("Escape");
+        await web.waitForScreen((screen) => screen.editor === "editor");
+        await local.request("hub_network_set", { enabled: false });
+      },
+    },
+    {
       name: "the app's settings: a zone's font, the strips' widths; kept in the user's settings",
       async run({ clients: { web, tui } }) {
         const field = web.page.getByRole("textbox", { name: "Message" });

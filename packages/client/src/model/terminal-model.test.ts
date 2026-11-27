@@ -66,8 +66,8 @@ test("what is typed while the shell starts reaches it, in order, once it runs", 
     },
   } as unknown as HubApi;
   const model = new TerminalModel("n", "s", "/w", () => api, () => undefined);
+  model.input("ec"); // shown, not measured yet
   const opening = model.open(20, 4);
-  model.input("ec");
   model.input("ho");
   assert.equal(requests.length, 0, "nothing goes before the shell runs");
   started();

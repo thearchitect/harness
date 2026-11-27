@@ -1,5 +1,6 @@
-# One machine with a volume, always on: the user's hub keeps its agents and background tasks
-# running, and devices connect to it at any time.
+# One machine with a volume. The user's hub keeps its agents and background tasks running while
+# they work; ten minutes without clients and without working agents it exits and the machine
+# stops; the next request (a device connecting, the app opened) starts it again in seconds.
 app = "my-harness"
 primary_region = "ams"
 kill_signal = "SIGTERM"
@@ -24,11 +25,13 @@ kill_timeout = 30
   internal_port = 8080
   force_https = true
   auto_start_machines = true
+  # the hub decides when to stop (Fly's proxy sees no running agents)
   auto_stop_machines = "off"
-  min_machines_running = 1
+  min_machines_running = 0
 
+# a stop when idle is a success; only failures restart the machine
 [[restart]]
-  policy = "always"
+  policy = "on-failure"
 
 # Builds (go, rust) and the agents (≈300 MB each).
 [[vm]]

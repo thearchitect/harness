@@ -84,7 +84,8 @@ export class TerminalView implements Component, Focusable {
       void model.open(model.cols, model.rows).catch(this.failed);
     } else if (matchesKey(data, "shift+pageUp") || matchesKey(data, "shift+pageDown")) {
       model.scroll(matchesKey(data, "shift+pageUp") ? model.rows - 1 : -(model.rows - 1));
-    } else if (model.state === "open") {
+    } else if (model.state !== "exited") {
+      // while the shell starts its keys wait in the model, in order
       const bytes = shellBytes(data, model.applicationCursor);
       if (bytes !== "") {
         model.input(bytes);
@@ -92,7 +93,7 @@ export class TerminalView implements Component, Focusable {
         // nothing the shell reads
       }
     } else {
-      // opening: keys wait for the shell
+      // exited: only Enter (above) starts another shell
     }
   }
 
