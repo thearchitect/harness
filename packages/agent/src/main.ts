@@ -9,6 +9,7 @@ import { Socket } from "node:net";
 import { parseArgs } from "node:util";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
 import type { HapEvent } from "#protocol/hap.ts";
+import { layoutOf } from "#protocol/layout.ts";
 import type { HarnessState, SubagentLaunch } from "#protocol/state.ts";
 import { HubChildren } from "./children.ts";
 import { createHarnessExtension } from "#extension/index.ts";
@@ -29,8 +30,9 @@ async function main(): Promise<void> {
   });
   const cwd = values.cwd ?? process.cwd();
   const home = dataDir();
-  // pi reads its agent directory (settings, auth, sessions) from here, extensions included.
-  process.env.PI_CODING_AGENT_DIR = home;
+  const layout = layoutOf(home);
+  // pi reads its agent directory (settings, auth, models, MCP servers) from here, extensions included.
+  process.env.PI_CODING_AGENT_DIR = layout.agent;
   process.env.PI_SKIP_VERSION_CHECK = "1";
   process.env.PI_CACHE_RETENTION ??= "long";
   process.chdir(cwd);
@@ -66,22 +68,23 @@ async function main(): Promise<void> {
     subagent: values.subagent !== undefined ? (JSON.parse(values.subagent) as SubagentLaunch) : undefined,
   });
 
-  const layout = bundleLayout();
+  const bundle = bundleLayout();
   const runtime = await createHarnessRuntime({
     cwd,
-    agentDir: home,
+    agentDir: layout.agent,
+    sessionsDir: layout.sessions,
     sessionFile: values["session-file"],
     parentSession: values["parent-session"],
     extensionFactories: [factory],
-    extensionPaths: layout.extensionPaths,
-    skillPaths: layout.skillPaths,
+    extensionPaths: bundle.extensionPaths,
+    skillPaths: bundle.skillPaths,
     openUrl: (url) => emit({ type: "harness_ui", method: "open_url", url }),
   });
   for (const diagnostic of runtime.takeUnreportedDiagnostics()) {
     process.stderr.write(`[harness-agent] ${diagnostic.type}: ${diagnostic.message}\n`);
   }
 
-  server = new HapServer({ runtime, controller, hub, harnessVersion: layout.version, output: write, onNodeFrame: (frame) => children.receive(frame) });
+  server = new HapServer({ runtime, controller, hub, harnessVersion: bundle.version, output: write, onNodeFrame: (frame) => children.receive(frame) });
   await server.start();
   for (const event of pending.splice(0)) {
     server.emit(event);

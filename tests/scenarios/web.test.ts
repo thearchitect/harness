@@ -71,7 +71,7 @@ export const scenario = defineScenario({
         const field = web.page.getByRole("textbox", { name: "Message" });
         await web.page.waitForFunction(() => (document.querySelector("textarea") as HTMLTextAreaElement | null)?.value.includes("@") === true);
         const path = /@(\S+)/.exec(await field.inputValue())?.[1] ?? "";
-        assert.ok(path.startsWith(join(stand.dataDir, "attachments")), path);
+        assert.ok(path.startsWith(stand.layout.attachments), path);
         assert.equal(readFileSync(path, "utf8"), "dropped text");
         await field.fill("");
         // a pasted image goes the same way
@@ -182,7 +182,7 @@ export const scenario = defineScenario({
         });
         await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
         process.env.HARNESS_TRANSCRIBE_URL = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/audio/transcriptions`;
-        writeFileSync(join(stand.dataDir, "auth.json"), JSON.stringify({ scenario: { type: "api_key", key: "scripted" }, openai: { type: "api_key", key: "sk-voice" } }));
+        writeFileSync(join(stand.layout.agent, "auth.json"), JSON.stringify({ scenario: { type: "api_key", key: "scripted" }, openai: { type: "api_key", key: "sk-voice" } }));
         try {
           await web.page.getByRole("button", { name: "Record a voice message" }).click();
           await web.page.getByRole("button", { name: "Stop recording" }).click();
@@ -361,7 +361,7 @@ export const scenario = defineScenario({
         assert.equal(await web.page.getByLabel("login field").inputValue(), "good");
         await web.page.keyboard.press("Enter");
         await web.page.getByRole("textbox", { name: "Message" }).waitFor();
-        const auth = JSON.parse(readFileSync(join(stand.dataDir, "auth.json"), "utf8")) as Record<string, { access?: string }>;
+        const auth = JSON.parse(readFileSync(join(stand.layout.agent, "auth.json"), "utf8")) as Record<string, { access?: string }>;
         assert.equal(auth["probe-sso"]?.access, "probe-access");
       },
     },

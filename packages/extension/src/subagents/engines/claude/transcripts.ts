@@ -1,5 +1,5 @@
 // The transcripts of the session's `claude` subagents: every line Claude writes and every message
-// harness sends it, as they come, into ~/.harness/claude/<session>.jsonl (Claude's documented
+// harness sends it, as they come, into ~/.harness/hub/claude/<session>.jsonl (Claude's documented
 // stream-json, not its internal files) and into the session's live ClaudeTranscript, whose changed
 // entries go to the clients. A transcript not live (a client opened it after a restart) is read
 // back from its log.
@@ -15,8 +15,9 @@ export class ClaudeTranscripts {
   private readonly publish: TranscriptPublisher;
   private readonly live = new Map<string, ClaudeTranscript>();
 
-  constructor(dataDir: string, publish: TranscriptPublisher) {
-    this.dir = join(dataDir, "claude");
+  /** `dir`: where the transcripts are kept (~/.harness/hub/claude). */
+  constructor(dir: string, publish: TranscriptPublisher) {
+    this.dir = dir;
     this.publish = publish;
   }
 

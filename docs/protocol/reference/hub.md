@@ -202,7 +202,7 @@ A theme's colors as hex for clients that draw it themselves, with the names of t
 
 ### `attachments_put`
 
-A file the operator hands to a session (pasted, dropped, shared, picked), kept with its attachments by content (~/.harness/attachments/<session>/<sha256>.<ext>). → { path }
+A file the operator hands to a session (pasted, dropped, shared, picked), kept with its attachments by content (~/.harness/hub/attachments/<session>/<sha256>.<ext>). → { path }
 
 | Field | Type | Required | Description |
 |---|---|---|---|

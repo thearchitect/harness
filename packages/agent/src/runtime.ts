@@ -17,11 +17,14 @@ import {
   type CreateAgentSessionRuntimeFactory,
   type ExtensionFactory,
 } from "@earendil-works/pi-coding-agent";
+import { cwdSessionsDir } from "#protocol/layout.ts";
 
 export type RuntimeOptions = {
   cwd: string;
-  /** The user's data directory (`~/.harness`): pi settings, auth, sessions. */
+  /** pi's agent directory (`~/.harness/agent`): its settings, auth, models, MCP servers, trust. */
   agentDir: string;
+  /** Where sessions are kept (`~/.harness/hub/sessions`), each directory's in its own (as pi names them). */
+  sessionsDir: string;
   /** Open this session file; a new session in `cwd` otherwise. */
   sessionFile?: string;
   /** Parent session of a new session (a subagent's). */
@@ -81,7 +84,8 @@ export async function createHarnessRuntime(options: RuntimeOptions): Promise<Age
 
   let sessionManager: SessionManager;
   {
-    const sessionDir = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false }).getSessionDir();
+    // the user's own sessionDir setting wins; else the hub's sessions, per directory as pi's default
+    const sessionDir = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false }).getSessionDir() ?? cwdSessionsDir(options.sessionsDir, options.cwd);
     if (options.sessionFile !== undefined) {
       sessionManager = SessionManager.open(options.sessionFile, sessionDir);
     } else {

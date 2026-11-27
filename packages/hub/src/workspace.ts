@@ -1,4 +1,4 @@
-// The user's workspace on this hub (~/.harness/workspace.json): the open tabs of its sessions, in
+// The user's workspace on this hub (~/.harness/hub/workspace.json): the open tabs of its sessions, in
 // their order, each with what has been seen of it and the message being written there (its draft,
 // shared by every device: begun on one, finished on another). A session belongs here once it
 // differs from a new one — a message, a draft, a name — and leaves when it is closed, or when it
@@ -6,8 +6,9 @@
 // revision they were made on (a stale one is refused: the client applies its change again).
 
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
 import { HarnessError } from "#protocol/errors.ts";
+import { layoutOf } from "#protocol/layout.ts";
 import type { WorkspaceData, WorkspaceTab } from "#protocol/hub.ts";
 
 export class Workspace {
@@ -15,7 +16,7 @@ export class Workspace {
   private readonly listeners = new Set<(workspace: WorkspaceData) => void>();
 
   constructor(dataDir: string) {
-    this.path = join(dataDir, "workspace.json");
+    this.path = layoutOf(dataDir).workspace;
   }
 
   read(): WorkspaceData {

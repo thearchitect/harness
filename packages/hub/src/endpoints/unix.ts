@@ -1,19 +1,20 @@
-// The hub's local endpoint: a unix socket in ~/.harness/sockets (a directory only the user can
+// The hub's local endpoint: a unix socket, ~/.harness/run/hub.sock (in a directory only the user can
 // enter, which is the whole authorization: whoever reaches the socket is the hub's user).
 
 import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, rmSync } from "node:fs";
 import { createConnection, createServer, type Server, type Socket } from "node:net";
-import { join } from "node:path";
+import { dirname } from "node:path";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
+import { layoutOf } from "#protocol/layout.ts";
 import type { ClientFrame, HubFrame } from "#protocol/hub.ts";
 import type { Connection, Hub } from "../hub.ts";
 
 /** Longest unix socket path the kernel takes (sun_path, with its terminator). */
 const MAX_SOCKET_PATH = process.platform === "darwin" ? 103 : 107;
 
-export function socketPath(dataDir: string, name: string): string {
-  return join(dataDir, "sockets", `${name}.sock`);
+export function socketPath(dataDir: string): string {
+  return layoutOf(dataDir).socket;
 }
 
 function socketConnection(socket: Socket): Connection {
@@ -52,9 +53,9 @@ export async function listenUnix(node: Hub, path: string): Promise<Server> {
   if (Buffer.byteLength(path) > MAX_SOCKET_PATH) {
     throw new Error(`the socket path ${path} is ${Buffer.byteLength(path)} bytes; unix sockets take at most ${MAX_SOCKET_PATH}: set HARNESS_HOME to a shorter directory`);
   } else if (await socketAlive(path)) {
-    throw new Error(`a node already listens on ${path}`);
+    throw new Error(`a hub already listens on ${path}`);
   } else {
-    const dir = join(path, "..");
+    const dir = dirname(path);
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     chmodSync(dir, 0o700);
     rmSync(path, { force: true });

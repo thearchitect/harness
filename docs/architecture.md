@@ -6,9 +6,9 @@
   through pi's SDK. It speaks HAP ([protocol/hap.md](protocol/hap.md)) on file descriptor 3 to
   its hub; its stdout and stderr go to its log (`~/.harness/log/agents/<id>.log`).
 - **Hub** (`harness hub`, `packages/hub`): one OS user's harness on one machine — it starts the
-  user's agents, keeps one agent per session (`~/.harness/locks/`), unloads idle ones, keeps the
+  user's agents, keeps one agent per session (`~/.harness/run/locks/`), unloads idle ones, keeps the
   user's settings and paired devices, and serves clients on a unix socket
-  (`~/.harness/sockets/default.sock`), in-process, or over the network for paired devices. A
+  (`~/.harness/run/hub.sock`), in-process, or over the network for paired devices. A
   user has one hub per machine: a service, or held inside the first window. It runs as whoever
   started it; there is no uid switching.
 - **Clients**: the TUI (`harness`, `packages/tui`), the app, test drivers. A client reaches its

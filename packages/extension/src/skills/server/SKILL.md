@@ -47,5 +47,5 @@ Everything goes into `~`, already on `PATH`, and survives deploys:
 ## Files and the user
 
 - Files the user hands you (pasted, dropped, picked) arrive in
-  `~/.harness/attachments/<session>/`; their paths are in the message as `@path`.
+  `~/.harness/hub/attachments/<session>/`; their paths are in the message as `@path`.
 - Send results with `send_file` (one file; zip several files or a folder first).

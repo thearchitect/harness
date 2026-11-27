@@ -11,6 +11,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypt
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { HarnessError } from "#protocol/errors.ts";
+import { layoutOf } from "#protocol/layout.ts";
 import type { DeviceInfo, PairingInfo } from "#protocol/hub.ts";
 
 export type HubDevice = { name: string; tokenHash: string; created: number; lastSeen?: number; address?: string };
@@ -75,7 +76,7 @@ export class HubAuth {
   private failuresWhileOpen = 0;
 
   constructor(dataDir: string) {
-    this.dir = join(dataDir, "hub");
+    this.dir = layoutOf(dataDir).hub;
   }
 
   private read<K extends keyof HubData>(key: K): HubData[K] {

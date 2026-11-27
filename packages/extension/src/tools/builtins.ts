@@ -12,7 +12,8 @@ import {
 import { interruptedError, type Interrupts } from "../core/interrupts.ts";
 import { sessionSecrets } from "./secrets.ts";
 
-export function registerBuiltins(pi: ExtensionAPI, interrupts: Interrupts, dataDir: string): void {
+/** `agentDir`: pi's agent directory (its settings name the shell and its prefix). */
+export function registerBuiltins(pi: ExtensionAPI, interrupts: Interrupts, agentDir: string): void {
   pi.registerTool({ ...createWriteToolDefinition(process.cwd()), executionMode: "sequential" });
   pi.registerTool({ ...createEditToolDefinition(process.cwd()), executionMode: "sequential" });
 
@@ -23,7 +24,7 @@ export function registerBuiltins(pi: ExtensionAPI, interrupts: Interrupts, dataD
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
       const interrupt = interrupts.register(toolCallId);
       try {
-        const settings = SettingsManager.create(ctx.cwd, dataDir, { projectTrusted: ctx.isProjectTrusted() });
+        const settings = SettingsManager.create(ctx.cwd, agentDir, { projectTrusted: ctx.isProjectTrusted() });
         const secrets = sessionSecrets.env(ctx.sessionManager.getSessionId());
         const sessionBashTool = createBashToolDefinition(ctx.cwd, {
           commandPrefix: settings.getShellCommandPrefix(),

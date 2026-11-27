@@ -8,12 +8,12 @@ one hub per machine. To work on another machine, connect to that machine's hub.
 
 | Command | What it does |
 |---|---|
-| `harness [-c] [--session <id>]` | The TUI. It connects to the user's hub on this machine (`~/.harness/sockets/default.sock`) or holds it inside itself (below), and to every remote hub in `remotes.json`. |
+| `harness [-c] [--session <id>]` | The TUI. It connects to the user's hub on this machine (`~/.harness/run/hub.sock`) or holds it inside itself (below), and to every remote hub in `client/remotes.json`. |
 | `harness hub [--config F]` | The user's hub as a service, without a window. |
 | `harness hub attach` | Joins stdin and stdout to this machine's running hub: what a client elsewhere runs over SSH. It never starts a hub; without one it fails with `harness: no hub runs for user@host (start the service, or open harness there)`. |
 | `harness hub network [on\|off] [--listen h:p] [--proxy\|--no-proxy] [--url U]` | The hub's network access (below). |
 | `harness hub device add [--name N]`, `list`, `rename --name N --to M`, `revoke --name N` | Paired devices: a one-time pairing code (ten minutes), with its link and QR code when the hub knows its address. |
-| `harness connect <address> [--name N] [--command C]` | Another machine's hub, kept in `~/.harness/remotes.json` (0600): `ssh://[user@]host[:port]`, or a pairing link `https://hub/#pair=<code>` (or `https://hub` and the code typed). |
+| `harness connect <address> [--name N] [--command C]` | Another machine's hub, kept in `~/.harness/client/remotes.json` (0600): `ssh://[user@]host[:port]`, or a pairing link `https://hub/#pair=<code>` (or `https://hub` and the code typed). |
 | `harness remote list`, `remove <name>` | The hubs this client connects to. |
 
 The hub's commands act on the running hub, so a revoked device is disconnected at once. In any
@@ -25,12 +25,12 @@ it was used or expired.
 ## The hub inside a window
 
 The first window of a user (`harness`, `harness web-app`) that finds no hub holds one: the hub
-runs inside that window's process and listens on `~/.harness/sockets/default.sock` for the user's
+runs inside that window's process and listens on `~/.harness/run/hub.sock` for the user's
 other windows. Agents live as long as their hub: quitting the holding window stops its agents and
 their background tasks, so `Ctrl+Q` there asks first while agents work or other windows use it.
 
 When the holder goes, its other windows elect a new one: each tries to create
-`~/.harness/locks/node-default.lock` (holding its PID); the one that does holds a new hub, the
+`~/.harness/run/hub.lock` (holding its PID); the one that does holds a new hub, the
 others connect to it, and the tabs start their agents again from their sessions (the status line
 says how many sessions were interrupted). A lock whose process is gone is left over from a crash
 and removed.
@@ -133,7 +133,7 @@ Sessions stay on the volume; terminals' shells end.
 
 ## Configuration
 
-`~/.harness/nodes/default.json`, or the file `--config` names:
+`~/.harness/hub/config.json`, or the file `--config` names:
 
 ```json
 {

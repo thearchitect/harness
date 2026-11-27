@@ -3,15 +3,15 @@
 //
 // The first client finds no hub and holds one: it runs it in its own process and listens on the
 // socket for the user's other clients. When the holder exits, the others lose the hub together and
-// elect a new holder: each tries to create the lock file (`locks/node-<name>.lock`, with its PID);
+// elect a new holder: each tries to create the lock file (`run/hub.lock`, with its PID);
 // the one that does holds the hub, the rest connect to its socket once it listens. A lock whose
 // process is gone is left over from a crash and removed. A hub that is a service (`harness hub`)
 // is never replaced: its clients wait for its supervisor to start it again.
 
 import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
 import type { Server } from "node:net";
-import { join } from "node:path";
 import type { HubHost, Transport } from "#protocol/hub.ts";
+import { layoutOf } from "#protocol/layout.ts";
 import { listenUnix, socketAlive, socketPath } from "./endpoints/unix.ts";
 import { inProcessTransport, unixTransport } from "./endpoints/transports.ts";
 import { Hub, type HubConfig } from "./hub.ts";
@@ -71,8 +71,8 @@ export class LocalHub {
 
   constructor(options: LocalHubOptions) {
     this.options = options;
-    this.socket = socketPath(options.home, options.name);
-    this.lock = join(options.home, "locks", `node-${options.name}.lock`);
+    this.socket = socketPath(options.home);
+    this.lock = layoutOf(options.home).hubLock;
   }
 
   /** The hub this process holds, if it does. */
@@ -111,7 +111,7 @@ export class LocalHub {
 
   /** Creates the lock file with this process's PID; a lock of a process that is gone is removed first. */
   private acquire(): boolean {
-    mkdirSync(join(this.options.home, "locks"), { recursive: true, mode: 0o700 });
+    mkdirSync(layoutOf(this.options.home).run, { recursive: true, mode: 0o700 });
     try {
       const fd = openSync(this.lock, "wx", 0o600);
       writeSync(fd, String(process.pid));

@@ -1,11 +1,12 @@
 // Themes for clients that draw them themselves (the app): pi resolves a theme — its own dark and
-// light, or the user's `~/.harness/themes/*.json` (PI_CODING_AGENT_DIR) — to hex colors. pi's theme
+// light, or the user's `~/.harness/agent/themes/*.json` (PI_CODING_AGENT_DIR) — to hex colors. pi's theme
 // module is not among its package exports; it is loaded from the package directory.
 
 import { getPackageDir } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ThemeColors } from "#protocol/hub.ts";
+import { layoutOf } from "#protocol/layout.ts";
 
 type ThemeModule = {
   getResolvedThemeColors(name: string): Record<string, string>;
@@ -21,10 +22,10 @@ function themes(): Promise<ThemeModule> {
   return module;
 }
 
-/** The colors of `name` (dark when unknown); the user's themes are found under `dataDir/themes`. */
+/** The colors of `name` (dark when unknown); the user's themes are found under pi's `agent/themes`. */
 export async function themeColors(dataDir: string, name: string | undefined): Promise<ThemeColors> {
   const previous = process.env.PI_CODING_AGENT_DIR;
-  process.env.PI_CODING_AGENT_DIR = dataDir;
+  process.env.PI_CODING_AGENT_DIR = layoutOf(dataDir).agent;
   try {
     const theme = await themes();
     const names = theme.getAvailableThemes();

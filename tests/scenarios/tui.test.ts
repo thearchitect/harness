@@ -266,7 +266,7 @@ export const scenario = defineScenario({
         await tui.waitForText(() => tui.screen().agent?.state.implementer !== "self");
         await tui.press("\x1b");
         assert.deepEqual(tui.screen().zones.overlays, []);
-        const defaults = JSON.parse(readFileSync(join(stand.dataDir, "harness.json"), "utf8")) as Record<string, unknown>;
+        const defaults = JSON.parse(readFileSync(stand.layout.defaults, "utf8")) as Record<string, unknown>;
         assert.equal(defaults.madness, false, "madness is kept for new sessions");
         assert.equal("implementer" in defaults, false, "the implementer is not");
         await tui.act("panel.toggle");
@@ -451,7 +451,7 @@ export const scenario = defineScenario({
         await tui.type("o");
         await tui.press("\r");
         await tui.waitForText(() => tui.screen().zones.editor.kind === "editor");
-        const auth = JSON.parse(readFileSync(join(stand.dataDir, "auth.json"), "utf8")) as Record<string, { access?: string }>;
+        const auth = JSON.parse(readFileSync(join(stand.layout.agent, "auth.json"), "utf8")) as Record<string, { access?: string }>;
         assert.equal(auth["probe-sso"]?.access, "probe-access");
       },
     },

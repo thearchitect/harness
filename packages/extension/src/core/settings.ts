@@ -1,6 +1,6 @@
 /**
  * harness - the defaults of new sessions: the last chosen variant, madness and model reference,
- * kept in ~/.harness/harness.json. A session records its own values in session entries (state/);
+ * kept in ~/.harness/hub/defaults.json. A session records its own values in session entries (state/);
  * this file only seeds new ones. The implementer is a session's alone: new sessions start with
  * `self`, and a key left in the file by an earlier harness is not read and goes at the next write.
  */
@@ -15,7 +15,7 @@ export type Defaults = { variant: Variant; madness: boolean; model?: string };
 /** What a new session starts with when nothing has been chosen yet. */
 export const BUILTIN_DEFAULTS: Defaults = { variant: "advanced", madness: false };
 
-export const DEFAULTS_FILE = "harness.json";
+export const DEFAULTS_FILE = "defaults.json";
 
 /**
  * The defaults in the file: built-in ones when it does not exist yet, and

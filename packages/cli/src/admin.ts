@@ -61,7 +61,7 @@ export async function qrTerminal(text: string): Promise<string> {
 
 /** The running hub of this machine, for its commands. */
 async function localHub(home: string): Promise<HubConnection> {
-  const path = socketPath(home, "default");
+  const path = socketPath(home);
   if (!(await socketAlive(path))) {
     throw new Error(`no hub runs for ${process.env.USER ?? "this user"}@${hostname()} (start the service, or open harness)`);
   } else {

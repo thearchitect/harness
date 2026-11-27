@@ -1,9 +1,9 @@
-// A hub service's configuration (~/.harness/nodes/<name>.json, or the file the NixOS module and the
+// A hub service's configuration (~/.harness/hub/config.json, or the file the NixOS module and the
 // Fly image give with --config). Missing file: everything from the user's settings.
 
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { NetworkSettings } from "#protocol/hub.ts";
+import { layoutOf } from "#protocol/layout.ts";
 
 export type HubFileConfig = {
   /**
@@ -18,15 +18,16 @@ export type HubFileConfig = {
   server?: boolean;
 };
 
-/** `path`: an explicit file (the NixOS module's); otherwise ~/.harness/nodes/<name>.json. */
-export function readHubConfig(home: string, name: string, path?: string): HubFileConfig {
+/** `path`: an explicit file (the NixOS module's); otherwise ~/.harness/hub/config.json. */
+export function readHubConfig(home: string, path?: string): HubFileConfig {
+  const file = path ?? layoutOf(home).hubConfig;
   try {
-    return JSON.parse(readFileSync(path ?? join(home, "nodes", `${name}.json`), "utf8")) as HubFileConfig;
+    return JSON.parse(readFileSync(file, "utf8")) as HubFileConfig;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT" && path === undefined) {
       return {};
     } else {
-      throw new Error(`nodes/${name}.json: ${error instanceof Error ? error.message : String(error)}`);
+      throw new Error(`${file}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }

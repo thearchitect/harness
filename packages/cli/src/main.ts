@@ -8,7 +8,7 @@
 //   harness connect <address>                    another machine's hub (ssh://, a pairing link)
 //   harness remote list|remove                   other machines' hubs this client connects to
 //
-// The TUI connects to the user's running hub (~/.harness/sockets/default.sock), or runs the hub
+// The TUI connects to the user's running hub (~/.harness/run/hub.sock), or runs the hub
 // itself — agents as its children, the same socket for other clients — while it is open.
 
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
@@ -29,6 +29,7 @@ import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench } from "#client/workbench/workbench.ts";
 import { wsTransport } from "#client/ws-transport.ts";
 import { readHubConfig } from "#hub/config.ts";
+import { layoutOf } from "#protocol/layout.ts";
 import { harnessHome, ensureHome } from "#hub/home.ts";
 import { LocalHub, quitQuestion, versionProblem } from "#hub/local.ts";
 import { Hub } from "#hub/hub.ts";
@@ -84,9 +85,9 @@ function piExtensions(): string[] {
 async function runHub(args: string[]): Promise<void> {
   const { values } = parseArgs({ args, options: { config: { type: "string" } } });
   const home = harnessHome();
-  ensureHome(home);
+  await openHome(home);
   const name = DEFAULT_HUB;
-  const config = readHubConfig(home, name, values.config);
+  const config = readHubConfig(home, values.config);
   const hub = new Hub({
     name,
     dataDir: home,
@@ -97,7 +98,7 @@ async function runHub(args: string[]): Promise<void> {
     // hub_restart: a service exits with a failure code; its supervisor (systemd, s6) starts it again
     restart: () => stop(EXIT_RESTART),
   });
-  const path = socketPath(home, name);
+  const path = socketPath(home);
   const server = await listenUnix(hub, path);
   process.stderr.write(`harness hub: ${path}\n`);
   await hub.network.apply();
@@ -143,7 +144,7 @@ const EXIT_IDLE = 0;
  * runs it for a client elsewhere). It never starts a hub; with none running it says so and fails.
  */
 async function attachHub(home: string): Promise<void> {
-  const path = socketPath(home, DEFAULT_HUB);
+  const path = socketPath(home);
   if (!(await socketAlive(path))) {
     process.stderr.write(`harness: no hub runs for ${process.env.USER ?? "this user"}@${hostname()} (start the service, or open harness there)\n`);
     process.exit(EXIT_NO_HUB);
@@ -169,6 +170,22 @@ async function openRemote(remote: Remote): Promise<HubConnection> {
   return await HubConnection.open(transport, "tui", "ssh" in remote ? undefined : remote.token, TUI_CAPABILITIES);
 }
 
+/**
+ * The home ready for use, moved from the flat layout of earlier versions when it is one: what the
+ * move did goes to stderr, and its lines are returned for the window to show.
+ */
+async function openHome(home: string): Promise<string[]> {
+  const migration = await ensureHome(home);
+  const lines =
+    migration.moved.length > 0
+      ? [`${home} moved to its new layout (${migration.moved.length} steps); the old one is in ${migration.backup ?? "no backup"}`, ...migration.notes]
+      : migration.notes;
+  for (const line of lines) {
+    process.stderr.write(`harness: ${line}\n`);
+  }
+  return lines;
+}
+
 /** A service's exit for hub_restart: a failure, so `Restart=on-failure` starts it again. */
 const EXIT_RESTART = 75;
 
@@ -185,8 +202,8 @@ function refuse(problem: string): never {
  */
 async function runWebApp(): Promise<void> {
   const home = harnessHome();
-  ensureHome(home);
-  process.env.PI_CODING_AGENT_DIR = home;
+  await openHome(home);
+  process.env.PI_CODING_AGENT_DIR = layoutOf(home).agent;
   const staticDir = appWebDir();
   const browser = process.env.HARNESS_BROWSER ?? manifestBin("browser");
   if (staticDir === undefined) {
@@ -232,12 +249,13 @@ async function runTui(args: string[]): Promise<void> {
     options: { continue: { type: "boolean", short: "c" }, session: { type: "string" }, model: { type: "string", short: "m" } },
   });
   const home = harnessHome();
-  ensureHome(home);
+  const moved = await openHome(home);
   const cwd = sessionDirectory(positionals);
-  // pi's theme loader finds custom themes under its agent directory: ~/.harness/themes
-  process.env.PI_CODING_AGENT_DIR = home;
-  const settings = SettingsManager.create(cwd, home);
-  const keybindingsFile = join(home, "keybindings.json");
+  // pi's theme loader finds custom themes under its agent directory: ~/.harness/agent/themes
+  const agentDir = layoutOf(home).agent;
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  const settings = SettingsManager.create(cwd, agentDir);
+  const keybindingsFile = join(agentDir, "keybindings.json");
   const keybindings = existsSync(keybindingsFile) ? (JSON.parse(readFileSync(keybindingsFile, "utf8")) as KeybindingsConfig) : {};
 
   // the local node: another window's or a service's under the socket, or held in this process
@@ -377,6 +395,12 @@ async function runTui(args: string[]): Promise<void> {
   };
   app = new App({ client, workbench, renderers, cwd, settings, keybindings, onQuit: () => void quit(false) });
   await app.start();
+  // what moving the home to its layout did, where the window shows it
+  if (moved.length > 0) {
+    workbench.notify("warning", moved.join(" · "));
+  } else {
+    // the home was in its layout already
+  }
   await app.loadCompletions().catch(() => undefined);
   process.on("SIGTERM", () => void quit(true));
 }
@@ -394,11 +418,11 @@ async function main(): Promise<void> {
       }
       break;
     case "connect":
-      ensureHome(harnessHome());
+      await openHome(harnessHome());
       await connect(harnessHome(), rest);
       break;
     case "remote":
-      ensureHome(harnessHome());
+      await openHome(harnessHome());
       await remoteAdmin(harnessHome(), rest);
       break;
     case "web-app":
@@ -415,6 +439,7 @@ async function main(): Promise<void> {
     case "uninstall":
     case "list":
     case "update":
+      await openHome(harnessHome());
       process.exitCode = piCommand(harnessHome(), [command, ...rest]);
       break;
     case "--version":

@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Clock } from "#protocol/clock.ts";
+import { layoutOf, type Layout } from "#protocol/layout.ts";
 import type { HapRecord } from "#protocol/hap.ts";
 import { HubConnection } from "#client/connection.ts";
 import { Hub } from "#hub/hub.ts";
@@ -23,6 +24,8 @@ const MCP_PROBE_PATH = fileURLToPath(new URL("../fakes/mcp-server.ts", import.me
 export type Stand = {
   root: string;
   dataDir: string;
+  /** Where everything is under `dataDir` (pi's agent directory, the hub's files). */
+  layout: Layout;
   project: string;
   hub: Hub;
   /** Queues the model's next turns (each request plays the next queued turn, across agents). */
@@ -67,16 +70,17 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
   const project = join(root, "project");
   // the agents' temp directory is scratch space in every mode: a sibling of the project, so the project is not inside it
   const agentTmp = join(root, "tmp");
-  mkdirSync(dataDir, { recursive: true });
+  const agentDir = layoutOf(dataDir).agent;
+  mkdirSync(agentDir, { recursive: true });
   mkdirSync(project, { recursive: true });
   mkdirSync(agentTmp, { recursive: true });
   const agentHome = join(root, "home");
   mkdirSync(agentHome, { recursive: true });
-  writeFileSync(join(dataDir, "settings.json"), JSON.stringify({ defaultProvider: "scenario", defaultModel: "scripted" }));
+  writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ defaultProvider: "scenario", defaultModel: "scripted" }));
   // a configured key: pi checks the provider's auth before every prompt
-  writeFileSync(join(dataDir, "auth.json"), JSON.stringify({ scenario: { type: "api_key", key: "scripted" } }), { mode: 0o600 });
+  writeFileSync(join(agentDir, "auth.json"), JSON.stringify({ scenario: { type: "api_key", key: "scripted" } }), { mode: 0o600 });
   if (options.mcpProbe === true) {
-    writeFileSync(join(dataDir, "mcp.json"), JSON.stringify({ mcpServers: { probe: { description: "The test MCP server", command: process.execPath, args: [MCP_PROBE_PATH] } } }));
+    writeFileSync(join(agentDir, "mcp.json"), JSON.stringify({ mcpServers: { probe: { description: "The test MCP server", command: process.execPath, args: [MCP_PROBE_PATH] } } }));
   } else {
     // no MCP servers of the user
   }
@@ -135,6 +139,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
   return {
     root,
     dataDir,
+    layout: layoutOf(dataDir),
     project,
     hub,
     models(ids) {
@@ -179,7 +184,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
     async connect(via = "inproc") {
       let connection: HubConnection;
       if (via === "unix") {
-        const path = socketPath(dataDir, hub.config.name);
+        const path = socketPath(dataDir);
         server ??= await listenUnix(hub, path);
         connection = await HubConnection.open(await unixTransport(path), "test");
       } else {

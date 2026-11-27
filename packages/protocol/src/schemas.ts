@@ -96,7 +96,7 @@ export const OP_SCHEMAS: Record<HubOp, TSchema> = {
   theme_get: Obj({ name: Opt(Str("A theme name; the user's ui.theme, else dark, when absent")) }, "A theme's colors as hex for clients that draw it themselves, with the names of the themes there are. → { name, appearance, colors, names }"),
   attachments_put: Obj(
     { session: Str("The session's id"), name: Str("The file's name (its extension is kept)"), base64: Str() },
-    "A file the operator hands to a session (pasted, dropped, shared, picked), kept with its attachments by content (~/.harness/attachments/<session>/<sha256>.<ext>). → { path }",
+    "A file the operator hands to a session (pasted, dropped, shared, picked), kept with its attachments by content (~/.harness/hub/attachments/<session>/<sha256>.<ext>). → { path }",
   ),
   workspace_get: Obj({}, "The user's workspace on this hub: its tabs (session, file, directory, seen, draft) in order, and its revision. → { revision, tabs }"),
   workspace_tabs_set: Obj(

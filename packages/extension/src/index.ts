@@ -18,7 +18,8 @@ import { createAuthorizer, isScratchPath, scratchWorkspaceRoot, type Authorize }
 import { Interrupts } from "./core/interrupts.ts";
 import { effectiveMode, isRunMode, modeOfText, modeSelector } from "#protocol/modes.ts";
 import { assembleSystemPrompt, systemPromptProblem } from "./core/prompt.ts";
-import { DEFAULTS_FILE, loadDefaults, saveDefault, type Defaults } from "./core/settings.ts";
+import { loadDefaults, saveDefault, type Defaults } from "./core/settings.ts";
+import { layoutOf } from "#protocol/layout.ts";
 import { bundledMcpServers, depsReport, lspToolchain, readManifest } from "./deps.ts";
 import { preflight } from "./subagents/engines/claude/launch.ts";
 import { resolveModelRef } from "#protocol/model-ref.ts";
@@ -76,8 +77,9 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
   const store = new StateStore((state) => host.publishState(state));
   const interrupts = new Interrupts();
   const supervisor = new Supervisor({ publish: (tasks) => store.update({ tasks }) });
-  const claudeTranscripts = new ClaudeTranscripts(host.dataDir, (session, entries, streaming) => host.publishClaude(session, entries, streaming));
-  const defaultsPath = join(host.dataDir, DEFAULTS_FILE);
+  const layout = layoutOf(host.dataDir);
+  const claudeTranscripts = new ClaudeTranscripts(layout.claude, (session, entries, streaming) => host.publishClaude(session, entries, streaming));
+  const defaultsPath = layout.defaults;
   let live: Live | undefined;
   let nextMode: RunMode | undefined;
   let modelRefs: ModelRefs | undefined;
@@ -88,7 +90,7 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
   const launch = host.subagent;
   const engines = {
     harness: harnessEngine(host.children),
-    claude: claudeEngine({ interactions: host.interactions, dataDir: host.dataDir, mirror: (task, source) => supervisor.mirror(task, source), promptRun: () => promptRun, transcripts: claudeTranscripts }),
+    claude: claudeEngine({ interactions: host.interactions, runDir: layout.run, mirror: (task, source) => supervisor.mirror(task, source), promptRun: () => promptRun, transcripts: claudeTranscripts }),
   };
 
   function rememberModel(ref: string): void {
@@ -240,7 +242,7 @@ export function createHarnessExtension(host: ExtensionHost): { factory: Extensio
     });
     subagents = own;
     const loadProfiles = (ctx: ExtensionContext): void => {
-      registry = loadRegistry({ cwd: ctx.cwd, dataDir: host.dataDir, projectTrusted: ctx.isProjectTrusted() });
+      registry = loadRegistry({ cwd: ctx.cwd, agentDir: layout.agent, projectTrusted: ctx.isProjectTrusted() });
       for (const problem of registry.problems) {
         ctx.ui.notify(`subagent profile not loaded: ${problem}`, "warning");
       }
@@ -510,13 +512,13 @@ function registerExtensionParts(pi: ExtensionAPI, host: ExtensionHost, interrupt
   }
 
   registerLsp(pi, "manifest" in bundle ? lspToolchain(bundle.manifest) : { problem: bundle.problem }, authorize, (ctx, path) => isScratchPath(ctx, path));
-  registerBuiltins(pi, interrupts, host.dataDir);
+  registerBuiltins(pi, interrupts, layoutOf(host.dataDir).agent);
   registerProjectTree(pi);
   registerSendFile(pi);
   registerAskSecret(pi, host.interactions);
   registerAskUser(pi, host.interactions);
   registerDisplayFile(pi);
-  registerTaskTools(pi, supervisor, interrupts, host.dataDir);
+  registerTaskTools(pi, supervisor, interrupts, layoutOf(host.dataDir).agent);
 
   // `server`: only on a hub its configuration declares a shared server (HARNESS_SERVER from the hub)
   const skills = ["web-research", "testing", ...(process.env.HARNESS_SERVER === "1" ? ["server"] : [])].map((name) => join(EXTENSION_DIR, "skills", name, "SKILL.md"));

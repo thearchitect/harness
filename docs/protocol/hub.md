@@ -45,7 +45,7 @@ the answer carries the agent's snapshot and the agent's records follow in `hap` 
 Agents do not depend on clients: detaching or disconnecting leaves an agent running. The hub
 unloads an agent nobody follows in full that has no run, no open interaction and no live task
 after 30 minutes; its session stays and opens again with `agent_start`. One session is served by
-at most one agent of the user on the machine (`~/.harness/locks/`).
+at most one agent of the user on the machine (`~/.harness/run/locks/`).
 
 ## Errors
 

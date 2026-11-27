@@ -9,17 +9,17 @@ as written.
 
 | pi | harness |
 |---|---|
-| `~/.pi/agent` | `~/.harness` (`HARNESS_HOME` overrides it) |
-| `~/.pi/agent/settings.json` | `~/.harness/settings.json` — pi's settings (model, thinking, packages); UI settings are in `~/.harness/ui-settings.json` |
-| `~/.pi/agent/auth.json` | `~/.harness/auth.json` |
-| `~/.pi/agent/sessions/` | `~/.harness/sessions/` |
-| `~/.pi/agent/extensions/` | `~/.harness/extensions/` |
-| `~/.pi/agent/prompts/` | `~/.harness/prompts/` |
-| `~/.pi/agent/mcp.json`, `~/.pi/agent/mcp-auth.json`, `~/.pi/agent/mcp.log` | `~/.harness/mcp.json`, `~/.harness/mcp-auth.json`, `~/.harness/mcp.log` |
-| `~/.pi/agent/trust.json` | `~/.harness/trust.json` |
-| `~/.pi/agent/AGENTS.md` | `~/.harness/AGENTS.md` |
-| `~/.pi/agent/tmp/` | `~/.harness/tmp/` |
-| — | `~/.harness/harness.json` (defaults of new sessions), `nodes/`, `sockets/`, `locks/`, `log/`, `hub/`, `remotes.json` ([operations/settings.md](operations/settings.md)) |
+| `~/.pi/agent` | `~/.harness/agent` (pi's agent directory; `HARNESS_HOME` moves `~/.harness`) |
+| `~/.pi/agent/settings.json` | `~/.harness/agent/settings.json` — pi's settings (model, thinking, packages); UI settings are in `~/.harness/hub/settings.json` |
+| `~/.pi/agent/auth.json` | `~/.harness/agent/auth.json` |
+| `~/.pi/agent/sessions/` | `~/.harness/hub/sessions/` (pi's `sessionDir` setting still wins) |
+| `~/.pi/agent/extensions/` | `~/.harness/agent/extensions/` |
+| `~/.pi/agent/prompts/` | `~/.harness/agent/prompts/` |
+| `~/.pi/agent/mcp.json`, `~/.pi/agent/mcp-auth.json`, `~/.pi/agent/mcp.log` | `~/.harness/agent/mcp.json`, `~/.harness/agent/mcp-auth.json`, `~/.harness/agent/mcp.log` |
+| `~/.pi/agent/trust.json` | `~/.harness/agent/trust.json` |
+| `~/.pi/agent/AGENTS.md` | `~/.harness/agent/AGENTS.md` |
+| `~/.pi/agent/tmp/` | `~/.harness/agent/tmp/` |
+| — | `~/.harness/hub/` (defaults of new sessions, the workspace, devices, attachments), `client/`, `run/`, `log/` ([operations/settings.md](operations/settings.md)) |
 
 ## Commands
 

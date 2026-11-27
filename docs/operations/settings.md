@@ -3,22 +3,38 @@
 ```
 ~/.harness/
   .gitignore            # "*"
-  settings.json         # pi's settings (model, thinking, packages, theme)
-  ui-settings.json      # the user's UI settings (below)
-  workspace.json        # the open tabs of this hub's sessions and their drafts (below)
-  auth.json             # provider credentials (pi)
-  harness.json          # defaults of new sessions: variant, madness, model
-  remotes.json          # this client's hubs and device tokens (0600)
-  sessions/             # pi sessions
-  locks/                # one agent per session
-  sockets/<name>.sock   # local endpoints (directory 0700)
-  nodes/default.json    # the hub's configuration
-  hub/                  # the hub's paired devices and pairing codes (hashes)
-  themes/               # themes (pi's format)
+  agent/                # what pi reads (PI_CODING_AGENT_DIR)
+    settings.json       #   pi's settings (model, thinking, packages, theme)
+    auth.json           #   provider credentials
+    models.json, mcp.json, mcp-auth.json, trust.json, keybindings.json
+    themes/             #   themes (pi's format)
+    subagents/          #   the user's subagent profiles
+  hub/                  # the hub's
+    settings.json       #   the user's UI settings (below)
+    defaults.json       #   defaults of new sessions: variant, madness, model
+    workspace.json      #   the open tabs of this hub's sessions and their drafts (below)
+    devices.json, pairings.json  # paired devices and pairing codes (hashes)
+    config.json         #   a service's configuration when --config names none
+    sessions/           #   pi sessions
+    attachments/<session>/  # files handed to sessions (pasted, dropped, picked), by content
+    claude/             #   claude subagents' transcripts
+  client/               # this machine's clients'
+    remotes.json        #   other machines' hubs and this device's tokens (0600)
+    window.json         #   the TUI windows' state on this machine (below)
+  run/                  # while processes live (0700)
+    hub.sock            #   the hub's socket
+    hub.lock            #   who holds the hub (a window's or the service's pid)
+    locks/              #   one agent per session
   log/                  # hub events and agents' output
-  attachments/<session>/ # files handed to sessions (pasted, dropped, picked), by content
-  ui-state/tui.json     # the TUI windows' state on this machine (below)
 ```
+
+A home of the flat layout of earlier versions is moved to this one when harness first starts on
+it: everything is archived to `~/.harness.backup-<date>.tgz` first, then pi's files go to `agent/`,
+`ui-settings.json` (its tabs into `hub/workspace.json`) and `harness.json` to `hub/`, the window's
+state to `client/window.json` (its drafts into the workspace), `remotes.json` to `client/`; the files
+of the old multi-user hub (`users/`, `hub/users.json`, `hub/nodes.json`) are removed, and the window
+says so. A move stopped halfway goes on at the next start; an older hub still running stops it
+until that hub is closed.
 
 ## The workspace
 
@@ -43,7 +59,7 @@ removed after `attachments.retentionDays`.
 
 What depends on the screen — where each tab's transcript was scrolled, expanded tool output, the
 item shown, the terminal shown — the active tab and the hub chosen in the strip belong to the
-client: the TUI keeps them in `ui-state/tui.json` (written under its lock and merged by tab, so two
+client: the TUI keeps them in `client/window.json` (written under its lock and merged by tab, so two
 windows keep each other's tabs; the active tab and hub are the window's that closed last), the web
 app in the browser's `localStorage`, the phone apps in a file of their own. They are kept at most
 every half second and on quitting.

@@ -23,9 +23,9 @@ const NOTIFY = Type.Union([Type.Literal("wake"), Type.Literal("queue"), Type.Lit
 const DEFAULT_WAIT_S = 600;
 
 /** The default `notify` from settings.json `harness.tasks.notify`, else `wake`. */
-function defaultNotify(dataDir: string): NotifyPolicy {
+function defaultNotify(agentDir: string): NotifyPolicy {
   try {
-    const settings = JSON.parse(readFileSync(join(dataDir, "settings.json"), "utf8")) as { harness?: { tasks?: { notify?: unknown } } };
+    const settings = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8")) as { harness?: { tasks?: { notify?: unknown } } };
     const value = settings.harness?.tasks?.notify;
     return value === "queue" || value === "none" || value === "wake" ? value : "wake";
   } catch {
@@ -62,7 +62,8 @@ function regex(pattern: string): RegExp {
   }
 }
 
-export function registerTaskTools(pi: ExtensionAPI, supervisor: Supervisor, interrupts: Interrupts, dataDir: string): void {
+/** `agentDir`: pi's agent directory, whose settings.json may name the default `notify`. */
+export function registerTaskTools(pi: ExtensionAPI, supervisor: Supervisor, interrupts: Interrupts, agentDir: string): void {
   // Notifications: an exit or a watched line reaches the model by the task's policy.
   const unsubscribe = supervisor.onEvent((event: TaskEvent) => {
     const notify = event.task.notify;
@@ -124,7 +125,7 @@ export function registerTaskTools(pi: ExtensionAPI, supervisor: Supervisor, inte
         command: params.command,
         cwd: resolve(ctx.cwd, params.cwd ?? "."),
         name: params.name,
-        notify: params.notify ?? defaultNotify(dataDir),
+        notify: params.notify ?? defaultNotify(agentDir),
         env: { ...process.env, ...sessionSecrets.env(sessionId) },
         logPath: join(workspace, "tasks", `${Date.now()}-${toolCallId.slice(-8)}.log`),
         watch: (params.watch ?? []).map(regex),

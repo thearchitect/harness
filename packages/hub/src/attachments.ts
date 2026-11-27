@@ -1,11 +1,12 @@
 // Files the operator hands to sessions (pasted images, dropped and picked files): kept by the hub
-// with the session, by content — ~/.harness/attachments/<session>/<sha256>.<ext> — never in a
+// with the session, by content — ~/.harness/hub/attachments/<session>/<sha256>.<ext> — never in a
 // temporary directory, so a draft that names one keeps it across restarts and devices. One that
 // neither a draft nor its session's transcript names goes after `attachments.retentionDays` (7).
 
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
+import { layoutOf } from "#protocol/layout.ts";
 
 export const ATTACHMENTS_RETENTION_DAYS = 7;
 
@@ -13,7 +14,7 @@ export class Attachments {
   readonly dir: string;
 
   constructor(dataDir: string) {
-    this.dir = join(dataDir, "attachments");
+    this.dir = layoutOf(dataDir).attachments;
   }
 
   /** Keeps a file for a session; the same content is one file. */

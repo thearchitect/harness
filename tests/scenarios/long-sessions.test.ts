@@ -5,8 +5,8 @@
 // shows at once from what was read; its agent starts meanwhile and carries on with the same items.
 
 import assert from "node:assert/strict";
-import { resolve } from "node:path";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { cwdSessionsDir } from "#protocol/layout.ts";
 import { after, test } from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { HubConnection } from "#client/connection.ts";
@@ -30,7 +30,7 @@ after(async () => {
 
 /** A stored session of `ENTRIES` messages (user and assistant in turn), as pi writes it. */
 function longSession(stand: Stand, name: string): { id: string; path: string } {
-  const dir = join(stand.dataDir, "sessions", `--${resolve(stand.project).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
+  const dir = cwdSessionsDir(stand.layout.sessions, resolve(stand.project));
   const session = SessionManager.create(stand.project, dir);
   for (let index = 0; index < ENTRIES / 2; index += 1) {
     session.appendMessage({ role: "user", content: [{ type: "text", text: `${name} question ${index}` }], timestamp: Date.now() });

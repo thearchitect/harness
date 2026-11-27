@@ -1,9 +1,11 @@
 // The UI settings of a user, kept by the hub the user's clients come through: themes, fonts, task
-// defaults, the hub's network access. Stored in ~/.harness/ui-settings.json, apart from pi's
-// settings.json, which agents write themselves. Changes reach every client of the user.
+// defaults, the hub's network access. Stored in ~/.harness/hub/settings.json, apart from pi's
+// settings.json (~/.harness/agent), which agents write themselves. Changes reach every client of the
+// user.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { layoutOf } from "#protocol/layout.ts";
 
 export type Settings = Record<string, unknown>;
 
@@ -12,7 +14,7 @@ export class SettingsStore {
   private readonly listeners = new Set<(settings: Settings) => void>();
 
   constructor(dataDir: string) {
-    this.path = join(dataDir, "ui-settings.json");
+    this.path = layoutOf(dataDir).hubSettings;
   }
 
   read(): Settings {

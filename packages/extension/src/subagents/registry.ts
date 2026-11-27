@@ -1,7 +1,7 @@
 // Subagent profiles (plan 12.1): `<source>/subagents/<name>/SUBAGENT.md` (frontmatter: the profile;
 // body: the role, the subagent's own instructions) and `SKILL.md` (the briefing the calling model
 // reads when it delegates). Sources, earlier wins on a name: the project's `.harness/subagents/`
-// (trusted projects only), `~/.harness/subagents/`, the bundle's. A profile with an error is left
+// (trusted projects only), `~/.harness/agent/subagents/`, the bundle's. A profile with an error is left
 // out and reported.
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
@@ -176,7 +176,8 @@ function removeCycles(profiles: Map<string, SubagentProfile>, problems: string[]
   }
 }
 
-export function loadRegistry(options: { cwd: string; dataDir: string; projectTrusted: boolean; bundledDir?: string }): Registry {
+/** `agentDir`: pi's agent directory, whose `subagents/` holds the user's profiles. */
+export function loadRegistry(options: { cwd: string; agentDir: string; projectTrusted: boolean; bundledDir?: string }): Registry {
   const profiles = new Map<string, SubagentProfile>();
   const problems: string[] = [];
   if (options.projectTrusted) {
@@ -184,7 +185,7 @@ export function loadRegistry(options: { cwd: string; dataDir: string; projectTru
   } else {
     // an untrusted project's profiles are not read
   }
-  readSource(join(options.dataDir, "subagents"), "user", profiles, problems);
+  readSource(join(options.agentDir, "subagents"), "user", profiles, problems);
   readSource(options.bundledDir ?? BUNDLED_DIR, "bundle", profiles, problems);
   checkReferences(profiles, problems);
   return { profiles, problems };

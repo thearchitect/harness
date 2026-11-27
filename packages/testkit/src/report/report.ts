@@ -176,7 +176,7 @@ export class Report {
     const copied: string[] = [];
     for (const [from, to] of [
       [join(this.stand.dataDir, "log"), "logs"],
-      [join(this.stand.dataDir, "sessions"), "sessions"],
+      [this.stand.layout.sessions, "sessions"],
     ] as const) {
       if (existsSync(from) && readdirSync(from).length > 0) {
         cpSync(from, join(this.dir, to), { recursive: true });

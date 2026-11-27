@@ -20,7 +20,7 @@ pkgs.testers.runNixOSTest {
     machine.succeed("${image} | podman load")
     machine.succeed("mkdir -p /srv/data")
     machine.succeed("podman run -d --name remote -p 8080:8080 -v /srv/data:/data harness-remote:check")
-    machine.wait_until_succeeds("podman exec remote test -S /data/home/alice/.harness/sockets/default.sock", timeout=180)
+    machine.wait_until_succeeds("podman exec remote test -S /data/home/alice/.harness/run/hub.sock", timeout=180)
     # the hub runs as its user
     machine.succeed("podman exec remote ps -eo user:16,args | grep 'harness hub' | grep -v grep | grep -q '^alice '")
     # the hub serves the app's web build (WebSocket paths upgrade)

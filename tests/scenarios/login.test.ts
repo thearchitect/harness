@@ -46,7 +46,7 @@ export const scenario = defineScenario({
         await raw.api.call(agent.id, { type: "harness_interaction_response", interactionId: prompt?.id ?? "", answer: { value: "sk-test-login-key" } });
         await done;
 
-        const auth = JSON.parse(readFileSync(join(stand.dataDir, "auth.json"), "utf8")) as Record<string, { key?: string }>;
+        const auth = JSON.parse(readFileSync(join(stand.layout.agent, "auth.json"), "utf8")) as Record<string, { key?: string }>;
         assert.equal(auth.openai?.key, "sk-test-login-key");
         const after = await raw.api.call<{ providers: LoginProvider[] }>(agent.id, { type: "harness_login_providers" });
         assert.equal(after.providers.find((provider) => provider.id === "openai" && provider.authType === "api_key")?.configured, true);
@@ -70,7 +70,7 @@ export const scenario = defineScenario({
         assert.deepEqual(await back, { back: true });
 
         await raw.api.call(agent, { type: "harness_logout", provider: "openai" });
-        const auth = JSON.parse(readFileSync(join(stand.dataDir, "auth.json"), "utf8")) as Record<string, unknown>;
+        const auth = JSON.parse(readFileSync(join(stand.layout.agent, "auth.json"), "utf8")) as Record<string, unknown>;
         assert.equal(auth.openai, undefined);
       },
     },

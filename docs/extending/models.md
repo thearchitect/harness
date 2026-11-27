@@ -17,7 +17,7 @@ Where references are taken:
 
 - the model list of the TUI (Ctrl+L) offers the catalog's references first (`anthropic/opus →
   claude-opus-5-5`); choosing one makes the session follow it;
-- `model` in `~/.harness/harness.json`: the reference new sessions start with (the last one chosen).
+- `model` in `~/.harness/hub/defaults.json`: the reference new sessions start with (the last one chosen).
 
 A session records the reference (`harness-model-ref` entries). When it opens again the reference
 resolves again: if the catalog has a newer model of the family, or the old one is gone, the

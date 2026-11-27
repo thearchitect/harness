@@ -95,9 +95,10 @@ let
     user=$(${pkgs.jq}/bin/jq -r '.user.name' $remote)
     home=/data/home/$user
     mkdir -p $home && chown $user:$user $home && chmod 700 $home
-    # the user's initial settings (an existing file is never touched)
-    if [ ! -e $home/.harness/settings.json ]; then
-      ${pkgs.util-linux}/bin/setpriv --reuid=$user --regid=$user --clear-groups sh -c "umask 077; mkdir -p $home/.harness && cat > $home/.harness/settings.json" \
+    # the user's initial pi settings (an existing file is never touched, nor one of the flat layout
+    # of earlier versions, which the hub moves to agent/ when it starts)
+    if [ ! -e $home/.harness/agent/settings.json ] && [ ! -e $home/.harness/settings.json ]; then
+      ${pkgs.util-linux}/bin/setpriv --reuid=$user --regid=$user --clear-groups sh -c "umask 077; mkdir -p $home/.harness/agent && cat > $home/.harness/agent/settings.json" \
         < <(${pkgs.jq}/bin/jq '.defaultSettings // {}' $remote)
     else
       : # the user's own settings

@@ -129,7 +129,7 @@ test("a service is waited for, never replaced: its clients come back to it", asy
   const dir = home();
   const start = async (): Promise<{ node: Hub; close(): Promise<void> }> => {
     const node = new Hub({ name: "default", dataDir: dir, harnessVersion: "test" });
-    const server = await listenUnix(node, socketPath(dir, "default"));
+    const server = await listenUnix(node, socketPath(dir));
     return {
       node,
       close: async () => {

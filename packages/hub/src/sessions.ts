@@ -1,6 +1,6 @@
-// The user's sessions (pi's session files under ~/.harness/sessions) and the lock that keeps one
-// session with at most one agent among all hubs of the user on this machine:
-// ~/.harness/locks/<session id>.lock holds the owning hub's pid; a dead pid frees it.
+// The user's sessions (pi's session files under ~/.harness/hub/sessions) and the lock that keeps one
+// session with at most one agent on this machine: ~/.harness/run/locks/<session id>.lock holds the
+// owning hub's pid; a dead pid frees it.
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -8,15 +8,16 @@ import { branchPage } from "#protocol/entries.ts";
 import { readdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { HarnessError } from "#protocol/errors.ts";
+import { cwdSessionsDir as cwdSessionsDirOf, layoutOf } from "#protocol/layout.ts";
 import type { SessionListItem } from "#protocol/hub.ts";
 
 export function sessionsDir(dataDir: string): string {
-  return join(dataDir, "sessions");
+  return layoutOf(dataDir).sessions;
 }
 
 /** pi's directory of a cwd's sessions under the sessions directory (getDefaultSessionDirPath of its session manager). */
 function cwdSessionsDir(dataDir: string, cwd: string): string {
-  return join(sessionsDir(dataDir), `--${resolve(cwd).replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`);
+  return cwdSessionsDirOf(sessionsDir(dataDir), resolve(cwd));
 }
 
 /**
@@ -98,7 +99,7 @@ export class SessionLocks {
   private readonly held = new Set<string>();
 
   constructor(dataDir: string) {
-    this.dir = join(dataDir, "locks");
+    this.dir = layoutOf(dataDir).locks;
     mkdirSync(this.dir, { recursive: true, mode: 0o700 });
   }
 

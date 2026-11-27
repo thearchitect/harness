@@ -8,7 +8,7 @@ secrets, the Fly app. Code changes go to harness.
 
 - `flake.nix` — `packages.x86_64-linux.image`: `harness.lib.mkRemoteImage` over `remote.yaml` and
   `.cage/store/envs`; the dev shell (harness bundle with `cage`, `flyctl`, `skopeo`, `jq`).
-- `remote.yaml` — the user (name, uid) and their initial `~/.harness/settings.json`.
+- `remote.yaml` — the user (name, uid) and their initial `~/.harness/agent/settings.json` (pi's).
 - `.cage/` — secrets. `cage.yaml` is the layout; `.cage/store/` (committed) is ciphertext;
   `.cage/secrets/` is plaintext and never committed. The image carries `envs/user-<name>.cage`
   only: the hub and its agents get its variables.
@@ -17,7 +17,7 @@ secrets, the Fly app. Code changes go to harness.
 - `bootstrap.sh` — one-time Fly setup. `deploy.sh` — build and deploy the committed tree.
   `logs.sh` — the hub's event log.
 - On the machine: s6 supervises `harness hub` as the user's uid on port 8080. Home:
-  `/data/home/<name>` (0700; sessions in `~/.harness/sessions`, paired devices in
+  `/data/home/<name>` (0700; sessions in `~/.harness/hub/sessions`, paired devices in
   `~/.harness/hub/` as hashes only, the event log in `~/.harness/log/`).
 - In the image for the agents: gh, glab, go, rust, zig, gcc, python3 with pydicom/numpy/pillow,
   uv, node, ffmpeg, ImageMagick, exiftool, dcmtk, zip, mise; prebuilt binaries run through

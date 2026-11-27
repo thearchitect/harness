@@ -29,7 +29,8 @@ const STOP_GRACE_MS = 5_000;
 
 export type ClaudeEngineDeps = {
   interactions: Interactions;
-  dataDir: string;
+  /** Where the bridge's socket goes (~/.harness/run). */
+  runDir: string;
   /** Mirrors Claude's background tasks into the session's tasks. */
   mirror(task: TaskInfo, source: MirroredSource): void;
   /** The claude executable (default `claude` on PATH; HARNESS_CLAUDE overrides it). */
@@ -323,7 +324,7 @@ export function claudeEngine(deps: ClaudeEngineDeps): SubagentEngine {
           // harness's tools for Claude: the profile's, never ctx_*, subagent or the ones Claude has natively
           const allowed = ctx.tools.filter((tool) => tool.name !== "subagent" && !(tool.name in CLAUDE_NATIVE_TOOLS) && toolAllowed(tool.name, launch, 0));
           let session: ClaudeSubagent | undefined;
-          const bridge = await Bridge.open(deps.dataDir, {
+          const bridge = await Bridge.open(deps.runDir, {
             decide: (input) =>
               decide(input, {
                 authorize,

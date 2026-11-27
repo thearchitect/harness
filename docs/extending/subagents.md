@@ -28,7 +28,7 @@ subagents: []              # profiles it may call itself (two levels at most)
 ```
 
 Sources, the first one with a name wins: the project's `.harness/subagents/` (trusted projects
-only), `~/.harness/subagents/`, the bundle's (`packages/extension/src/subagents/bundled/`:
+only), `~/.harness/agent/subagents/`, the bundle's (`packages/extension/src/subagents/bundled/`:
 `builder`, `explorer`). A profile with an error is left out and the session says why. Changes
 apply to sessions started after them.
 
@@ -65,7 +65,7 @@ an invitation.
   `mcp__harness__<tool>` by that tool's renderer, the run's end as a banner. A subagent of Claude's
   own (`Task`) shows inside its call: collapsed the count of its steps and the latest, expanded
   (Ctrl+E) every step; its row among the session's tasks opens that call. The stream and the
-  messages harness sent are kept in `~/.harness/claude/<session>.jsonl`, so the transcript is there
+  messages harness sent are kept in `~/.harness/hub/claude/<session>.jsonl`, so the transcript is there
   after a restart; the HAP requests `harness_subagent_snapshot` and `harness_subagent_entries_before`
   read it, `harness_subagent_entries` carries its changes to the clients attached to the session.
 

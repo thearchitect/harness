@@ -17,11 +17,11 @@ function profile(root: string, name: string, frontmatter: string, role = "Do the
   }
 }
 
-function sources(): { cwd: string; dataDir: string; project: string; user: string; bundle: string } {
+function sources(): { cwd: string; agentDir: string; project: string; user: string; bundle: string } {
   const root = mkdtempSync(join(tmpdir(), "registry-"));
   const cwd = join(root, "project");
-  const dataDir = join(root, "home");
-  return { cwd, dataDir, project: join(cwd, ".harness", "subagents"), user: join(dataDir, "subagents"), bundle: join(root, "bundle") };
+  const agentDir = join(root, "agent");
+  return { cwd, agentDir, project: join(cwd, ".harness", "subagents"), user: join(agentDir, "subagents"), bundle: join(root, "bundle") };
 }
 
 test("sources: the project (trusted only) beats the user, the user beats the bundle", () => {
@@ -31,10 +31,10 @@ test("sources: the project (trusted only) beats the user, the user beats the bun
   profile(paths.project, "alpha", "description: from the project\nengine: harness");
   profile(paths.bundle, "beta", "description: only bundled\nengine: claude");
 
-  const trusted = loadRegistry({ cwd: paths.cwd, dataDir: paths.dataDir, projectTrusted: true, bundledDir: paths.bundle });
+  const trusted = loadRegistry({ cwd: paths.cwd, agentDir: paths.agentDir, projectTrusted: true, bundledDir: paths.bundle });
   assert.equal(trusted.profiles.get("alpha")?.source, "project");
   assert.equal(trusted.profiles.get("beta")?.source, "bundle");
-  const untrusted = loadRegistry({ cwd: paths.cwd, dataDir: paths.dataDir, projectTrusted: false, bundledDir: paths.bundle });
+  const untrusted = loadRegistry({ cwd: paths.cwd, agentDir: paths.agentDir, projectTrusted: false, bundledDir: paths.bundle });
   assert.equal(untrusted.profiles.get("alpha")?.source, "user");
   assert.deepEqual(trusted.problems, []);
 });
@@ -47,7 +47,7 @@ test("a broken profile is left out with its reason", () => {
   profile(paths.user, "noskill", "description: x\nengine: harness", "Role.", false);
   profile(paths.user, "norole", "description: x\nengine: harness", "");
   profile(paths.user, "good", "description: fine\nengine: claude\nmodel: anthropic/opus:xhigh");
-  const registry = loadRegistry({ cwd: paths.cwd, dataDir: paths.dataDir, projectTrusted: false, bundledDir: paths.bundle });
+  const registry = loadRegistry({ cwd: paths.cwd, agentDir: paths.agentDir, projectTrusted: false, bundledDir: paths.bundle });
   assert.deepEqual([...registry.profiles.keys()], ["good"]);
   const problem = (name: string): string => registry.problems.find((line) => line.includes(`/${name}:`)) ?? "";
   assert.match(problem("noengine"), /engine must be harness or claude/);
@@ -64,14 +64,14 @@ test("subagents naming unknown profiles or forming a cycle are left out", () => 
   profile(paths.user, "orphan", "description: x\nengine: harness\nsubagents: [ghost]");
   profile(paths.user, "ping", "description: x\nengine: harness\nsubagents: [pong]");
   profile(paths.user, "pong", "description: x\nengine: harness\nsubagents: [ping]");
-  const registry = loadRegistry({ cwd: paths.cwd, dataDir: paths.dataDir, projectTrusted: false, bundledDir: paths.bundle });
+  const registry = loadRegistry({ cwd: paths.cwd, agentDir: paths.agentDir, projectTrusted: false, bundledDir: paths.bundle });
   assert.deepEqual([...registry.profiles.keys()].sort(), ["helper", "lead"]);
   assert.ok(registry.problems.some((line) => /orphan.*unknown profiles: ghost/.test(line)));
   assert.ok(registry.problems.some((line) => /cycle/.test(line)));
 });
 
 test("the bundled profiles load: builder (claude) and explorer (harness, PLAN); their briefings say when", () => {
-  const registry = loadRegistry({ cwd: "/nonexistent", dataDir: "/nonexistent", projectTrusted: false, bundledDir: BUNDLED_DIR });
+  const registry = loadRegistry({ cwd: "/nonexistent", agentDir: "/nonexistent", projectTrusted: false, bundledDir: BUNDLED_DIR });
   assert.deepEqual(registry.problems, []);
   assert.equal(registry.profiles.get("builder")?.engine, "claude");
   assert.equal(registry.profiles.get("builder")?.model, "anthropic/opus:medium");

@@ -9,7 +9,7 @@ user:
   name: alice
   uid: 1001
 
-# ~/.harness/settings.json of the user (an existing file is never touched).
+# ~/.harness/agent/settings.json of the user, pi's (an existing file is never touched).
 defaultSettings:
   defaultProvider: deepseek
   defaultModel: deepseek-v4-pro

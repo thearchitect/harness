@@ -37,8 +37,8 @@ export class Bridge {
     this.handlers = handlers;
   }
 
-  static async open(dataDir: string, handlers: BridgeHandlers): Promise<Bridge> {
-    const dir = join(dataDir, "sockets");
+  /** `dir`: where its socket goes (~/.harness/run, the user's alone). */
+  static async open(dir: string, handlers: BridgeHandlers): Promise<Bridge> {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const socket = join(dir, `claude-${randomUUID().slice(0, 8)}.sock`);
     let bridge: Bridge | undefined;

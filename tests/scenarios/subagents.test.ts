@@ -31,8 +31,8 @@ function subagentResult(model: AgentModel): string | undefined {
   return content?.map((block) => block.text ?? "").join("");
 }
 
-function profile(dataDir: string, name: string, frontmatter: string): void {
-  const dir = join(dataDir, "subagents", name);
+function profile(agentDir: string, name: string, frontmatter: string): void {
+  const dir = join(agentDir, "subagents", name);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "SUBAGENT.md"), `---\nname: ${name}\ndescription: a test subagent\nengine: harness\n${frontmatter}\n---\nDo what the brief says.\n`);
   writeFileSync(join(dir, "SKILL.md"), `---\nname: subagent-${name}\ndescription: Only on the operator's explicit request — the ${name} test subagent\n---\nBrief it.\n`);
@@ -65,8 +65,8 @@ export const scenario = defineScenario({
     {
       name: "the subagent's report reaches the caller as a handover block",
       async run({ stand, clients: { raw }, memo }) {
-        profile(stand.dataDir, "probe", "mode: build");
-        profile(stand.dataDir, "planner", "mode: plan\ntools:\n  allow: [read, write]");
+        profile(stand.layout.agent, "probe", "mode: build");
+        profile(stand.layout.agent, "planner", "mode: plan\ntools:\n  allow: [read, write]");
         const main = await session(raw, stand.project);
         memo.main = main;
         stand.script([

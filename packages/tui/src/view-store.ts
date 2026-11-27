@@ -1,9 +1,10 @@
-// Where the TUI keeps its window's state (client/workbench/view-state.ts): ~/.harness/ui-state/tui.json,
-// written under its lock and merged by tab, so two windows keep each other's tabs; the active tab,
-// the hub and the drafts are the window's that saved last.
+// Where the TUI keeps its window's state (client/workbench/view-state.ts): ~/.harness/client/window.json,
+// written under its lock and merged by tab, so two windows keep each other's tabs; the active tab and
+// the hub are the window's that saved last.
 
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname } from "node:path";
+import { layoutOf } from "#protocol/layout.ts";
 import { mergeWindowStates, windowState, type ViewStateStore, type WindowState } from "#client/workbench/view-state.ts";
 import { withFileLock } from "#extension/core/file-lock.ts";
 
@@ -16,7 +17,7 @@ function read(path: string): WindowState | undefined {
 }
 
 export function tuiViewStore(home: string): ViewStateStore {
-  const path = join(home, "ui-state", "tui.json");
+  const path = layoutOf(home).window;
   return {
     load: async () => read(path),
     save: async (state) => {

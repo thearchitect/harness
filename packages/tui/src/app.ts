@@ -37,6 +37,7 @@ import { LEFT_STRIP_MIN, subagentHeading, type EditorZone, type OverlayKind, typ
 import type { ScrollAnchor, TabView } from "#client/workbench/view-state.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
 import { modeOfText } from "#protocol/modes.ts";
+import { layoutOf } from "#protocol/layout.ts";
 import { modeColor } from "#extension/presentation/modes.ts";
 import { GateDialog, selectListTheme } from "#extension/presentation/tui/gate.ts";
 import { SecretDialog } from "#extension/presentation/tui/secret.ts";
@@ -73,9 +74,9 @@ export type AppOptions = {
   renderers: Renderers;
   /** Where new sessions start. */
   cwd: string;
-  /** pi's settings of this user (~/.harness/settings.json): theme, output pad, images, thinking blocks. */
+  /** pi's settings of this user (~/.harness/agent/settings.json): theme, output pad, images, thinking blocks. */
   settings: SettingsManager;
-  /** The user's keybindings (~/.harness/keybindings.json), over harness's and pi's. */
+  /** The user's keybindings (~/.harness/agent/keybindings.json), over harness's and pi's. */
   keybindings?: KeybindingsConfig;
   onQuit(): void;
   /** The terminal (a virtual one in tests); the process's by default. */
@@ -109,7 +110,7 @@ export function installKeybindings(user: KeybindingsConfig = {}): void {
       "app.message.dequeue": [],
       "app.message.followUp": [],
       "app.editor.external": [],
-      // the user's own (~/.harness/keybindings.json, as pi reads them) win
+      // the user's own (~/.harness/agent/keybindings.json, as pi reads them) win
       ...(user as Record<string, string[]>),
     } as never),
   );
@@ -1297,8 +1298,9 @@ export class App {
   }
 }
 
-/** The themes the TUI can draw: pi's own and the user's (`~/.harness/themes/*.json`). */
+/** The themes the TUI can draw: pi's own and the user's (`~/.harness/agent/themes/*.json`). */
 export function clientThemes(home: string): string[] {
-  const own = existsSync(join(home, "themes")) ? readdirSync(join(home, "themes")).filter((file) => file.endsWith(".json")).map((file) => file.slice(0, -".json".length)) : [];
+  const dir = join(layoutOf(home).agent, "themes");
+  const own = existsSync(dir) ? readdirSync(dir).filter((file) => file.endsWith(".json")).map((file) => file.slice(0, -".json".length)) : [];
   return ["dark", "light", ...own.sort()];
 }
