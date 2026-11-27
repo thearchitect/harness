@@ -1,19 +1,20 @@
-// The TUI driver: the real TUI (App) on a virtual terminal, connected to a stand's hub like any
-// client. Tests act by keymap action ids (the same ids the app driver uses), type text, press raw
+// The TUI driver: the window `harness` puts together (cli/window.ts: the same client, hub names,
+// log, workbench, start and app) on a virtual terminal, connected to a stand's hub. Tests act by keymap action ids (the same ids the app driver uses), type text, press raw
 // keys, and read what the screen shows: the Workbench's screen (the verdict), the terminal's text,
 // and captures (text, ANSI, PNG) for reports.
 
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { HubConnection } from "#client/connection.ts";
 import type { ActionId } from "#client/input/actions.ts";
-import { ClientModel } from "#client/model/client-model.ts";
-import { ClientLog } from "#client/model/client-log.ts";
-import { Workbench, type Screen } from "#client/workbench/workbench.ts";
+import type { ClientModel } from "#client/model/client-model.ts";
+import type { ClientLog } from "#client/model/client-log.ts";
+import type { Screen, Workbench } from "#client/workbench/workbench.ts";
 import type { ViewStateStore } from "#client/workbench/view-state.ts";
 import { SettingsManager } from "@earendil-works/pi-coding-agent";
-import { App } from "#tui/app.ts";
-import { loadRenderers } from "#tui/presentation.ts";
+import type { App } from "#tui/app.ts";
+import { LOCAL_HUB, startWindow } from "#cli/window.ts";
 import { gridHtml, screenshot } from "../capture/rasterize.ts";
 import { VirtualTerminal } from "./terminal.ts";
 
@@ -23,18 +24,15 @@ export type TuiDriverOptions = {
   cwd: string;
   /** Where the window keeps its state: given, it is restored at the start (a TUI started again). */
   viewStore?: ViewStateStore;
-  /** The window's log, as the TUI keeps it: to its home hub (logs_put). */
-  log?: boolean;
 };
 
 export class TuiDriver {
-  private static readonly logs = new WeakMap<ClientModel, ClientLog>();
-
   /** What the window logged goes to its hub now. */
   async flushLog(): Promise<void> {
-    await TuiDriver.logs.get(this.client)?.flush();
+    await this.log.flush();
   }
 
+  private readonly log: ClientLog;
   readonly terminal: VirtualTerminal;
   readonly client: ClientModel;
   readonly workbench: Workbench;
@@ -43,7 +41,8 @@ export class TuiDriver {
   readonly opened: string[];
   readonly copied: string[];
 
-  private constructor(terminal: VirtualTerminal, client: ClientModel, workbench: Workbench, app: App, outside: { opened: string[]; copied: string[] }) {
+  private constructor(terminal: VirtualTerminal, client: ClientModel, workbench: Workbench, app: App, log: ClientLog, outside: { opened: string[]; copied: string[] }) {
+    this.log = log;
     this.terminal = terminal;
     this.client = client;
     this.workbench = workbench;
@@ -55,51 +54,40 @@ export class TuiDriver {
   /** A TUI on `connection` (the client's home hub), started on a new session in `cwd`. */
   static async start(open: () => Promise<HubConnection>, options: TuiDriverOptions): Promise<TuiDriver> {
     const terminal = new VirtualTerminal(options.columns ?? 140, options.rows ?? 40);
-    const client = new ClientModel();
-    if (options.log === true) {
-      const log = new ClientLog({
-        source: "tui",
-        base: { client: "tui-driver" },
-        upload: () => (client.home !== undefined && client.connections.has(client.home) ? (records) => client.homeRequest("logs_put", { records }) : undefined),
-        level: () => "info",
-      });
-      client.log = log.logger;
-      TuiDriver.logs.set(client, log);
-    } else {
-      // no log
-    }
-    const node = await client.addEndpoint(open, { home: true });
     const outside = { opened: [] as string[], copied: [] as string[] };
-    const workbench = new Workbench(client, {
+    const window = await startWindow({
+      // the window's own home holds nothing here: the stand's hub keeps everything
+      home: mkdtempSync(join(tmpdir(), "tw-")),
       cwd: options.cwd,
-      themes: () => ["dark", "light"],
-      copyText: (text) => outside.copied.push(text),
+      version: "test",
+      connectLocal: open,
+      remotes: [],
+      connectRemote: () => Promise.reject(new Error("a test window has no remote hubs")),
+      start: { kind: "as-left" },
+      // pi's dark theme: the virtual terminal reports no colors of its own
+      settings: SettingsManager.inMemory({ theme: "dark" }),
+      extensions: [],
+      holdsHome: () => false,
       ...(options.viewStore !== undefined ? { viewStore: options.viewStore } : {}),
-    });
-    await workbench.restoreViews();
-    // pi's dark theme: the virtual terminal reports no colors of its own
-    const settings = SettingsManager.inMemory({ theme: "dark" });
-    const app = new App({
-      client,
-      workbench,
-      renderers: await loadRenderers(options.cwd, []),
-      cwd: options.cwd,
-      settings,
+      ownLog: false,
       onQuit: () => undefined,
+      onProblem: (message) => {
+        throw new Error(message);
+      },
       terminal,
       openUrl: (url) => outside.opened.push(url),
       copyText: async (text) => {
         outside.copied.push(text);
       },
     });
-    if (workbench.tabs().length === 0) {
-      await workbench.newTab(node, options.cwd);
+    // a window without tabs chooses a new session's folder; a test starts on a new session in `cwd`, as `harness <dir>`
+    if (window.workbench.tabs().length === 0) {
+      await window.workbench.newTab(LOCAL_HUB, options.cwd);
     } else {
-      // tabs from the user's settings
+      // the window's tabs, from the hub's workspace
     }
-    await app.start();
     await terminal.flushed();
-    return new TuiDriver(terminal, client, workbench, app, outside);
+    return new TuiDriver(terminal, window.client, window.workbench, window.app, window.log, outside);
   }
 
   async act(action: ActionId): Promise<void> {

@@ -25,34 +25,26 @@ import type { Transport } from "#protocol/hub.ts";
 import { parseArgs } from "node:util";
 import { sessionDirectory } from "./args.ts";
 import { HubConnection } from "#client/connection.ts";
-import { ClientModel } from "#client/model/client-model.ts";
-import { Workbench } from "#client/workbench/workbench.ts";
 import { wsTransport } from "#client/ws-transport.ts";
 import { readHubConfig } from "#hub/config.ts";
 import { layoutOf } from "#protocol/layout.ts";
-import { errorFields, isLogLevel } from "#protocol/log.ts";
-import { ClientLog } from "#client/model/client-log.ts";
-import { LogFiles, sweepLogs } from "#hub/log-files.ts";
+import { errorFields } from "#protocol/log.ts";
 import { harnessHome, ensureHome } from "#hub/home.ts";
 import { LocalHub, quitQuestion, versionProblem } from "#hub/local.ts";
 import { Hub } from "#hub/hub.ts";
 import { networkOf } from "#hub/network.ts";
 import { listenUnix, socketAlive, socketPath } from "#hub/endpoints/unix.ts";
 import { sshTransport } from "#hub/endpoints/transports.ts";
-import { connect, hubAdmin, redeemPairing, remoteAdmin } from "./admin.ts";
+import { connect, hubAdmin, remoteAdmin } from "./admin.ts";
 import { claudeBridge } from "./claude-bridge.ts";
 import { piCommand } from "./pi-command.ts";
 import { canExecUpdate, checkUpdates, detectInstall, execUpdate, updateHint, updateLines, type Install, type UpdateState } from "./update.ts";
-import { addRemote, readRemotes, type Remote } from "./remotes.ts";
+import { readRemotes, type Remote } from "./remotes.ts";
 import { logsCommand } from "./logs.ts";
-import { App, clientThemes } from "#tui/app.ts";
-import { loadRenderers } from "#tui/presentation.ts";
+import { LOCAL_HUB, startWindow, type HarnessWindow, type WindowStart } from "./window.ts";
 import { tuiViewStore } from "#tui/view-store.ts";
-import { copyToClipboard } from "#tui/pi-internals.ts";
 
 const DEFAULT_HUB = "default";
-/** How a client names its own machine's hub (the strip reads `inprocess` while this window holds it). */
-const LOCAL_HUB = "local";
 
 /** A terminal draws extensions' components (the component bridge). */
 const TUI_CAPABILITIES = ["component-bridge" as const];
@@ -264,8 +256,7 @@ async function runTui(args: string[]): Promise<void> {
 
   // the local node: another window's or a service's under the socket, or held in this process
   const local = new LocalHub({ home, name: DEFAULT_HUB, harnessVersion: harnessVersion() });
-  let workbench: Workbench | undefined;
-  let app: App | undefined;
+  let window: HarnessWindow | undefined;
   let last: { host: string; pid: number } | undefined;
   let interrupted = 0;
   const open = async (): Promise<HubConnection> => {
@@ -277,51 +268,22 @@ async function runTui(args: string[]): Promise<void> {
       local.observe(welcome.host);
       const problem = versionProblem(harnessVersion(), welcome);
       if (problem !== undefined) {
-        app?.stop();
+        window?.app.stop();
         refuse(problem);
-      } else if (last !== undefined && last.host === "client" && last.pid !== welcome.pid && workbench !== undefined) {
-        workbench.notify("info", `hub ${welcome.hub} moved to ${local.hub !== undefined ? "this window" : "another window"}; ${interrupted} sessions were interrupted`);
+      } else if (last !== undefined && last.host === "client" && last.pid !== welcome.pid && window !== undefined) {
+        window.workbench.notify("info", `hub ${welcome.hub} moved to ${local.hub !== undefined ? "this window" : "another window"}; ${interrupted} sessions were interrupted`);
       } else {
         // the first connection, or the same hub again
       }
       last = { host: welcome.host, pid: welcome.pid };
       // before the client model drops the hub's agents: how many were working when it went away
       connection.onClose(() => {
-        interrupted = [...client.agents.values()].filter((agent) => agent.hub === LOCAL_HUB && agent.summary.status !== "idle").length;
+        interrupted = [...(window?.client.agents.values() ?? [])].filter((agent) => agent.hub === LOCAL_HUB && agent.summary.status !== "idle").length;
       });
       return connection;
     }
   };
 
-  // the local hub, then the remote hubs: each reconnects by itself after a loss
-  const client = new ClientModel();
-  // this window's log: to its hub (this machine's: ~/.harness/log/tui), kept here itself while there is none
-  const files = new LogFiles(layoutOf(home).log, "tui");
-  const windowLog = new ClientLog({
-    source: "tui",
-    base: { client: `tui-${hostname()}-${process.pid}`, pid: process.pid },
-    local: { store: { append: (records) => files.append(records), sweep: (days) => void sweepLogs(files.root, days) }, mirror: false },
-    upload: () => (client.connections.has(LOCAL_HUB) ? (records) => client.connection(LOCAL_HUB).request("logs_put", { records }) : undefined),
-    level: () => {
-      const level = client.settings["log.level"];
-      return isLogLevel(level) ? level : "info";
-    },
-  });
-  client.log = windowLog.logger;
-  client.log.info("start", { harness: harnessVersion(), argv: process.argv.slice(2), cwd, columns: process.stdout.columns, rows: process.stdout.rows, term: process.env.TERM, program: process.env.TERM_PROGRAM });
-  process.on("uncaughtException", (error) => {
-    client.log.error("uncaught", errorFields(error));
-    void windowLog.flush().finally(() => {
-      process.stderr.write(`harness: ${error.stack ?? error.message}\n`);
-      process.exit(1);
-    });
-  });
-  const localHub = await client.addEndpoint(open, { home: true, name: LOCAL_HUB });
-  for (const remote of readRemotes(home)) {
-    await client
-      .addEndpoint(() => openRemote(remote), { home: false, name: remote.name })
-      .catch((error: unknown) => client.offline.set(remote.name, error instanceof Error ? error.message : String(error)));
-  }
   // the bundle's update: checked in the background, upgraded from the panel
   let updateState: UpdateState = { kind: "checking" };
   let install: Install = { kind: "system" };
@@ -331,104 +293,83 @@ async function runTui(args: string[]): Promise<void> {
     void Promise.all([checkUpdates(harnessVersion(), fetch), detectInstall(manifestPath)]).then(([state, found]) => {
       updateState = state;
       install = found;
-      client.changed();
+      window?.client.changed();
     });
   } else {
     updateState = { kind: "dev" };
   }
-  workbench = new Workbench(client, {
+  // a window that holds the hub stops it with it: asked first when agents work or other windows use it
+  const quit = async (confirmed: boolean): Promise<void> => {
+    const question = quitQuestion(local.hub?.activity());
+    if (window === undefined) {
+      process.exit(0); // quit before the window was up
+    } else if (!confirmed && question !== undefined) {
+      window.workbench.confirm(question, "Quit", () => quit(true));
+    } else {
+      await window.app.keepWindow();
+      window.app.stop();
+      window.client.log.info("quit");
+      await window.log.flush();
+      window.client.dispose();
+      await local.close();
+      process.exit(0);
+    }
+  };
+  upgrade = () => {
+    if (install.kind === "profile" && window !== undefined) {
+      const element = install.element;
+      void window.app.keepWindow();
+      window.app.stop();
+      window.client.dispose();
+      void local.close().then(() => execUpdate(element));
+    } else {
+      // a system configuration updates the bundle
+    }
+  };
+
+  // What this start opens: the session asked for; the latest of this directory; a new one in the
+  // directory given; else the window as it was, or choosing a new session's folder without tabs.
+  const start: WindowStart =
+    values.session !== undefined ? { kind: "session", id: values.session } : values.continue === true ? { kind: "continue" } : positionals.length > 0 ? { kind: "new" } : { kind: "as-left" };
+  window = await startWindow({
+    home,
     cwd,
+    version: harnessVersion(),
+    connectLocal: open,
+    remotes: readRemotes(home),
+    connectRemote: openRemote,
+    start,
+    ...(values.model !== undefined ? { model: values.model } : {}),
+    settings,
+    keybindings,
+    extensions: piExtensions(),
     holdsHome: () => local.hub !== undefined,
-    // OSC 52: the terminal puts it on this machine's clipboard (over SSH too)
-    copyText: (text) => void copyToClipboard(text),
-    // + add in the strip: a hub's address and its one-time code; the token goes to remotes.json
-    addHub: async (url, code) => {
-      const name = new URL(url).hostname;
-      const { token } = await redeemPairing(url, code, hostname());
-      const remote: Remote = { name, url, token };
-      addRemote(home, remote);
-      await client.addEndpoint(() => openRemote(remote), { home: false, name });
-    },
-    themes: () => clientThemes(home),
-    viewStore: tuiViewStore(home),
     update: {
       hint: () => updateHint(updateState, Date.now()),
       lines: () => updateLines(updateState, install, Date.now()),
       canRun: () => updateState.kind === "available" && install.kind === "profile" && canExecUpdate(),
       run: async () => upgrade?.(),
     },
+    viewStore: tuiViewStore(home),
+    ownLog: true,
+    onQuit: () => void quit(false),
+    onProblem: (message) => process.stderr.write(`${message}\n`),
   });
-  const renderers = await loadRenderers(cwd, piExtensions());
-  // the window as it was left: each tab's draft and scroll, the active tab, the hub
-  await workbench.restoreViews();
-
-  // What this start opens: the session asked for; the latest of this directory; a new one in the
-  // directory given; else the window as it was, or choosing a new session's folder without tabs.
-  if (values.session !== undefined || values.continue === true) {
-    const sessions = await client.sessions(localHub);
-    const wanted =
-      values.session !== undefined
-        ? sessions.find((session) => session.id.startsWith(values.session ?? ""))
-        : sessions.filter((session) => session.cwd === cwd).sort((a, b) => b.modified - a.modified)[0];
-    if (wanted !== undefined) {
-      await workbench.openSession(localHub, wanted);
-    } else {
-      process.stderr.write(values.session !== undefined ? `no session ${values.session}\n` : "no session in this directory yet: starting a new one\n");
-      await workbench.newTab(localHub, cwd);
-    }
-  } else if (positionals.length > 0) {
-    await workbench.newTab(localHub, cwd);
-  } else if (workbench.tabs().length === 0) {
-    workbench.openNewSession(localHub);
-  } else {
-    // the window's tabs: the active one opens (start)
-  }
-  // --model: the session starts on this model reference (a family takes its newest model)
-  const started = workbench.activeTab();
-  if (values.model !== undefined && started?.agent !== undefined) {
-    await client
-      .connection(started.hub)
-      .call(started.agent.id, { type: "harness_set", model: values.model })
-      .catch((error: unknown) => process.stderr.write(`--model ${values.model}: ${error instanceof Error ? error.message : String(error)}\n`));
-  } else {
-    // the session's own model
-  }
-
-  // a window that holds the hub stops it with it: asked first when agents work or other windows use it
-  const quit = async (confirmed: boolean): Promise<void> => {
-    const question = quitQuestion(local.hub?.activity());
-    if (!confirmed && question !== undefined && workbench !== undefined) {
-      workbench.confirm(question, "Quit", () => quit(true));
-    } else {
-      await app?.keepWindow();
-      app?.stop();
-      client.log.info("quit");
-      await windowLog.flush();
-      client.dispose();
-      await local.close();
-      process.exit(0);
-    }
-  };
-  upgrade = () => {
-    if (install.kind === "profile") {
-      const element = install.element;
-      void app?.keepWindow();
-      app?.stop();
-      client.dispose();
-      void local.close().then(() => execUpdate(element));
-    } else {
-      // a system configuration updates the bundle
-    }
-  };
-  app = new App({ client, workbench, renderers, cwd, settings, keybindings, onQuit: () => void quit(false) });
-  await app.start();
+  const started = window;
+  process.on("uncaughtException", (error) => {
+    started.client.log.error("uncaught", errorFields(error));
+    void started.log.flush().finally(() => {
+      process.stderr.write(`harness: ${error.stack ?? error.message}\n`);
+      process.exit(1);
+    });
+  });
   // what moving the home to its layout did, where the window shows it
   if (moved.length > 0) {
-    workbench.notify("warning", moved.join(" · "));
+    window.workbench.notify("warning", moved.join(" · "));
   } else {
     // the home was in its layout already
   }
-  await app.loadCompletions().catch(() => undefined);
+  await window.app.loadCompletions().catch(() => undefined);
   process.on("SIGTERM", () => void quit(true));
 }
 

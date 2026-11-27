@@ -26,7 +26,7 @@ after(async () => {
 test("one request id from the TUI through the hub to the agent; the answer in the agent's log", async () => {
   const stand = await createStand();
   stands.push(stand);
-  const tui = await TuiDriver.start(() => HubConnection.open(inProcessTransport(stand.hub), "tui", undefined, ["component-bridge"]), { cwd: stand.project, log: true });
+  const tui = await TuiDriver.start(() => HubConnection.open(inProcessTransport(stand.hub), "tui", undefined, ["component-bridge"]), { cwd: stand.project });
   drivers.push(tui);
   stand.script([{ text: "the logged answer" }]);
   await tui.type("a message worth logging");
