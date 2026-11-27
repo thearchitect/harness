@@ -11,7 +11,7 @@ import type { InteractionRequest } from "#protocol/interactions.ts";
 import type { AgentInfo, AgentSummary, WorkspaceTab } from "#protocol/hub.ts";
 import { RequestError } from "../connection.ts";
 import type { HarnessState, RunMode, SubagentInfo, TaskInfo, Variant } from "#protocol/state.ts";
-import type { ActionId } from "../keymap.ts";
+import { actionList, type ActionId } from "../input/actions.ts";
 import type { AgentModel, TranscriptItem } from "../model/agent-model.ts";
 import { agentKey, type ClientModel, type HubApi } from "../model/client-model.ts";
 import { HubDialog } from "./hub-dialog.ts";
@@ -105,7 +105,7 @@ export function subagentHeading(main: Extract<MainZone, { kind: "subagent" }>): 
 /** A subagent: its row in the session's state and its transcript (a `harness` subagent's agent, a `claude` one's stream). */
 export type MainZone =
   | { kind: "transcript" }
-  /** Choosing where a new session starts (Ctrl+T, + new). */
+  /** Choosing where a new session starts (Ctrl/Alt+N, + new). */
   | { kind: "newSession"; choice: NewSession }
   | { kind: "task"; taskId: string; task: TaskInfo | undefined; output: string }
   | {
@@ -191,11 +191,11 @@ export type Screen = {
   prefill: { key: string; text: string } | undefined;
   /** A link the active session asks the operator's browser to open: a UI opens it once per `key`. */
   openUrl: { key: string; url: string } | undefined;
-  /** The active session's terminal, shown over the main area (Ctrl+I): the UI opens it at its size. */
+  /** The active session's terminal, shown over the main area (Ctrl/Alt+/): the UI opens it at its size. */
   terminal: TerminalModel | undefined;
 };
 
-export type PanelId = "madness" | "simple" | "name" | "implementer" | "subagents" | "dependencies" | "hub" | "logs" | "restart" | "update";
+export type PanelId = "madness" | "simple" | "name" | "implementer" | "subagents" | "dependencies" | "hub" | "logs" | "restart" | "update" | `action:${ActionId}`;
 
 /**
  * A row of the harness panel (Ctrl+\): a toggle (on/off, its tone when on) keeps the panel open; an
@@ -309,8 +309,8 @@ function logLine(line: string): string {
 
 /** The commands every UI runs itself (Workbench.clientCommand). */
 export const CLIENT_COMMANDS: { name: string; description: string }[] = [
-  { name: "new", description: "New session (Ctrl+T)" },
-  { name: "open", description: "Open a session (Ctrl+O)" },
+  { name: "new", description: "New session (Ctrl/Alt+N)" },
+  { name: "open", description: "Open a session (Ctrl/Alt+O)" },
   { name: "model", description: "Choose the model (Ctrl+L)" },
   { name: "login", description: "Log in to a provider on this session's hub" },
   { name: "logout", description: "Remove a provider's login on this session's hub" },
@@ -365,6 +365,9 @@ export function tabRecords(client: ClientModel): TabRecord[] {
 function workspaceTab(record: TabRecord): WorkspaceTab {
   return { sessionId: record.sessionId, sessionFile: record.sessionFile ?? "", cwd: record.cwd, ...(record.seen !== undefined ? { seen: record.seen } : {}) };
 }
+
+/** What an action without a session says. */
+const NO_SESSION = "no session here: Ctrl/Alt+N starts one, Ctrl/Alt+O opens one";
 
 /** How long a draft being typed waits before it goes to its hub (and on leaving its tab at once). */
 const DRAFT_SAVE_MS = 1000;
@@ -1332,8 +1335,18 @@ export class Workbench {
         { kind: "action", id: "restart", label: "restart hub", hint: this.panelHub() ?? "" },
       ],
     };
-    return [...mode, harness];
+    // every action with its key here: reached from the panel where no key of it arrives
+    const actions: PanelSection = {
+      title: "actions",
+      items: actionList()
+        .filter((action) => action.id !== "panel.toggle" && action.id !== "editor.newline")
+        .map((action) => ({ kind: "action" as const, id: `action:${action.id}` as const, label: action.description.split(" (")[0]?.split(":")[0] ?? action.id, hint: action.keys })),
+    };
+    return [...mode, harness, actions];
   }
+
+  /** How the UI acts on an action chosen in the panel (its own act: quitting, sending, the strip, the rest the workbench's). */
+  uiAct: ((action: ActionId) => Promise<void> | void) | undefined;
 
   /** The hub the HARNESS rows act on: the active session's, else the home one. */
   private panelHub(): string | undefined {
@@ -1444,7 +1457,10 @@ export class Workbench {
   async choosePanel(value: PanelId): Promise<void> {
     const tab = this.activeTab();
     const agent = tab?.agent !== undefined ? this.client.full.get(agentKey(tab.hub, tab.agent.id)) : undefined;
-    if (value === "update") {
+    if (value.startsWith("action:")) {
+      const action = value.slice("action:".length) as ActionId;
+      await (this.uiAct !== undefined ? this.uiAct(action) : this.act(action));
+    } else if (value === "update") {
       if (this.update?.canRun() === true) {
         await this.update.run();
       } else {
@@ -1509,7 +1525,7 @@ export class Workbench {
     }
   }
 
-  /* ----- actions (keymap.ts): every UI acts through these ----- */
+  /* ----- actions (input/actions.ts): every UI acts through these ----- */
 
   async act(action: ActionId): Promise<void> {
     const tab = this.activeTab();
@@ -1519,7 +1535,7 @@ export class Workbench {
       if (api !== undefined && agentId !== undefined) {
         await api.call(agentId, record);
       } else {
-        this.notify("warning", "no session here: Ctrl+T starts one, Ctrl+O opens one");
+        this.notify("warning", NO_SESSION);
       }
     };
     try {
@@ -1619,7 +1635,9 @@ export class Workbench {
           case "app.quit":
           case "editor.submit":
           case "editor.newline":
-            break; // the UI's own: quitting, its editor
+          case "clipboard.copy":
+          case "clipboard.paste":
+            break; // the UI's own: quitting, its editor, its clipboard
           default:
             throw new Error(`unknown action: ${String(named satisfies never)}`);
         }
@@ -1693,7 +1711,7 @@ export class Workbench {
   async operatorBash(command: string, excludeFromContext: boolean): Promise<void> {
     const tab = this.activeTab();
     if (tab?.agent === undefined) {
-      this.notify("warning", "no session here: Ctrl+T starts one, Ctrl+O opens one");
+      this.notify("warning", NO_SESSION);
     } else {
       try {
         await this.client.connection(tab.hub).call(tab.agent.id, { type: "bash", command, excludeFromContext });
@@ -1818,7 +1836,7 @@ export class Workbench {
   async prompt(text: string, mode: RunMode): Promise<void> {
     const tab = this.activeTab();
     if (tab?.agent === undefined) {
-      this.notify("warning", "no session here: Ctrl+T starts one, Ctrl+O opens one");
+      this.notify("warning", NO_SESSION);
     } else {
       const selected = this.selectedItem(tab);
       const agent = this.client.full.get(agentKey(tab.hub, tab.agent.id));

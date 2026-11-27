@@ -28,8 +28,9 @@ as written.
 | `pi` (interactive) | `harness` — the full-screen multi-session TUI |
 | `pi auth`, `pi config`, `pi mcp`, `pi install`, `pi remove`, `pi uninstall`, `pi list`, `pi update` | `harness auth`, `harness config`, `harness mcp`, `harness install`, `harness remove`, `harness uninstall`, `harness list`, `harness update` — passed to pi on `~/.harness` |
 | `pi --continue`, `pi -c` | `harness -c` |
-| `pi --resume`, `pi -r` | Ctrl+O (or `/open`) in the TUI |
-| `pi --model`, `pi --list-models` | the model list in the TUI (Ctrl+L); references without versions: [extending/models.md](extending/models.md) |
+| `pi --resume`, `pi -r` | Ctrl/Alt+O (or `/open`) in the TUI |
+| pi's keys (emacs chords in the editor, Ctrl+T hiding thinking, Ctrl+D quitting, Ctrl+Z suspending) | harness's own: one policy for every client (`packages/client/src/input/`), global keys with Ctrl and Alt alike, editing without letter chords, thinking always shown ([README](../README.md#using-it)); `~/.harness/agent/keybindings.json` still overrides pi's ids |
+| `pi --model`, `pi --list-models` | the model list in the TUI (Ctrl/Alt+L); references without versions: [extending/models.md](extending/models.md) |
 | `pi --mode`, `pi --print`, `pi -p` | no headless mode of its own: clients speak the hub protocol ([protocol/hub.md](protocol/hub.md)) |
 | `pi --tools`, `pi --no-builtin-tools`, `pi -e`, `pi --extension`, `pi -ne`, `pi --append-system-prompt` | not flags: agents load the bundled extensions and packages (the bundle's manifest) and pi's extension discovery; the system prompt is harness's |
 | `pi --use-theme` | `ui.theme` in the UI settings |

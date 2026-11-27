@@ -31,11 +31,11 @@ The same in the TUI and the app:
   sessions (`+ new` last) and the active session's items (`session` first in its mode's color,
   then its tasks and subagents). Choosing a hub shows its sessions and opens its last active one; new sessions start
   there and the panel's HARNESS rows act on it.
-- `Alt+←` takes the keyboard into the strip (over the screen when it is too narrow for it): one
+- `Ctrl/Alt+S` takes the keyboard into the strip (over the screen when it is too narrow for it): one
   cursor walks all three blocks with `↑`/`↓`, `Enter` (or `Space`) opens, `Esc` goes back to the
   editor; on a session `Delete` closes its tab. A click opens a row, the middle button closes a
   tab, the pointer lights a row up.
-- `Ctrl+T` (or `+ new`) chooses the new session's folder in the chat zone, by typing alone: the
+- `Ctrl/Alt+N` (or `+ new`) chooses the new session's folder in the chat zone, by typing alone: the
   folders of recent sessions (newest first) under `folder ⇒`, which browses the hub's folders.
   Typing filters, `↑`/`↓` choose, `→` opens a folder, `←` goes up, `/` opens the best match (`har/cr/`
   walks down), `~` or `/` first browse from the home or the root, `Enter` starts the session there,
@@ -64,11 +64,11 @@ The same in the TUI and the app:
 
 ## The session's terminal
 
-Ctrl+I shows a terminal over the main area: a shell (the hub user's `$SHELL`) in the session's
+Ctrl/Alt+/ shows a terminal over the main area: a shell (the hub user's `$SHELL`) in the session's
 directory on the session's hub, the same one the TUI shows for that session (`terminal_open`).
 Its first show starts it; hidden, it runs on, and showing it again brings its screen as it is now.
-While it is shown every key is the shell's but the workbench's own (tabs, the panel, Ctrl+I);
-pasting goes to it. When the shell exits, Enter starts another. On a phone the status line's
+While it is shown every key is the shell's but its way out, Ctrl/Alt+/ (the panel's, the tabs'
+and the rest go to the shell); pasting goes to it. When the shell exits, Enter starts another. On a phone the status line's
 `terminal` button shows it, with a strip of keys (↑ ↓ ⏎ Esc Tab Ctrl+C) and a field for typing.
 
 ## What the browser adds

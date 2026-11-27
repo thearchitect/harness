@@ -6,7 +6,7 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { HubConnection } from "#client/connection.ts";
-import type { ActionId } from "#client/keymap.ts";
+import type { ActionId } from "#client/input/actions.ts";
 import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench, type Screen } from "#client/workbench/workbench.ts";
 import type { ViewStateStore } from "#client/workbench/view-state.ts";

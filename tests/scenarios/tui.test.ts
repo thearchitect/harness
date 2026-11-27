@@ -284,12 +284,12 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "Alt+← takes the keyboard into the tabs: ↓ to another, Enter opens it, Esc returns to the editor",
+      name: "Alt+S takes the keyboard into the tabs: ↓ to another, Enter opens it, Esc returns to the editor",
       async run({ stand, clients: { tui } }) {
         await tui.workbench.newTab(tui.client.home ?? "", stand.project);
         await tui.settle();
         assert.equal(tui.screen().active, 1);
-        await tui.press("\x1b[1;3D");
+        await tui.press("\x1bs");
         await tui.press("\x1b[A");
         await tui.press("\r");
         await tui.settle();
@@ -364,10 +364,10 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "a new session: Ctrl+T chooses its folder in the chat zone by typing alone; the tab is the window's until its first message; Esc cancels",
+      name: "a new session: Ctrl+N chooses its folder in the chat zone by typing alone; the tab is the window's until its first message; Esc cancels",
       async run({ stand, clients: { tui } }) {
         const shared = (): { sessionId: string }[] => tui.client.workspaces.get(tui.client.home ?? "")?.tabs ?? [];
-        await tui.press("\x14"); // Ctrl+T
+        await tui.press("\x0e"); // Ctrl+N
         await tui.waitForText((screen) => screen.includes("folder ⇒") && screen.includes("new session"));
         assert.equal(tui.screen().input, "newSession");
         await tui.press("\x1b");
@@ -376,7 +376,7 @@ export const scenario = defineScenario({
 
         // the stand's project is a recent folder: typing its name chooses it, Enter starts there
         const before = tui.workbench.tabs().length;
-        await tui.press("\x14");
+        await tui.press("\x1bn"); // Alt+N alike
         await tui.waitForText((screen) => screen.includes("folder ⇒"));
         for (const key of "project") {
           await tui.press(key);
@@ -394,7 +394,7 @@ export const scenario = defineScenario({
         await tui.waitForText(() => shared().some((record) => record.sessionId === draft?.sessionId));
 
         // closed before a message, nothing of it remains
-        await tui.press("\x14");
+        await tui.press("\x0e");
         await tui.waitForText((screen) => screen.includes("folder ⇒"));
         for (const key of "project") {
           await tui.press(key);
@@ -402,7 +402,7 @@ export const scenario = defineScenario({
         await tui.press("\r");
         await tui.waitForText(() => tui.workbench.activeTab()?.draft === true);
         const empty = tui.workbench.activeTab();
-        await tui.press("\x04"); // Ctrl+D on the empty editor
+        await tui.press("\x17"); // Ctrl+W
         await tui.waitForText(() => !tui.workbench.tabs().some((tab) => tab.sessionId === empty?.sessionId));
         assert.ok(!(await tui.client.sessions(tui.client.home ?? "")).some((session) => session.id === empty?.sessionId), "no file of it");
       },
@@ -456,7 +456,7 @@ export const scenario = defineScenario({
       },
     },
     {
-      name: "keys as in pi: Ctrl+C clears the editor, Ctrl+D deletes forward with text and closes the tab without",
+      name: "harness's keys: Ctrl+C clears the editor, Delete and Ctrl+Z edit, Ctrl+D is nothing, Ctrl+W closes the tab",
       async run({ clients: { tui } }) {
         const tabs = tui.workbench.tabs().length;
         await tui.type("abc");
@@ -465,13 +465,16 @@ export const scenario = defineScenario({
         assert.equal(tui.workbench.tabs().length, tabs, "Ctrl+C neither quits nor closes");
         await tui.type("abc");
         await tui.press("\x1b[D"); // ←: the cursor before c
-        await tui.press("\x04");
+        await tui.press("\x1b[3~"); // Delete
         assert.equal(tui.app.editorText(), "ab");
+        await tui.press("\x1a"); // Ctrl+Z: undone
+        assert.equal(tui.app.editorText(), "abc");
+        await tui.press("\x04"); // Ctrl+D: no key of harness, nothing deleted, nothing closed
+        assert.equal(tui.app.editorText(), "abc");
         assert.equal(tui.workbench.tabs().length, tabs);
-        await tui.press("\x03");
-        await tui.press("\x04");
+        await tui.press("\x17"); // Ctrl+W closes the tab, with a message written too
         await tui.settle();
-        assert.equal(tui.workbench.tabs().length, tabs - 1, "Ctrl+D on an empty editor closes the tab");
+        assert.equal(tui.workbench.tabs().length, tabs - 1, "Ctrl+W closes the tab");
       },
     },
     {

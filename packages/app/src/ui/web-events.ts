@@ -20,6 +20,11 @@ export function useStepKeys(_ref: RefObject<unknown>, _onBack: () => void): void
   // nothing to listen to
 }
 
+/** Phones close a dialog by its Close button. */
+export function useDialogEscape(_onEscape: () => void): void {
+  // nothing to listen to
+}
+
 export function focusList(_label: string): boolean {
   return false;
 }

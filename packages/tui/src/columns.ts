@@ -4,7 +4,7 @@
 // its tasks and subagents). One glyph, then the name; the active row on the selection background;
 // a session's mode in its name's color.
 //
-// The keyboard and the mouse alike: focused (Alt+← from the editor), one cursor walks all three
+// The keyboard and the mouse alike: focused (Ctrl/Alt+S from the editor), one cursor walks all three
 // blocks with ↑/↓, Enter opens its row, Delete closes a session's tab, Esc returns to the editor. A
 // click opens a row, the middle button closes a tab, the pointer over a row lights it up.
 

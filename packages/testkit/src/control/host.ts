@@ -8,7 +8,7 @@ import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { ActionId } from "#client/keymap.ts";
+import type { ActionId } from "#client/input/actions.ts";
 import { decodeRecord, encodeRecord, LineDecoder } from "#protocol/framing.ts";
 import { TuiDriver } from "../drivers/tui.ts";
 import { modelState } from "../report/report.ts";

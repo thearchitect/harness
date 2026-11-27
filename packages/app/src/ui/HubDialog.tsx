@@ -3,13 +3,13 @@
 // selectable without padding, copy and a new code. Keys on web: ↑/↓ move, Enter applies, typing
 // goes into a field, ← on a row goes back, Esc closes; phones: the Back and Close buttons.
 
-import { useEffect, useRef, type ComponentRef } from "react";
+import { useCallback, useEffect, useRef, type ComponentRef } from "react";
 import { View } from "react-native";
 import type { HubDialog } from "#client/workbench/hub-dialog.ts";
 import { useTheme } from "../theme/theme.tsx";
 import { LineField } from "./LineField.tsx";
 import { Button, ListRow, T } from "./primitives.tsx";
-import { focusList, useListKeys, useStepKeys } from "./web-events";
+import { focusList, useDialogEscape, useListKeys, useStepKeys } from "./web-events";
 
 /** A color's relative brightness (0–255) from its hex form. */
 function brightness(color: string): number {
@@ -45,6 +45,7 @@ export function HubDialogBlock({ dialog }: { dialog: HubDialog }) {
   const label = `hub ${dialog.hub}`;
   useListKeys(ref, () => dialog.close());
   useStepKeys(ref, () => dialog.back());
+  useDialogEscape(useCallback(() => dialog.close(), [dialog]));
   useEffect(() => {
     focusList(label);
   }, [dialog.screen.kind]);

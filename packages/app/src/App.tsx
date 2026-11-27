@@ -10,7 +10,7 @@ import type { AgentModel } from "#client/model/agent-model.ts";
 import { ClientModel } from "#client/model/client-model.ts";
 import { Workbench, type Screen } from "#client/workbench/workbench.ts";
 import { wsTransport } from "#client/ws-transport.ts";
-import type { ActionId } from "#client/keymap.ts";
+import type { ActionId } from "#client/input/actions.ts";
 import { modeOfText } from "#protocol/modes.ts";
 // platform modules (`*.web.ts` next to the native one) are imported without an extension: Metro picks the file
 import { forgetDevice, onPhone, readEndpoint, saveDevice, type Endpoint } from "./connect/endpoint";
@@ -454,10 +454,18 @@ function WorkbenchApp() {
     (action: ActionId): void => {
       if (connected === undefined) {
         return;
-      } else if (action === "run.abort" && screen?.zones.editor.kind === "hub") {
-        connected.workbench.dismiss(); // Esc with the focus outside the dialog's rows closes it too
-      } else if ((action === "run.abort" || action === "editor.submit") && (screen?.input === "dialog" || screen?.input === "newSession")) {
-        return; // Esc and Enter belong to the dialog, or to choosing a new session's folder
+      } else if (action === "editor.submit") {
+        submitRef.current();
+      } else if (action === "editor.newline") {
+        setEditorText((current) => `${current}\n`);
+      } else if (action === "clipboard.copy") {
+        setEditorText(""); // nothing selected: the message is cleared
+      } else if (action === "clipboard.paste") {
+        // Alt+V (Ctrl+V is the browser's paste): the clipboard's text into the message
+        void navigator.clipboard
+          ?.readText()
+          .then((text) => setEditorText((current) => `${current}${text}`))
+          .catch(() => connected.workbench.notify("warning", "the browser keeps the clipboard: paste with Ctrl+V"));
       } else if (action === "strip.tabs") {
         // the keyboard into the strip (its sessions); a hidden one comes over the screen first
         if (screen?.strips.left === true || screen?.zones.overlays.includes("tabs") === true) {
@@ -469,9 +477,30 @@ function WorkbenchApp() {
         void connected.workbench.act(action);
       }
     },
-    [connected, screen?.input, screen?.strips.left, screen?.zones.overlays],
+    [connected, screen?.strips.left, screen?.zones.overlays],
   );
-  useEffect(() => listenKeys(act), [act]);
+  // actions chosen in the panel act as their keys do
+  useEffect(() => {
+    if (connected !== undefined) {
+      connected.workbench.uiAct = act;
+    } else {
+      // not connected yet
+    }
+  }, [connected, act]);
+
+  // the window's state as the keyboard's policy reads it (the strip's focus is found by the keyboard)
+  const screenRef = useRef(screen);
+  screenRef.current = screen;
+  useEffect(
+    () =>
+      listenKeys(act, () => ({
+        input: screenRef.current?.input ?? "editor",
+        panel: screenRef.current?.zones.overlays.includes("panel") === true,
+        terminal: screenRef.current?.terminal !== undefined,
+        prompt: false,
+      })),
+    [act],
+  );
 
   const submit = (): void => {
     const text = editorText;
@@ -490,6 +519,9 @@ function WorkbenchApp() {
       })();
     }
   };
+  // the panel's "send" acts on the message as it is now
+  const submitRef = useRef(submit);
+  submitRef.current = submit;
 
   const loadOlder = (agent: AgentModel): void => {
     const tab = connected?.workbench.activeTab();

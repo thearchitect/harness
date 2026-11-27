@@ -1,8 +1,8 @@
 // The session's terminal over the main area, the TUI's twin (plan polish-3 F): a frame in the accent
-// border color, the title naming the directory and the key that hides it (Ctrl+I), the hub's shell
+// border color, the title naming the directory and the key that hides it (Ctrl/Alt+/), the hub's shell
 // as the client's terminal model draws it (ANSI lines in the chrome zone's monospace font). Its size
 // in cells follows the frame. While it is shown every key is the shell's (keyboard.web.ts) but the
-// workbench's own (tabs, the panel, Ctrl+I); pasted text arrives bracketed when the program asks for
+// way out (Ctrl/Alt+/); pasted text arrives bracketed when the program asks for
 // it. On a phone a strip of keys (↑ ↓ ⏎ Esc Tab Ctrl+C) and a field for typing stand under it.
 
 import { useEffect, useLayoutEffect, useReducer, useState } from "react";
@@ -37,7 +37,7 @@ export function TerminalView({ terminal, client, onHide }: { terminal: TerminalM
     () =>
       listenComponentKeys(
         (bytes) => (terminal.state === "exited" && bytes === "\r" ? void terminal.open(terminal.cols, terminal.rows) : terminal.input(bytes)),
-        (action) => action === "terminal.toggle",
+        "terminal",
         () => terminal.bracketedPaste,
       ),
     [terminal],
@@ -65,7 +65,7 @@ export function TerminalView({ terminal, client, onHide }: { terminal: TerminalM
   const key = (bytes: string) => () => terminal.input(bytes);
   return (
     <View accessibilityLabel="terminal" style={{ flex: 1, borderWidth: 1, borderColor: theme.colors.borderAccent, backgroundColor: theme.colors.pageBg }}>
-      <T color="borderAccent" lines={1}>{` terminal · ${terminal.cwd} · ${Platform.OS === "web" ? "Ctrl+I hide" : "terminal hides"} `}</T>
+      <T color="borderAccent" lines={1}>{` terminal · ${terminal.cwd} · ${Platform.OS === "web" ? "Ctrl/Alt+/ hide" : "terminal hides"} `}</T>
       <View onLayout={onLayout} style={{ flex: 1, paddingHorizontal: 2, overflow: "hidden" }}>
         {view.lines.map((raw, index) => {
           const line = parseAnsiLine(raw);

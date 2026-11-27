@@ -1,8 +1,8 @@
-// The session's terminal (plan polish-3 F): Ctrl+I (by the kitty protocol) shows a shell in the
-// session's directory over the main area; hidden, the shell runs on and what it printed meanwhile is
-// there when it shows again; Tab is the shell's while it is shown and the editor's otherwise; without
-// the kitty protocol Alt+I toggles it; another tab hides it, coming back shows it; when the shell
-// exits, Enter starts another.
+// The session's terminal: Ctrl/Alt+/ shows a shell in the session's directory over the main area;
+// hidden, the shell runs on and what it printed meanwhile is there when it shows again; while it is
+// shown every key is the shell's (Tab, Ctrl+C, Esc, Ctrl+\, Ctrl+N) but its way out; without the
+// kitty protocol Ctrl+/ is the byte 0x1f and Alt+/ is ESC /; another tab hides it, coming back shows
+// it; when the shell exits, Enter starts another.
 
 import assert from "node:assert/strict";
 import { realpathSync } from "node:fs";
@@ -13,8 +13,8 @@ import { inProcessTransport } from "#hub/endpoints/transports.ts";
 import { TuiDriver } from "#testkit/drivers/tui.ts";
 import { createStand, type Stand } from "#testkit/stand/stand.ts";
 
-const CTRL_I = "\x1b[105;5u";
-const ALT_I = "\x1bi";
+const CTRL_SLASH = "\x1b[47;5u";
+const ALT_SLASH = "\x1b/";
 
 const stands: Stand[] = [];
 const drivers: TuiDriver[] = [];
@@ -37,10 +37,10 @@ test("the session's terminal: shown and hidden by its key, the shell runs on, Ta
   const project = realpathSync(stand.project);
   const framed = (text: string): boolean => text.includes("╭─ terminal · ");
 
-  // Ctrl+I: the frame, a shell in the session's directory
+  // Ctrl+/: the frame, a shell in the session's directory
   setKittyProtocolActive(true);
-  await tui.press(CTRL_I);
-  await tui.waitForText((text) => framed(text) && text.includes("Ctrl+I hide"));
+  await tui.press(CTRL_SLASH);
+  await tui.waitForText((text) => framed(text) && text.includes("Ctrl/Alt+/ hide"));
   await tui.type("PS1='$ '; cd \"$PWD\"; pwd\r");
   await tui.waitForText((text) => text.includes(`│${project}`) || text.includes(project));
 
@@ -51,12 +51,21 @@ test("the session's terminal: shown and hidden by its key, the shell runs on, Ta
   await tui.type("\r");
   await tui.waitForText((text) => text.includes("hello") && text.includes("tabbed-file.txt"));
 
+  // the workbench's keys are the shell's too: Ctrl+\ and Ctrl+N open neither the panel nor a session
+  const tabs = tui.workbench.tabs().length;
+  await tui.press("\x1c");
+  await tui.press("\x1b[110;5u");
+  await tui.settle();
+  assert.ok(framed(tui.text()) && !tui.screen().zones.overlays.includes("panel"));
+  assert.equal(tui.workbench.tabs().length, tabs);
+  assert.equal(tui.screen().input, "editor");
+
   // hidden, the shell runs on
   await tui.type("sleep 1; echo done-$((20+1))\r");
-  await tui.press(CTRL_I);
+  await tui.press(CTRL_SLASH);
   await tui.waitForText((text) => !framed(text));
   await new Promise((resolve) => setTimeout(resolve, 1500));
-  await tui.press(CTRL_I);
+  await tui.press(ALT_SLASH.replace("\x1b/", "\x1b[47;3u"));
   await tui.waitForText((text) => framed(text) && text.includes("done-21"));
 
   // another tab hides it, coming back shows it
@@ -73,14 +82,14 @@ test("the session's terminal: shown and hidden by its key, the shell runs on, Ta
   await tui.type("echo again-$((1+1))\r");
   await tui.waitForText((text) => framed(text) && text.includes("again-2"));
 
-  // without the kitty protocol: Tab stays the editor's, Alt+I toggles
-  await tui.press(CTRL_I);
+  // without the kitty protocol: Tab stays the editor's; Ctrl+/ (0x1f) and Alt+/ (ESC /) toggle
+  await tui.press(CTRL_SLASH);
   await tui.waitForText((text) => !framed(text));
   setKittyProtocolActive(false);
   await tui.press("\t");
   assert.ok(!framed(tui.text()), "Tab is not the terminal's key");
-  await tui.press(ALT_I);
-  await tui.waitForText((text) => framed(text) && text.includes("Alt+I hide"));
-  await tui.press(ALT_I);
+  await tui.press("\x1f");
+  await tui.waitForText((text) => framed(text));
+  await tui.press(ALT_SLASH);
   await tui.waitForText((text) => !framed(text));
 });

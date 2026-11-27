@@ -65,12 +65,16 @@ playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools)
 - `harness` opens the TUI in the current directory: tabs of open sessions on the left, the active
   session in the middle, its background tasks and subagents on the right. A message plans; a
   message starting with `!` builds (`/simple`: one mode that decides itself). Ctrl+Enter (or
-  Alt+Enter) sends, Ctrl+T opens a new session, Ctrl+O an existing one, Alt+1…9 switches tabs,
-  Ctrl+\ opens the harness panel, Ctrl+F searches the transcript, Ctrl+L chooses the model, Ctrl+I
-  shows a terminal in the session's directory on its hub (Alt+I where the terminal cannot tell
-  Ctrl+I from Tab; the shell runs on while hidden). As in
-  pi, Ctrl+C clears the editor and Ctrl+D on an empty editor closes the session's tab (its agent
-  keeps running); Ctrl+Q quits.
+  Alt+Enter) sends. Every other key of the workbench works with Ctrl and with Alt alike (where one
+  does not reach harness — a browser keeps Ctrl+N, a Mac terminal prints Option+N — the other
+  does): N a new session, O an existing one, W closes the tab (its agent keeps running), 1…9 and
+  PgUp/PgDn switch tabs, S the strip, \ the panel (every action is listed there), / a terminal in
+  the session's directory on its hub (the shell runs on while hidden), F searches the transcript,
+  L chooses the model, E expands tool output, C clears the message, V pastes, Q quits. The message
+  is edited by arrows, Home/End, Ctrl/Alt with ←/→, Backspace and Delete (words), Ctrl/Alt+Z undo;
+  keys are named by their place, so they work in any keyboard layout. One mode owns the keyboard at
+  a time: the chat, a dialog, the panel or the strip, or a terminal (every key is its own but
+  Ctrl/Alt+/).
 - Sessions live on their hub: closing the TUI leaves a hub started as a service (and its
   agents) running; reopening shows everything again. Every client of a user sees the same tabs.
 - Other machines: `harness connect ssh://user@host` (their hub over SSH) or a pairing link from

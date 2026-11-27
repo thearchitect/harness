@@ -67,7 +67,6 @@ export type TranscriptOptions = {
   outputPad: () => 0 | 1;
   transformers: () => readonly MarkdownTransformer[];
   tools: () => ToolExecutionOptions;
-  hideThinking: () => boolean;
   /** At most this many blocks keep their components (`ui.transcript.cacheBlocks`); undefined: no limit. */
   cacheBlocks: () => number | undefined;
 };
@@ -359,7 +358,8 @@ export class TranscriptView implements Component {
 
   private assistant(message: Message): AssistantMessageComponent {
     const [theme, pad, transformers] = this.md();
-    return new AssistantMessageComponent(message as never, this.options.hideThinking(), theme, undefined, pad, transformers);
+    // thinking is shown, always: there is no key to hide it
+    return new AssistantMessageComponent(message as never, false, theme, undefined, pad, transformers);
   }
 
   private toolComponent(store: BlockStore, name: string, id: string, args: unknown): ToolExecutionComponent {

@@ -358,8 +358,8 @@ function Main({ screen, workbench, onLoadOlder, device }: { screen: Screen; work
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center", gap: 8 }}>
           <T color="muted">No session here.</T>
           <View style={{ flexDirection: "row", gap: 6 }}>
-            <Button label="New session" kbd="Ctrl+T" onPress={() => void workbench.act("tabs.new")} />
-            <Button label="Open a session" kbd="Ctrl+O" onPress={() => void workbench.act("tabs.open")} />
+            <Button label="New session" kbd="Ctrl/Alt+N" onPress={() => void workbench.act("tabs.new")} />
+            <Button label="Open a session" kbd="Ctrl/Alt+O" onPress={() => void workbench.act("tabs.open")} />
           </View>
         </View>
       );
@@ -414,16 +414,20 @@ function panesOf(setting: unknown): Panes {
 function Resizer({ label, onResize }: { label: string; onResize: (delta: number) => void }) {
   const theme = useTheme();
   const [hover, setHover] = useState(false);
+  // one responder for the strip's life: made anew by a render in the middle of a drag, it would lose
+  // the drag (the window renders on every change of the hub's state); the latest onResize is read at the end
+  const resize = useRef(onResize);
+  resize.current = onResize;
   const responder = useMemo(
     () =>
       PanResponder.create({
         onStartShouldSetPanResponder: () => true,
         onMoveShouldSetPanResponder: () => true,
         onPanResponderTerminationRequest: () => false,
-        onPanResponderRelease: (_event, gesture) => onResize(gesture.dx),
-        onPanResponderTerminate: (_event, gesture) => onResize(gesture.dx),
+        onPanResponderRelease: (_event, gesture) => resize.current(gesture.dx),
+        onPanResponderTerminate: (_event, gesture) => resize.current(gesture.dx),
       }),
-    [onResize],
+    [],
   );
   return (
     <View
@@ -490,7 +494,7 @@ export function Shell(props: {
             placeholder={
               Platform.OS === "web"
                 ? screen.tab === undefined
-                  ? "Ctrl+T starts a session"
+                  ? "Ctrl/Alt+N starts a session"
                   : "Message (Ctrl+Enter sends; a leading ! asks for BUILD)"
                 : screen.tab === undefined
                   ? "Sessions → + new starts a session"
@@ -503,7 +507,7 @@ export function Shell(props: {
             </T>
           ))}
           {Platform.OS !== "web" && screen.tab !== undefined ? (
-            // a phone has no Ctrl+I: the session's terminal by touch
+            // a phone has no Ctrl/Alt+/: the session's terminal by touch
             <View style={{ flexDirection: "row" }}>
               <Button label="terminal" onPress={() => void workbench.act("terminal.toggle")} />
             </View>

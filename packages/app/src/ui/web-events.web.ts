@@ -85,6 +85,25 @@ export function useStepKeys(ref: RefObject<unknown>, onBack: () => void): void {
   }, [ref, onBack]);
 }
 
+/**
+ * A dialog owns the keyboard (input/policy.ts): Esc closes it wherever the focus is, unless a list or
+ * a field in it took the key already.
+ */
+export function useDialogEscape(onEscape: () => void): void {
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape" && !event.defaultPrevented) {
+        event.preventDefault();
+        onEscape();
+      } else {
+        // another key, or taken by the dialog's list or field
+      }
+    };
+    window.addEventListener("keydown", keydown);
+    return () => window.removeEventListener("keydown", keydown);
+  }, [onEscape]);
+}
+
 /** The keyboard into a list (by its accessible name): on its selected row, else its first. */
 export function focusList(label: string): boolean {
   const list = document.querySelector<HTMLElement>(`[aria-label="${label}"]`);

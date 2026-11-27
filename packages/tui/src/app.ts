@@ -32,7 +32,10 @@ import {
 import type { ComponentMouse } from "#protocol/hap.ts";
 import type { ClientModel } from "#client/model/client-model.ts";
 import type { AgentModel } from "#client/model/agent-model.ts";
-import { ACTIONS, TAB_GOTO_KEYS, type ActionId } from "#client/keymap.ts";
+import { CHAT_ACTIONS, GLOBAL_ACTIONS, globalKeys, hintOf, type ActionId, type GlobalActionId } from "#client/input/actions.ts";
+import { EDITING_KEYS } from "#client/input/editing.ts";
+import { modeOf } from "#client/input/modes.ts";
+import { route, routedKeys } from "#client/input/policy.ts";
 import { LEFT_STRIP_MIN, subagentHeading, type EditorZone, type OverlayKind, type Screen, type StatusLine, type Tab, type TabKey, type Workbench } from "#client/workbench/workbench.ts";
 import type { ScrollAnchor, TabView } from "#client/workbench/view-state.ts";
 import type { InteractionRequest } from "#protocol/interactions.ts";
@@ -74,7 +77,7 @@ export type AppOptions = {
   renderers: Renderers;
   /** Where new sessions start. */
   cwd: string;
-  /** pi's settings of this user (~/.harness/agent/settings.json): theme, output pad, images, thinking blocks. */
+  /** pi's settings of this user (~/.harness/agent/settings.json): theme, output pad, images. */
   settings: SettingsManager;
   /** The user's keybindings (~/.harness/agent/keybindings.json), over harness's and pi's. */
   keybindings?: KeybindingsConfig;
@@ -90,22 +93,27 @@ export type AppOptions = {
 };
 
 /**
- * pi's keybindings with harness's keys: the editor's (Ctrl+Enter sends, Enter starts a new line) and
- * the app's, so the hints pi's components show name harness's keys. pi's defaults that harness gives
- * other work (Ctrl+T, Alt+↑, Ctrl+G) are unbound.
+ * pi's keybindings from harness's tables (client/input): editing without letter chords
+ * (editing.ts), the chat's keys and the global ones (actions.ts), so pi's components act and hint
+ * with harness's keys; pi's defaults harness gives other work (Ctrl+T, Ctrl+Z suspending, Ctrl+V
+ * pasting an image, Ctrl+G's editor) are unbound.
  */
 export function installKeybindings(user: KeybindingsConfig = {}): void {
-  const keys = (action: keyof typeof ACTIONS): string[] => [...ACTIONS[action].keys];
+  const global = (action: GlobalActionId): string[] => globalKeys(GLOBAL_ACTIONS[action].key);
   setKeybindings(
     piKeybindings({
-      "tui.input.submit": keys("editor.submit"),
-      "tui.input.newLine": keys("editor.newline"),
-      "app.interrupt": keys("run.abort"),
-      "app.exit": keys("app.quit"),
-      "app.thinking.cycle": keys("thinking.cycle"),
-      "app.model.select": keys("model.select"),
-      "app.model.cycleForward": keys("model.cycle"),
-      "app.tools.expand": keys("tools.expand"),
+      ...EDITING_KEYS,
+      "tui.input.submit": [...CHAT_ACTIONS["editor.submit"].keys],
+      "tui.input.newLine": [...CHAT_ACTIONS["editor.newline"].keys],
+      "app.interrupt": [...CHAT_ACTIONS["run.abort"].keys],
+      "app.thinking.cycle": [...CHAT_ACTIONS["thinking.cycle"].keys],
+      "app.exit": global("app.quit"),
+      "app.model.select": global("model.select"),
+      "app.model.cycleForward": global("model.cycle"),
+      "app.tools.expand": global("tools.expand"),
+      "app.clear": global("clipboard.copy"),
+      "app.suspend": [],
+      "app.clipboard.pasteImage": [],
       "app.thinking.toggle": [],
       "app.message.dequeue": [],
       "app.message.followUp": [],
@@ -117,40 +125,24 @@ export function installKeybindings(user: KeybindingsConfig = {}): void {
 }
 
 /**
- * The key that shows and hides the session's terminal here: Ctrl+I where the terminal reports it
- * apart from Tab (the kitty protocol), Alt+I elsewhere (Ctrl+I is Tab's byte there).
+ * A key's name among those the policy routes (pi-tui's matchesKey reads the kitty protocol's base
+ * layout key, so Ctrl+N is Ctrl+N in a Russian layout). Without the kitty protocol Ctrl+/ comes as
+ * 0x1f, the byte of Ctrl+- too: harness reads it as Ctrl+/ (Ctrl+- is no key of harness).
  */
-export function terminalToggleKey(): "ctrl+i" | "alt+i" {
-  return isKittyProtocolActive() ? "ctrl+i" : "alt+i";
-}
-
-function isTerminalToggle(data: string): boolean {
-  return terminalToggleKey() === "ctrl+i" ? data !== "\t" && matchesKey(data, "ctrl+i") : matchesKey(data, "alt+i");
-}
-
-export function actionOf(data: string): ActionId | undefined {
-  if (isTerminalToggle(data)) {
-    return "terminal.toggle";
-  } else if (matchesKey(data, "ctrl+i") || matchesKey(data, "alt+i")) {
-    return undefined; // Tab (or Alt+I where Ctrl+I toggles): the focused component's
+export function keyNameOf(data: string): string | undefined {
+  if (data === "\x1f") {
+    return "ctrl+/";
   } else {
-    // another key
+    return ROUTED_KEYS.find((key) => matchesKey(data, key as never));
   }
-  for (const goto of TAB_GOTO_KEYS) {
-    if (matchesKey(data, goto.key as never)) {
-      return goto.action;
-    } else {
-      // another key
-    }
-  }
-  for (const [action, spec] of Object.entries(ACTIONS)) {
-    if (spec.keys.some((key) => matchesKey(data, key as never))) {
-      return action as ActionId;
-    } else {
-      // another action
-    }
-  }
-  return undefined;
+}
+
+// characters before named keys: pi-tui also reads the legacy ESC p and ESC n as Alt+↑ and Alt+↓,
+// while terminals send those as CSI sequences and ESC p as Alt+P
+const ROUTED_KEYS = [...routedKeys()].sort((a, b) => Number(baseLength(a) > 1) - Number(baseLength(b) > 1));
+
+function baseLength(key: string): number {
+  return key.endsWith("+") ? 1 : (key.split("+").at(-1)?.length ?? 0);
 }
 
 function statusColor(theme: Theme, line: StatusLine, mode: Screen["zones"]["editor"]): string {
@@ -295,7 +287,9 @@ export class App {
     this.openUrl = options.openUrl ?? openBrowser;
     this.copyText = options.copyText ?? copyToClipboard;
     this.workbench = options.workbench;
-    // a login on another machine's node: the browser's way back comes through this machine
+    // actions chosen in the panel act as their keys do
+    this.workbench.uiAct = (action) => this.act(action);
+    // a login on another machine's hub: the browser's way back comes through this machine
     this.loginCallback = new LoginCallback(
       (node) => node === undefined || node === this.client.home,
       (interactionId, answer) => this.workbench.answer(interactionId, answer),
@@ -648,7 +642,7 @@ export class App {
         const task = main.task;
         this.taskOutput.lines = [
           theme.bold(` ${task?.command ?? main.taskId}`),
-          theme.fg("dim", ` ${task?.state ?? ""}${task?.exitCode !== undefined ? ` · exit ${task.exitCode}` : ""} · Alt+↑ back`),
+          theme.fg("dim", ` ${task?.state ?? ""}${task?.exitCode !== undefined ? ` · exit ${task.exitCode}` : ""} · Ctrl/Alt+↑ back`),
           "",
           ...main.output.split("\n"),
         ];
@@ -656,7 +650,7 @@ export class App {
       }
       case "subagent": {
         // its transcript (a harness subagent's session, a claude subagent's stream), steered from the editor
-        this.subagentHeading.lines = [getTheme().fg("dim", ` ${subagentHeading(main)} · Alt+↑ back`)];
+        this.subagentHeading.lines = [getTheme().fg("dim", ` ${subagentHeading(main)} · Ctrl/Alt+↑ back`)];
         if (main.agent !== undefined) {
           this.swapMain(this.transcript);
           this.transcript.show(main.agent);
@@ -934,7 +928,7 @@ export class App {
     }
     if (model !== undefined && this.terminalOverlay === undefined) {
       const failed = (error: unknown): void => this.workbench.notify("error", `terminal: ${error instanceof Error ? error.message : String(error)}`);
-      const view = new TerminalView(model, getTheme, () => geometry.height, () => (terminalToggleKey() === "ctrl+i" ? "Ctrl+I" : "Alt+I"), failed);
+      const view = new TerminalView(model, getTheme, () => geometry.height, () => hintOf(GLOBAL_ACTIONS["terminal.toggle"].key), failed);
       const handle = this.tui.showOverlay(view, {
         width: geometry.width,
         col: geometry.col,
@@ -1005,7 +999,7 @@ export class App {
           edit: (id, text) => (id === "name" ? this.workbench.editSessionName(text) : undefined),
           leave: (id) => (id === "name" ? void this.workbench.commitSessionName() : undefined),
           close: () => this.workbench.closeOverlay("panel"),
-          closeKeys: ACTIONS["panel.toggle"].keys,
+          closeKeys: globalKeys(GLOBAL_ACTIONS["panel.toggle"].key),
         });
         const handle = this.tui.showOverlay(panel, { width: PANEL_WIDTH, minWidth: PANEL_MIN_WIDTH, anchor: "top-right" });
         this.tui.setFocus(panel);
@@ -1081,7 +1075,6 @@ export class App {
       outputPad: () => this.settings.getOutputPad(),
       transformers: () => [mermaid, ...this.renderers.markdownTransformers],
       tools: () => ({ showImages: this.settings.getShowImages(), imageWidthCells: this.settings.getImageWidthCells(), outputPad: this.settings.getOutputPad() }),
-      hideThinking: () => this.settings.getHideThinkingBlock(),
       cacheBlocks: () => {
         const limit = this.client.settings["ui.transcript.cacheBlocks"];
         return typeof limit === "number" && limit > 0 ? limit : undefined;
@@ -1104,48 +1097,18 @@ export class App {
     }
     // keys and the wheel scroll the transcript: at its top, the older entries come next
     setImmediate(() => (this.screen !== undefined && this.screen.zones.main.kind === "transcript" ? this.loadOlderAtTop(this.screen) : undefined));
-    const action = actionOf(data);
-    const input = this.screen?.input ?? "editor";
-    const inStrip = this.stripFocused && this.strip.focused;
-    const inPanel = this.overlayHandles.has("panel");
-    if (this.terminalOverlay !== undefined && action !== "terminal.toggle") {
-      return undefined; // every other key is the shell's
-    } else if ((inStrip || inPanel || input === "newSession") && (action === undefined || action === "run.abort" || action === "editor.submit" || action === "editor.newline")) {
-      return undefined; // the strip's, the panel's or the folder choice's own keys: arrows, Enter, Space, Delete, Esc, typing
-    } else if (matchesKey(data, "ctrl+c" as never)) {
-      // as in pi: Ctrl+C clears the editor; in dialogs and lists it is theirs (cancel)
-      if (input === "editor" || input === "subagent" || input === "task") {
-        this.editor.setText("");
-        return { consume: true };
-      } else {
-        return undefined;
-      }
-    } else if (matchesKey(data, "ctrl+v" as never) && (input === "editor" || input === "subagent" || input === "task")) {
-      void this.paste();
-      return { consume: true };
-    } else if (action === "tabs.close" && !((input === "editor" || input === "subagent" || input === "task") && this.editor.getText() === "")) {
-      return undefined; // Ctrl+D closes the tab only from an empty editor; with text the editor deletes forward
-    } else if (action === "editor.submit" && (input === "editor" || input === "subagent" || input === "task")) {
-      // the app submits: pi-tui's editor takes Alt+Enter for a new line
-      const text = this.editor.getExpandedText();
-      this.editor.setText("");
-      void this.submit(text);
-      return { consume: true };
-    } else if (action === undefined || action === "editor.submit" || action === "editor.newline") {
-      return undefined;
-    } else if (input === "component") {
-      return undefined; // every key belongs to the extension's component
-    } else if (action === "run.abort") {
-      if (input === "dialog" || input === "picker") {
-        return undefined; // Esc belongs to the dialog or the list
-      } else {
-        void this.act(action);
-        return { consume: true };
-      }
-    } else if (action === "thinking.cycle" && input === "dialog") {
-      return undefined; // Shift+Tab moves inside a dialog
+    const mode = modeOf({
+      input: this.screen?.input ?? "editor",
+      panel: this.overlayHandles.has("panel"),
+      strip: this.stripFocused && this.strip.focused,
+      terminal: this.terminalOverlay !== undefined,
+      prompt: false,
+    });
+    const routed = route(mode, keyNameOf(data));
+    if (routed.kind === "owner" || routed.action === "editor.newline") {
+      return undefined; // the editor's, the dialog's, the list's, the captor's
     } else {
-      void this.act(action);
+      void this.act(routed.action);
       return { consume: true };
     }
   }
@@ -1182,9 +1145,21 @@ export class App {
     }
   }
 
+  /** An action, from a key or the panel: the TUI's own (quitting, its editor, the strip), else the workbench's. */
   async act(action: ActionId): Promise<void> {
     if (action === "app.quit") {
       this.onQuit();
+    } else if (action === "editor.submit") {
+      // the app submits: pi-tui's editor would take Alt+Enter for a new line
+      const text = this.editor.getExpandedText();
+      this.editor.setText("");
+      await this.submit(text);
+    } else if (action === "editor.newline") {
+      this.editor.insertTextAtCursor("\n");
+    } else if (action === "clipboard.copy") {
+      this.editor.setText("");
+    } else if (action === "clipboard.paste") {
+      await this.paste();
     } else if (action === "strip.tabs") {
       if (this.stripFocused) {
         this.leaveStrip();
@@ -1236,7 +1211,7 @@ export class App {
     }
   }
 
-  /** Whether the keyboard is in the strip (Alt+←). */
+  /** Whether the keyboard is in the strip (Ctrl/Alt+S). */
   private stripFocused = false;
 
   /** The keyboard into the strip; hidden on a narrow screen, it comes over it first. */

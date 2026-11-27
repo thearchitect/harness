@@ -29,7 +29,7 @@ export function spanStyle(style: AnsiStyle, colors: { text: string; pageBg: stri
 
 /** The keys go to the component while it is open (keyboard.web.ts); the workbench keeps its own. */
 function useComponentKeys(workbench: Workbench, componentId: string): void {
-  useEffect(() => listenComponentKeys((bytes) => void workbench.componentInput(componentId, bytes)), [workbench, componentId]);
+  useEffect(() => listenComponentKeys((bytes) => void workbench.componentInput(componentId, bytes), "component"), [workbench, componentId]);
 }
 
 export function ComponentView({ component, workbench, rows }: { component: BridgedComponent; workbench: Workbench; rows?: number }) {
