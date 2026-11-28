@@ -74,8 +74,11 @@ export class Telemetry {
 
   log(event: TelemetryEvent): void {
     const { event: name, ...fields } = event;
-    const failed = (name === "op" && "error" in fields && fields.error !== undefined) || (name === "agent_exit" && "error" in fields && fields.error !== undefined);
-    this.files.log(failed ? "error" : WARN.has(name) ? "warn" : "info", name, fields);
+    const error = "error" in fields && typeof fields.error === "string" ? fields.error : undefined;
+    // a revision conflict is the protocol's normal answer to two writers: the client applies its change again
+    const expected = error?.startsWith("conflict:") === true;
+    const failed = (name === "op" || name === "agent_exit") && error !== undefined;
+    this.files.log(failed && !expected ? "error" : failed || WARN.has(name) ? "warn" : "info", name, fields);
   }
 
   /** A debug record (the level decides whether it is written). */

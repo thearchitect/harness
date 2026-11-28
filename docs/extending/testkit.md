@@ -27,9 +27,15 @@ with a report.
 
 ## Reports and screens
 
+After every step the run checks what no scenario may leave behind: a TUI whose active session
+shows its editor without a live agent, and `error` records in the log the step did not provoke on
+purpose (a step names those in `errors: [/…/]`). Either fails the step.
+
 `.test-reports/<run>/<scenario>/` (latest: `.test-reports/latest`) holds every client's protocol;
-on a failure also `report.md`, the agents' logs, the sessions, each client's model state and the
-screens (text, ANSI, PNG) at the failing step and the last step that passed.
+on a failure also `report.md`, the log of every source merged by time (`log.txt`: one request's
+records in the window, the hub and the agent side by side), the agents' logs, the sessions, each
+client's model state and the screens (text, ANSI, PNG) at the failing step and the last step that
+passed.
 `harness-test … --shots all` captures every step.
 
 ## The product

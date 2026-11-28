@@ -11,6 +11,8 @@ import { RawDriver } from "../drivers/raw.ts";
 import { WebDriver } from "../drivers/web.ts";
 import { createStand, type Stand, type StandOptions } from "../stand/stand.ts";
 import { Report } from "../report/report.ts";
+import { agentKey } from "#client/model/client-model.ts";
+import { readLogs } from "#hub/log-files.ts";
 
 export type ClientKind = "tui" | "raw" | "web";
 
@@ -30,7 +32,15 @@ export type ScenarioContext<C extends Record<string, ClientSpec>> = {
   memo: Record<string, unknown>;
 };
 
-export type Step<C extends Record<string, ClientSpec>> = { name: string; run(context: ScenarioContext<C>): Promise<void> };
+export type Step<C extends Record<string, ClientSpec>> = {
+  name: string;
+  run(context: ScenarioContext<C>): Promise<void>;
+  /**
+   * Errors the step provokes on purpose (a missing file, a refused code): `error` records of the
+   * log matching one of these (`<source> <event> <the record as JSON>`) do not fail it.
+   */
+  errors?: RegExp[];
+};
 
 export type Scenario<C extends Record<string, ClientSpec> = Record<string, ClientSpec>> = {
   name: string;
@@ -98,6 +108,7 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
           timer = setTimeout(() => reject(new Error(`step "${step.name}" hung for ${STEP_TIMEOUT_MS / 1000}s`)), STEP_TIMEOUT_MS);
         });
         await Promise.race([step.run(this.context), hang]).finally(() => clearTimeout(timer));
+        await this.healthy(step);
         this.next += 1;
         await this.report.passed(step.name);
         return step;
@@ -105,6 +116,49 @@ export class ScenarioRun<C extends Record<string, ClientSpec> = Record<string, C
         await this.report.failed(step.name, error);
         throw error;
       }
+    }
+  }
+
+  /** Where the log was read up to: each step answers for the errors after it. */
+  private loggedSince = new Date().toISOString();
+
+  /**
+   * After every step, what no scenario may leave behind: a window whose active session (its editor
+   * shown) has no live agent — the session no agent serves of af6df52 — and errors in the log the
+   * step did not provoke on purpose.
+   */
+  private async healthy(step: Step<C>): Promise<void> {
+    const problems: string[] = [];
+    for (const [name, client] of Object.entries(this.context.clients) as [string, Driver][]) {
+      if (client instanceof TuiDriver) {
+        const live = (): boolean => {
+          const tab = client.workbench.activeTab();
+          return client.screen().input !== "editor" || tab === undefined || tab.unavailable !== undefined || (tab.agent !== undefined && client.client.full.has(agentKey(tab.hub, tab.agent.id)));
+        };
+        for (let tries = 0; !live() && tries < 100; tries += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 50));
+        }
+        if (!live()) {
+          const tab = client.workbench.activeTab();
+          problems.push(`${name}: the active session ${tab?.sessionId ?? "?"} shows its editor without a live agent (agent ${tab?.agent?.id ?? "none"})`);
+        } else {
+          // its session is served, or no session's editor shows
+        }
+      } else {
+        // the web's and a raw client's state is checked by their own steps
+      }
+    }
+    const since = this.loggedSince;
+    this.loggedSince = new Date().toISOString();
+    const errors = readLogs(this.context.stand.layout.log, { since: Date.parse(since) })
+      .filter((record) => record.level === "error")
+      .map((record) => `${record.source} ${record.event} ${JSON.stringify(record)}`)
+      .filter((line) => !(step.errors ?? []).some((allowed) => allowed.test(line)));
+    problems.push(...errors.map((line) => `the log: ${line.slice(0, 400)}`));
+    if (problems.length > 0) {
+      throw new Error(`step "${step.name}" left the product unhealthy:\n${problems.join("\n")}`);
+    } else {
+      // healthy
     }
   }
 

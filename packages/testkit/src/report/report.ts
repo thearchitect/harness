@@ -1,6 +1,7 @@
 // The report of a scenario: `.test-reports/<run>/<scenario>/` (`.test-reports/latest` points at
 // the newest run). Always: every client's protocol (protocol/<client>.jsonl). On a failure: report.md
-// (the step, what was expected and what came, links), the agents' logs, copies of the sessions,
+// (the step, what was expected and what came, links), the log of every source merged by time
+// (log.txt), the agents' logs, copies of the sessions,
 // each client's model state, and every client's screen at the failing step and at the last step
 // that passed. Enough to understand a failure without running it again.
 
@@ -11,6 +12,7 @@ import type { RawDriver } from "../drivers/raw.ts";
 import { TuiDriver } from "../drivers/tui.ts";
 import { WebDriver } from "../drivers/web.ts";
 import type { Stand } from "../stand/stand.ts";
+import { formatLogRecord, readLogs } from "#hub/log-files.ts";
 
 const ROOT = join(import.meta.dirname, "..", "..", "..", "..");
 
@@ -99,6 +101,9 @@ export class Report {
     }
     const models = await this.models();
     const copied = this.copyStand();
+    // every source's log merged by time: the window's, the hub's and the agents' records of one request side by side
+    const merged = join(this.dir, "log.txt");
+    writeFileSync(merged, `${readLogs(this.stand.layout.log).map(formatLogRecord).join("\n")}\n`);
     const message = error instanceof Error ? (error.stack ?? error.message) : String(error);
     const link = (path: string): string => `[${relative(this.dir, path)}](${relative(this.dir, path)})`;
     writeFileSync(
@@ -118,6 +123,9 @@ export class Report {
         "## Screens",
         ...screens.map((file) => `- ${link(file)}`),
         ...(this.lastPassed !== undefined ? [`- last passed step "${this.lastPassed.step}": screens/${slug(this.lastPassed.step)}-*`] : []),
+        "",
+        "## The log (every source, by time)",
+        `- ${link(merged)}`,
         "",
         "## Models",
         ...models.map((file) => `- ${link(file)}`),
