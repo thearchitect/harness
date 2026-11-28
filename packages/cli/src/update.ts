@@ -32,6 +32,8 @@ export type PinChange = { component: string; from: string; to: string };
 export type UpdateState =
   | { kind: "checking" }
   | { kind: "dev" }
+  /** HARNESS_UPDATE_CHECK=off: not asked (machines without the network, tests of the product). */
+  | { kind: "off" }
   | { kind: "current" }
   | { kind: "available"; count: number; latest: Date; changes: PinChange[] }
   | { kind: "failed"; reason: string };
@@ -175,6 +177,8 @@ export function updateHint(state: UpdateState, now: number): string {
       return "checking…";
     case "dev":
       return "dev build";
+    case "off":
+      return "not checked";
     case "current":
       return "up to date";
     case "available":
@@ -193,6 +197,8 @@ export function updateLines(state: UpdateState, install: Install, now: number): 
       return ["Update: checking…"];
     case "dev":
       return ["Update: dev build, not checked"];
+    case "off":
+      return ["Update: not checked (HARNESS_UPDATE_CHECK=off)"];
     case "current":
       return ["Update: up to date"];
     case "failed":

@@ -3,10 +3,10 @@
  "rows": [
   "  inprocess       │",
   "+ add             │◆ PLAN",
-  "──────────────────│       ╭─ terminal · /tmp/hs-XXXXXX/project · Ctrl/Alt+/ hide ──────────────────────────────╮",
-  "  run a command...│◆ Syste│sh-5.3$ echo screens-$((40+2))                                                      │",
+  "──────────────────│       ╭─ terminal · ~~~~~~~~~~~~~~~~~~~~~~~~/project · Ctrl/Alt+/ hide ────────────────────╮",
+  "  run a command...│◆ Syste│$ echo screens-$((40+2))                                                            │",
   "+ new             │       │screens-42                                                                          │",
-  "                  │       │sh-5.3$                                                                             │",
+  "                  │       │$                                                                                   │",
   "                  │ run a │                                                                                    │",
   "                  │       │                                                                                    │",
   "                  │       │                                                                                    │",
@@ -39,7 +39,7 @@
   "                  │       │                                                                                    │",
   "                  │───────│                                                                                    │────────",
   "                  │ mc: 20╰────────────────────────────────────────────────────────────────────────────────────╯",
-  "                  │ local:/tmp/hs-XXXXXX/project                                   scenario/scripted · ctx 00% · $0.000",
+  "                  │ local:~~~~~~~~~~~~~~~~~~~~~~~~/project                         scenario/scripted · ctx 00% · $0.000",
   "                  │ ✻ you shall not pass ✻ session xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
  ],
  "styles": [

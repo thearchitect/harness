@@ -58,7 +58,8 @@ Hubs as services: [docs/operations/nixos.md](docs/operations/nixos.md); a hub on
 [docs/operations/fly.md](docs/operations/fly.md). Upgrade: rerun the script, or `nix flake update
 harness` and rebuild. Host settings: `HARNESS_BROWSER` (your own Chrome/Chromium for `browser` and
 playwright), `HARNESS_BROWSER_USER_DATA_DIR` (its profile for chromium-devtools), `HARNESS_HOME`
-(instead of `~/.harness`).
+(instead of `~/.harness`), `HARNESS_UPDATE_CHECK=off` (the window does not ask GitHub for a newer
+bundle).
 
 ## Using it
 

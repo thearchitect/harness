@@ -120,9 +120,13 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
   };
 }
 
+/** How long a stand's root is (`<tmpdir>/hs-…-XXXXXX`) where the temporary directory is short enough. */
+export const STAND_ROOT_WIDTH = 24;
+
 export function createStandHome(options: Pick<StandOptions, "server" | "claudeCommand" | "mcpProbe"> = {}): StandHome {
-  // short: unix socket paths are limited to about 100 bytes
-  const root = mkdtempSync(join(tmpdir(), "hs-"));
+  // short: unix socket paths are limited to about 100 bytes; and of one width wherever the temporary
+  // directory is (/tmp, a build's /build): screens show the project's path, and compare between machines
+  const root = mkdtempSync(join(tmpdir(), `hs-${"-".repeat(Math.max(0, STAND_ROOT_WIDTH - tmpdir().length - 10))}`));
   const dataDir = join(root, "h");
   const project = join(root, "project");
   // the agents' temp directory is scratch space in every mode: a sibling of the project, so the project is not inside it

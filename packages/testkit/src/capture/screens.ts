@@ -22,12 +22,15 @@ import { gridHtml, screenshot, type TerminalColors } from "./rasterize.ts";
 
 /** Values that change from run to run, each written as a placeholder of the same width. */
 const VOLATILE: [RegExp, (match: string) => string][] = [
-  [/\/tmp\/hs-[A-Za-z0-9]{6}/g, () => "/tmp/hs-XXXXXX"],
+  // a stand's root (STAND_ROOT_WIDTH wide wherever the temporary directory is)
+  // (its padding of dashes known, its random end may be cut short by a narrow screen)
+  [/\/[\w./-]*?\/hs-(?:-+[A-Za-z0-9]{0,6}|[A-Za-z0-9]{6})/g, (root) => "~".repeat(root.length)],
   // session ids, whole or cut short by a narrow screen
   [/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f-]*/g, (id) => id.replace(/[0-9a-f]/g, "x")],
   [/\ba\d+-[0-9a-f]{4}\b/g, (id) => id.replace(/-[0-9a-f]{4}$/, "-xxxx")],
   [/\b\d{4}-\d{2}-\d{2}\b/g, () => "2000-01-01"],
-  [/\b\d{1,2}:\d{2}(:\d{2})?\b/g, (time) => time.replace(/\d/g, "0")],
+  // times, whole or cut short by a narrow screen
+  [/\b\d{1,2}:\d{1,2}(:\d{0,2})?/g, (time) => time.replace(/\d/g, "0")],
   [/\b\d+(\.\d+)?(ms|s|m|h|d)\b/g, (span) => span.replace(/\d/g, "0")],
   [/\$\d+\.\d+/g, (cost) => cost.replace(/\d/g, "0")],
   [/\b\d+(\.\d+)?[KkMm]?\s?\(\d+%\)/g, (size) => size.replace(/\d/g, "0")],
@@ -178,13 +181,13 @@ export async function webRules(page: Page): Promise<string[]> {
 /** The page's volatile values written as placeholders, so its pixels compare between runs. */
 async function normalizePage(page: Page): Promise<void> {
   await page.evaluate((patterns: [string, string, string][]) => {
-    const rules = patterns.map(([source, flags, fixed]) => ({ pattern: new RegExp(source, flags), fixed }));
+    const rules = patterns.map(([source, flags, fill]) => ({ pattern: new RegExp(source, flags), fill }));
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
     for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
       let text = node.textContent ?? "";
       // digits become 0 and letters x: the same width, the same on every run
       for (const rule of rules) {
-        text = text.replace(rule.pattern, (match) => (rule.fixed !== "" ? rule.fixed : match.replace(/\d/g, "0").replace(/[A-Za-z]/g, "x")));
+        text = text.replace(rule.pattern, (match) => (rule.fill !== "" ? rule.fill.repeat(match.length) : match.replace(/\d/g, "0").replace(/[A-Za-z]/g, "x")));
       }
       if (text !== node.textContent) {
         node.textContent = text;
@@ -195,8 +198,8 @@ async function normalizePage(page: Page): Promise<void> {
     for (const field of document.querySelectorAll("textarea, input")) {
       (field as HTMLInputElement).style.caretColor = "transparent";
     }
-    // a replacement that does not depend on the match (a temporary path) goes as it is
-  }, VOLATILE.map(([pattern, replace]) => [pattern.source, pattern.flags, replace("") === replace("a") ? replace("") : ""] as [string, string, string]));
+    // a replacement that fills the match with one character (a stand's root) goes as that character
+  }, VOLATILE.map(([pattern, replace]) => [pattern.source, pattern.flags, replace("ab") === "~~" ? "~" : ""] as [string, string, string]));
 }
 
 /** How many pixels differ (a channel off by more than 24), and their picture. */

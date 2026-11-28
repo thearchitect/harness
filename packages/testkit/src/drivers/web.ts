@@ -2,7 +2,8 @@
 // browser driven by Playwright. Verdicts read what a user's assistive technology reads — roles and
 // accessible names (ARIA) — and the screen state the page publishes; screenshots are for looking.
 
-import { writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Browser, Page } from "playwright-core";
 import type { Transport } from "#protocol/hub.ts";
@@ -64,7 +65,9 @@ export class WebDriver {
       // a fake microphone (a tone) that needs no permission prompt: voice input runs unattended
       const browser = await chromium.launch({
         executablePath,
-        args: ["--no-sandbox", "--font-render-hinting=none", "--force-color-profile=srgb", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+        args: ["--no-sandbox", "--font-render-hinting=none", "--force-color-profile=srgb", "--disable-lcd-text", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
+        // the page's own fonts, drawn the same on every machine: no system fonts, one way of rasterizing
+        env: { ...process.env, FONTCONFIG_FILE: plainFontconfig() },
       });
       const page = await browser.newPage({ viewport: { width: options.width ?? 1400, height: options.height ?? 900 }, deviceScaleFactor: 1 });
       await page.goto(url);
@@ -171,4 +174,32 @@ export class WebDriver {
     void this.browser.close();
     this.app?.close();
   }
+}
+
+let fontconfig: string | undefined;
+
+/** A fontconfig without the machine's fonts and with one way of rasterizing (grayscale, unhinted). */
+function plainFontconfig(): string {
+  if (fontconfig === undefined) {
+    const dir = mkdtempSync(join(tmpdir(), "fc-"));
+    fontconfig = join(dir, "fonts.conf");
+    writeFileSync(
+      fontconfig,
+      `<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <cachedir>${dir}/cache</cachedir>
+  <match target="font">
+    <edit name="antialias" mode="assign"><bool>true</bool></edit>
+    <edit name="hinting" mode="assign"><bool>false</bool></edit>
+    <edit name="rgba" mode="assign"><const>none</const></edit>
+    <edit name="lcdfilter" mode="assign"><const>lcdnone</const></edit>
+  </match>
+</fontconfig>
+`,
+    );
+  } else {
+    // written once per process
+  }
+  return fontconfig;
 }

@@ -31,13 +31,16 @@ export type ProductOptions = {
   rows?: number;
   /** The terminal speaks the kitty keyboard protocol (Ghostty, kitty, WezTerm); legacy bytes otherwise (tmux, Terminal.app). */
   kitty?: boolean;
+  /** The session terminal's shell: /bin/sh by default. */
+  shell?: string;
 };
 
 /** Where the product's agents look: the stand's scripted model, no user configuration. */
 function productEnv(options: ProductOptions): Record<string, string> {
   const inherited = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
-  // the session's terminal runs a plain shell, not the user's (fish greetings, prompts and syntax are theirs)
-  return { ...inherited, ...options.home.env, HARNESS_HOME: options.home.dataDir, TERM: "xterm-256color", COLORTERM: "truecolor", SHELL: "/bin/sh" };
+  // the session's terminal runs a plain shell, not the user's (fish greetings, prompts and syntax are theirs);
+  // the update is not asked for: the answer depends on the network and the day
+  return { ...inherited, ...options.home.env, HARNESS_HOME: options.home.dataDir, TERM: "xterm-256color", COLORTERM: "truecolor", SHELL: options.shell ?? "/bin/sh", HARNESS_UPDATE_CHECK: "off" };
 }
 
 export class ProductTui {

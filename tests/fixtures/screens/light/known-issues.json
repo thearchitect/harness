@@ -36,13 +36,13 @@
   "panel.tablet.web: contrast: 4.32 < 4.5 for \"+ add\" (rgb(103, 113, 118) on rgb(239, 238, 238))",
   "terminal.desktop.web: contrast: 1.86 < 4.5 for \"run a command and answer\" (rgb(255, 139, 61) on rgb(223, 231, 236))",
   "terminal.desktop.web: contrast: 2.60 < 4.5 for \"PLAN\" (rgb(135, 144, 149) on rgb(223, 231, 236))",
-  "terminal.desktop.web: contrast: 3.39 < 4.5 for \"terminal · /tmp/hs-XXXXX\" (rgb(138, 114, 203) on rgb(239, 238, 238))",
+  "terminal.desktop.web: contrast: 3.39 < 4.5 for \"terminal · ~~~~~~~~~~~~~\" (rgb(138, 114, 203) on rgb(239, 238, 238))",
   "terminal.desktop.web: contrast: 4.32 < 4.5 for \"+ add\" (rgb(103, 113, 118) on rgb(239, 238, 238))",
   "terminal.phone.web: contrast: 2.81 < 4.5 for \"planning finished  scena\" (rgb(135, 144, 149) on rgb(239, 238, 238))",
-  "terminal.phone.web: contrast: 3.39 < 4.5 for \"terminal · /tmp/hs-XXXXX\" (rgb(138, 114, 203) on rgb(239, 238, 238))",
+  "terminal.phone.web: contrast: 3.39 < 4.5 for \"terminal · ~~~~~~~~~~~~~\" (rgb(138, 114, 203) on rgb(239, 238, 238))",
   "terminal.phone.web: contrast: 4.01 < 4.5 for \"line one\nline two\" (rgb(103, 113, 118) on rgb(222, 233, 225))",
   "terminal.tablet.web: contrast: 1.86 < 4.5 for \"run a command and answer\" (rgb(255, 139, 61) on rgb(223, 231, 236))",
   "terminal.tablet.web: contrast: 2.60 < 4.5 for \"PLAN\" (rgb(135, 144, 149) on rgb(223, 231, 236))",
-  "terminal.tablet.web: contrast: 3.39 < 4.5 for \"terminal · /tmp/hs-XXXXX\" (rgb(138, 114, 203) on rgb(239, 238, 238))",
+  "terminal.tablet.web: contrast: 3.39 < 4.5 for \"terminal · ~~~~~~~~~~~~~\" (rgb(138, 114, 203) on rgb(239, 238, 238))",
   "terminal.tablet.web: contrast: 4.32 < 4.5 for \"+ add\" (rgb(103, 113, 118) on rgb(239, 238, 238))"
 ]

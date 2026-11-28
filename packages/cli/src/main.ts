@@ -289,7 +289,9 @@ async function runTui(args: string[]): Promise<void> {
   let install: Install = { kind: "system" };
   let upgrade: (() => void) | undefined;
   const manifestPath = process.env.HARNESS_MANIFEST;
-  if (manifestPath !== undefined && manifestPath !== "") {
+  if (process.env.HARNESS_UPDATE_CHECK === "off") {
+    updateState = { kind: "off" };
+  } else if (manifestPath !== undefined && manifestPath !== "") {
     void Promise.all([checkUpdates(harnessVersion(), fetch), detectInstall(manifestPath)]).then(([state, found]) => {
       updateState = state;
       install = found;

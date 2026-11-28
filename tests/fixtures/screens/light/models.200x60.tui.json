@@ -59,7 +59,7 @@
   "                  │ ↑↓ select · type filter · enter choose · esc cancel",
   "                  │─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
   "                  │ mc: 00.0K (00%) · idle",
-  "                  │ local:/tmp/hs-XXXXXX/project                                                                                                                   scenario/scripted · ctx 00% · $0.000",
+  "                  │ local:~~~~~~~~~~~~~~~~~~~~~~~~/project                                                                                                         scenario/scripted · ctx 00% · $0.000",
   "                  │ ✻ you shall not pass ✻ session xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
  ],
  "styles": [

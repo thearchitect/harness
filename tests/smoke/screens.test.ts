@@ -8,6 +8,7 @@
 
 import assert from "node:assert/strict";
 import { after, describe, test } from "node:test";
+import { chmodSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { GLOBAL_ACTIONS, type GlobalActionId } from "#client/input/actions.ts";
 import { ScreenBook } from "#testkit/capture/screens.ts";
@@ -42,6 +43,33 @@ const STATES: State[] = [
   { name: "terminal", action: "terminal.toggle", shows: "terminal", then: "echo screens-$((40+2))\r", leave: "terminal.toggle" },
 ];
 
+/**
+ * The session terminal's program on these screens: a prompt and `echo` with arithmetic, the same
+ * bytes on every machine (a system's sh prints its own prompt and redraws it on a resize its own way).
+ */
+function plainShell(home: StandHome): string {
+  const path = join(home.root, "plain-shell");
+  writeFileSync(
+    path,
+    `#!${process.execPath}
+const lines = require("node:readline").createInterface({ input: process.stdin });
+process.stdout.write("$ ");
+lines.on("line", (line) => {
+  const echoed = /^echo (.*)$/.exec(line);
+  if (echoed) {
+    process.stdout.write(echoed[1].replace(/\\$\\(\\((\\d+)\\+(\\d+)\\)\\)/g, (_, a, b) => String(Number(a) + Number(b))) + "\\r\\n");
+  } else {
+    process.stdout.write("plain-shell: only echo\\r\\n");
+  }
+  process.stdout.write("$ ");
+});
+lines.on("close", () => process.exit(0));
+`,
+  );
+  chmodSync(path, 0o755);
+  return path;
+}
+
 describe("the product's screens", { skip }, () => {
   const homes: StandHome[] = [];
   const tuis: ProductTui[] = [];
@@ -68,7 +96,7 @@ describe("the product's screens", { skip }, () => {
         // the light theme is for a light terminal: its screens drawn in one
         terminal: theme === "light" ? LIGHT_TERMINAL : DARK_TERMINAL,
       });
-      const tui = await ProductTui.start({ bundle: bundle ?? "", home, columns: 120, rows: 40 });
+      const tui = await ProductTui.start({ bundle: bundle ?? "", home, columns: 120, rows: 40, shell: plainShell(home) });
       tuis.push(tui);
       {
         const hub = await tui.hub();
