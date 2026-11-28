@@ -6,16 +6,18 @@
 import { readFileSync } from "node:fs";
 import type { Cell } from "../drivers/terminal.ts";
 
-const DEFAULT_FG = "#d4d4d4";
-const DEFAULT_BG = "#1e1e1e";
+/** The terminal's own colors where a cell has none: a dark terminal's, or a light one's (the light theme is for a light terminal). */
+export type TerminalColors = { fg: string; bg: string };
+export const DARK_TERMINAL: TerminalColors = { fg: "#d4d4d4", bg: "#1e1e1e" };
+export const LIGHT_TERMINAL: TerminalColors = { fg: "#1f2328", bg: "#ffffff" };
 
 function escape(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-function style(cell: Cell): string {
-  const fg = cell.inverse ? (cell.bg ?? DEFAULT_BG) : (cell.fg ?? DEFAULT_FG);
-  const bg = cell.inverse ? (cell.fg ?? DEFAULT_FG) : cell.bg;
+function style(cell: Cell, colors: TerminalColors): string {
+  const fg = cell.inverse ? (cell.bg ?? colors.bg) : (cell.fg ?? colors.fg);
+  const bg = cell.inverse ? (cell.fg ?? colors.fg) : cell.bg;
   return [
     `color:${fg}`,
     bg !== undefined ? `background:${bg}` : "",
@@ -29,7 +31,8 @@ function style(cell: Cell): string {
 }
 
 /** The grid as an HTML page: every row exactly `columns` cells wide (wide glyphs take two). */
-export function gridHtml(grid: Cell[][], options: { fontFamily?: string; fontSize?: number } = {}): string {
+export function gridHtml(grid: Cell[][], options: { fontFamily?: string; fontSize?: number; colors?: TerminalColors } = {}): string {
+  const colors = options.colors ?? DARK_TERMINAL;
   const rows = grid.map((row) => {
     let html = "";
     let run = "";
@@ -38,7 +41,7 @@ export function gridHtml(grid: Cell[][], options: { fontFamily?: string; fontSiz
       if (cell.width === 0) {
         continue; // the second half of a wide glyph
       } else {
-        const cellStyle = style(cell);
+        const cellStyle = style(cell, colors);
         const chars = cell.chars === "" ? " " : cell.chars;
         const text = cell.width === 2 ? `<span class="w">${escape(chars)}</span>` : escape(chars);
         if (cellStyle === runStyle) {
@@ -55,7 +58,7 @@ export function gridHtml(grid: Cell[][], options: { fontFamily?: string; fontSiz
   });
   const size = options.fontSize ?? 14;
   return `<!doctype html><meta charset="utf-8"><style>
-html,body{margin:0;background:${DEFAULT_BG}}
+html,body{margin:0;background:${colors.bg}}
 .s{display:inline-block;padding:4px;font-family:${options.fontFamily ?? "'JetBrains Mono','DejaVu Sans Mono',monospace"};font-size:${size}px;line-height:1.2;white-space:pre}
 .r{height:${Math.round(size * 1.2)}px}
 .w{display:inline-block;width:2ch;overflow:hidden}

@@ -21,9 +21,9 @@ runScenario(scenario);
 The stand (`stand/stand.ts`) is a hub in a temporary home with agents on a scripted model
 (`stand.script([{ text }, { toolCalls }])`), optionally extra models (`stand.models([...])`) and a
 `ManualClock`. Drivers act by the keymap's action ids (`tui.act("model.select")`), type text and
-keys, and expose the client's `Workbench` screen — the verdict is always the screen's meaning
-(zones, glyphs, text), never pixels. Steps wait for events; a step that hangs fails after 45 s
-with a report.
+keys, and expose the client's `Workbench` screen — a scenario's verdict is the screen's meaning
+(zones, glyphs, text); how the screens look is the screens' suite (below). Steps wait for events;
+a step that hangs fails after 45 s with a report.
 
 ## Reports and screens
 
@@ -68,6 +68,25 @@ harness-test state|shot|logs|down <id>
 ```
 
 Checks by hand go through these, never through a terminal multiplexer or ad-hoc runs.
+
+## Screens and their baselines
+
+`tests/smoke/screens.test.ts` brings the product (the bundle's TUI and the web app its hub
+serves) to the same screens in both clients — a session with a tool and an answer, choosing a new
+session's folder, the model list, the panel, the session's terminal — at three terminal sizes
+(80×24, 120×40, 200×60) and three windows (phone, tablet, desktop), in the dark and the light
+theme, and compares each with its reviewed baseline (`tests/fixtures/screens/<theme>/`,
+`capture/screens.ts`): a TUI screen as its cell grid (text and style runs), a page by its pixels
+(a small tolerance); values that change from run to run (temporary paths, ids, times, costs) are
+placeholders first. Every screen is also checked by the rules of layout: closed frames and no
+leaked `undefined` in the TUI; nothing wider than the window and text readable against its
+background (WCAG AA) on a page. A rule broken that is not in `known-issues.json` fails; a known
+issue is a finding reviewed and waiting for its fix.
+
+The run's sheet — `.test-reports/<run>/screens/<theme>/index.html` and `sheet.png`, the TUI's
+and the web's screens side by side, the changed ones outlined — is for looking at: a change to a
+UI is looked at there before its commit. `HARNESS_UPDATE_SCREENS=1` accepts what the run shows as
+the new baselines (and its broken rules as known issues): only after looking at them.
 
 ## The gallery
 

@@ -101,6 +101,11 @@ dependency goes into `nix/npm/package.json` and its regenerated lock.
   to the start, the protocol, the client or a UI passes it before a commit
   (`HARNESS_BUNDLE=$(nix build --print-out-paths) nix/check.sh
   tests/smoke/golden-path.test.ts`).
+- How the product looks is tested: `tests/smoke/screens.test.ts` compares the
+  TUI's and the web's screens with their reviewed baselines and checks the
+  rules of layout. A change to a UI is looked at on the run's sheet
+  (`.test-reports/<run>/screens/<theme>/sheet.png`) and what was seen is
+  reported; baselines are accepted (`HARNESS_UPDATE_SCREENS=1`) only after.
 - Checks by hand go through the instrumentation: `harness-test up --product
   [--web] [--kitty]`, `harness-test up <scenario>`, their `do`, `state`,
   `shot`, `logs`. No tmux, `script` or ad-hoc runs: what the instrumentation

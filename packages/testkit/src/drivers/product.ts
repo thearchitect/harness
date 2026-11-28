@@ -135,6 +135,14 @@ export class ProductTui {
     return screenText(this.term).join("\n");
   }
 
+  /** The terminal takes another size, as a window resized does. */
+  async resize(columns: number, rows: number): Promise<void> {
+    this.term.resize(columns, rows);
+    this.pty.resize(columns, rows);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    await this.pending;
+  }
+
   cells(): Cell[][] {
     return screenCells(this.term);
   }
