@@ -89,3 +89,19 @@ dependency goes into `nix/npm/package.json` and its regenerated lock.
   concurrent writers merge by revision or lock — consistency is predictable.
 - Every user-facing behavior has a scenario on the built bundle; prompts and
   tools have golden files.
+
+## Testing the product
+
+- Tests run the product, not a copy of it. A client's window is put together
+  once (`packages/cli/src/window.ts`) for `harness` and the tests' drivers
+  alike; a driver may give only the effects outside the window (terminal,
+  clipboard, browser, where views are kept).
+- The golden path (`tests/smoke/golden-path.test.ts`) runs the bundle's real
+  `bin/harness` in a pseudo-terminal and the web app its hub serves: a change
+  to the start, the protocol, the client or a UI passes it before a commit
+  (`HARNESS_BUNDLE=$(nix build --print-out-paths) nix/check.sh
+  tests/smoke/golden-path.test.ts`).
+- Checks by hand go through the instrumentation: `harness-test up --product
+  [--web] [--kitty]`, `harness-test up <scenario>`, their `do`, `state`,
+  `shot`, `logs`. No tmux, `script` or ad-hoc runs: what the instrumentation
+  lacks is added to it, and the check stays a test.

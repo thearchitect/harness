@@ -3,6 +3,7 @@
 // actions on clients, their state, screens, logs.
 //
 //   node host.ts <id> <scenario file> [<until step>]
+//   node host.ts <id> --product [--web] [--kitty]        the product itself (product-host.ts)
 
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
@@ -14,11 +15,17 @@ import { TuiDriver } from "../drivers/tui.ts";
 import { modelState } from "../report/report.ts";
 import { ScenarioRun, type Scenario } from "../scenario/scenario.ts";
 import { standsDir, type ControlAnswer, type ControlRequest, type StandRecord } from "./protocol.ts";
+import { productAnswer, productDown, productUp } from "./product-host.ts";
+import type { ScriptedTurn } from "../stand/scenario-model.ts";
 
 async function main(): Promise<void> {
   const [id, file, until] = process.argv.slice(2);
   if (id === undefined || file === undefined) {
-    throw new Error("usage: host.ts <id> <scenario file> [<until step>]");
+    throw new Error("usage: host.ts <id> <scenario file> [<until step>] | host.ts <id> --product [--web] [--kitty]");
+  } else if (file === "--product") {
+    process.env.HARNESS_TEST_HOST = "1";
+    const run = await productUp(process.argv.slice(4));
+    serve(id, { scenario: "the product", file, report: run.home.root }, (request, stop) => productAnswer(run, request, stop), () => productDown(run));
   } else {
     process.env.HARNESS_TEST_HOST = "1";
     const module = (await import(pathToFileURL(resolve(file)).href)) as { scenario?: Scenario };
@@ -31,7 +38,7 @@ async function main(): Promise<void> {
       } else {
         // stays before the first step
       }
-      await serve(id, file, run);
+      serve(id, { scenario: run.scenario.name, file, report: run.report.dir }, (request, stop) => answer(run, request, stop), () => run.down());
     }
   }
 }
@@ -71,6 +78,9 @@ async function answer(run: ScenarioRun, request: ControlRequest, stop: () => voi
       return await modelState(client(run, request.client));
     case "shot":
       return { files: await run.report.shoot(`shot-${Date.now()}`) };
+    case "script":
+      run.context.stand.script(JSON.parse(request.turns) as ScriptedTurn[]);
+      return {};
     case "logs": {
       const dir = join(run.context.stand.dataDir, "log", "agents");
       const lines = request.lines ?? 40;
@@ -84,7 +94,7 @@ async function answer(run: ScenarioRun, request: ControlRequest, stop: () => voi
   }
 }
 
-async function serve(id: string, file: string, run: ScenarioRun): Promise<void> {
+function serve(id: string, what: { scenario: string; file: string; report: string }, answerWith: (request: ControlRequest, stop: () => void) => Promise<unknown>, down: () => Promise<void>): void {
   const dir = standsDir();
   mkdirSync(dir, { recursive: true });
   const socket = join(dir, `${id}.sock`);
@@ -94,7 +104,7 @@ async function serve(id: string, file: string, run: ScenarioRun): Promise<void> 
     rmSync(socket, { force: true });
     rmSync(recordPath, { force: true });
     rmSync(join(dir, `${id}.log`), { force: true });
-    void run.down().then(() => process.exit(0));
+    void down().then(() => process.exit(0));
   };
   const server = createServer((connection) => {
     const decoder = new LineDecoder();
@@ -107,7 +117,7 @@ async function serve(id: string, file: string, run: ScenarioRun): Promise<void> 
             if (request === undefined) {
               throw new Error("malformed request");
             } else {
-              return { ok: true, data: await answer(run, request, stop) };
+              return { ok: true, data: await answerWith(request, stop) };
             }
           } catch (error) {
             return { ok: false, error: error instanceof Error ? error.message : String(error) };
@@ -117,7 +127,7 @@ async function serve(id: string, file: string, run: ScenarioRun): Promise<void> 
     });
   });
   server.listen(socket);
-  const record: StandRecord = { id, pid: process.pid, socket, scenario: run.scenario.name, file, report: run.report.dir };
+  const record: StandRecord = { id, pid: process.pid, socket, ...what };
   writeFileSync(recordPath, JSON.stringify(record));
   process.on("SIGTERM", stop);
 }

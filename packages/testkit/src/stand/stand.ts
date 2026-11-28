@@ -21,13 +21,19 @@ const PROBE_EXTENSION_PATH = fileURLToPath(new URL("./probe-extension.ts", impor
 const FAKE_CLAUDE_PATH = fileURLToPath(new URL("../fakes/claude.ts", import.meta.url));
 const MCP_PROBE_PATH = fileURLToPath(new URL("../fakes/mcp-server.ts", import.meta.url));
 
-export type Stand = {
+/**
+ * A stand's home without its hub: a temporary user (its ~/.harness with the scripted model), a
+ * project, and the environment its agents need. The product's own hub runs on it (product.ts): a
+ * real `harness` with `HARNESS_HOME = dataDir` and `env`.
+ */
+export type StandHome = {
   root: string;
   dataDir: string;
   /** Where everything is under `dataDir` (pi's agent directory, the hub's files). */
   layout: Layout;
   project: string;
-  hub: Hub;
+  /** What agents of this home need in their environment (the scripted model, no user configuration). */
+  env: Record<string, string>;
   /** Queues the model's next turns (each request plays the next queued turn, across agents). */
   script(turns: ScriptedTurn[]): void;
   /** Models of the scenario provider besides `scripted`, for agents started from now on. */
@@ -42,6 +48,12 @@ export type Stand = {
   claudeInputs(): string[];
   /** The requests the model received, in order: { agent: "main" | <profile>, context }. */
   requests(): unknown[];
+  /** Removes the home. */
+  remove(): void;
+};
+
+export type Stand = StandHome & {
+  hub: Hub;
   connect(via?: "inproc" | "unix"): Promise<HubConnection>;
   down(): Promise<void>;
 };
@@ -64,6 +76,51 @@ export type StandOptions = {
 };
 
 export async function createStand(options: StandOptions = {}): Promise<Stand> {
+  const home = createStandHome(options);
+  const hub = new Hub({
+    name: options.name ?? "test",
+    dataDir: home.dataDir,
+    harnessVersion: "test",
+    agentCommand: options.bundle !== undefined ? [process.execPath, join(options.bundle, "share/harness/src/packages/agent/src/main.ts")] : undefined,
+    agentEnv: {
+      ...home.env,
+      // agents of a stand run the checkout without the bundle's MCP servers and packages, or a bundle with all of them
+      HARNESS_MANIFEST: options.bundle !== undefined ? join(options.bundle, "share/harness/manifest.json") : "",
+    },
+    summaryIntervalMs: 20,
+    clock: options.clock,
+    maxAgents: options.maxAgents,
+    snapshotEntries: options.snapshotEntries,
+  });
+  const connections: HubConnection[] = [];
+  let server: Server | undefined;
+  return {
+    ...home,
+    hub,
+    async connect(via = "inproc") {
+      let connection: HubConnection;
+      if (via === "unix") {
+        const path = socketPath(home.dataDir);
+        server ??= await listenUnix(hub, path);
+        connection = await HubConnection.open(await unixTransport(path), "test");
+      } else {
+        connection = await HubConnection.open(inProcessTransport(hub), "test");
+      }
+      connections.push(connection);
+      return connection;
+    },
+    async down() {
+      for (const connection of connections) {
+        connection.close();
+      }
+      server?.close();
+      await hub.close();
+      home.remove();
+    },
+  };
+}
+
+export function createStandHome(options: Pick<StandOptions, "server" | "claudeCommand" | "mcpProbe"> = {}): StandHome {
   // short: unix socket paths are limited to about 100 bytes
   const root = mkdtempSync(join(tmpdir(), "hs-"));
   const dataDir = join(root, "h");
@@ -95,12 +152,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
   writeFileSync(claudeScript, "[]");
   writeFileSync(claudeCommand, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(FAKE_CLAUDE_PATH)} "$@"\n`, { mode: 0o755 });
 
-  const hub = new Hub({
-    name: options.name ?? "test",
-    dataDir,
-    harnessVersion: "test",
-    agentCommand: options.bundle !== undefined ? [process.execPath, join(options.bundle, "share/harness/src/packages/agent/src/main.ts")] : undefined,
-    agentEnv: {
+  const env: Record<string, string> = {
       ...(options.server === true ? { HARNESS_SERVER: "1" } : {}),
       // the user's own configuration (extensions' settings in ~/.config, ~/.claude) stays out of a stand;
       // a real Claude Code needs its login in the real home
@@ -114,8 +166,6 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
           }
         : {}),
       TMPDIR: agentTmp,
-      // agents of a stand run the checkout without the bundle's MCP servers and packages, or a bundle with all of them
-      HARNESS_MANIFEST: options.bundle !== undefined ? join(options.bundle, "share/harness/manifest.json") : "",
       // no model catalog refresh from the network: the scripted model is the only one
       PI_OFFLINE: "1",
       HARNESS_EXTRA_EXTENSIONS: `${SCENARIO_MODEL_PATH}:${PROBE_EXTENSION_PATH}`,
@@ -127,21 +177,14 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
       HARNESS_FAKE_CLAUDE_LOG: claudeLog,
       // must never reach Claude: harness runs it on the user's subscription only
       ANTHROPIC_API_KEY: "sk-must-not-pass",
-    },
-    summaryIntervalMs: 20,
-    clock: options.clock,
-    maxAgents: options.maxAgents,
-    snapshotEntries: options.snapshotEntries,
-  });
-  const connections: HubConnection[] = [];
-  let server: Server | undefined;
+  };
 
   return {
     root,
     dataDir,
     layout: layoutOf(dataDir),
     project,
-    hub,
+    env,
     models(ids) {
       writeFileSync(modelsPath, JSON.stringify(ids));
     },
@@ -181,24 +224,7 @@ export async function createStand(options: StandOptions = {}): Promise<Stand> {
             .map((line) => JSON.parse(line) as unknown)
         : [];
     },
-    async connect(via = "inproc") {
-      let connection: HubConnection;
-      if (via === "unix") {
-        const path = socketPath(dataDir);
-        server ??= await listenUnix(hub, path);
-        connection = await HubConnection.open(await unixTransport(path), "test");
-      } else {
-        connection = await HubConnection.open(inProcessTransport(hub), "test");
-      }
-      connections.push(connection);
-      return connection;
-    },
-    async down() {
-      for (const connection of connections) {
-        connection.close();
-      }
-      server?.close();
-      await hub.close();
+    remove() {
       rmSync(root, { recursive: true, force: true });
     },
   };

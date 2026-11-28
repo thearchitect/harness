@@ -76,6 +76,11 @@ test("recent folders, newest session first, under folder ⇒; typing filters at 
   assert.equal(made.selected, 1, "the best match is chosen");
   await keys(made, "enter");
   assert.deepEqual(created, ["/home/u/harness"]);
+  // its session is starting: the choice says so and takes no keys until the session's tab replaces it
+  assert.equal(made.title(), "Starting a session in ~/harness…");
+  await keys(made, "x", "enter", "escape");
+  assert.deepEqual(created, ["/home/u/harness"]);
+  assert.equal(made.filter, "har");
 });
 
 test("folder ⇒ browses the home; → opens a folder, ← goes back to it; Enter on · this folder starts in the folder browsed", async () => {
@@ -107,10 +112,12 @@ test("/ opens the best match: har/pa walks down by typing; a dot shows hidden fo
   await keys(made, "enter");
   assert.deepEqual(created, ["/home/u/harness/packages"]);
 
-  await keys(made, "backspace", "backspace", "backspace");
-  assert.equal(made.path, "/home/u");
-  await keys(made, ".", "c");
-  assert.deepEqual(labels(made), ["· this folder", ".config"]);
+  const { choice: again } = choice();
+  await again.start();
+  await keys(again, "h", "a", "r", "/", "p", "a", "backspace", "backspace", "backspace");
+  assert.equal(again.path, "/home/u");
+  await keys(again, ".", "c");
+  assert.deepEqual(labels(again), ["· this folder", ".config"]);
 });
 
 test("Esc cancels; ← in the recent list does nothing", async () => {

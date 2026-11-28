@@ -130,8 +130,16 @@ export class NewSession {
     return home !== undefined && (path === home || path.startsWith(`${home}/`)) ? `~${path.slice(home.length)}` : path;
   }
 
+  /**
+   * The folder whose session is starting: the choice stays on screen, saying so, and takes no keys
+   * until the session's tab replaces it (typing meanwhile would go nowhere, or to another session).
+   */
+  starting: string | undefined;
+
   title(): string {
-    return this.mode === "recent" || this.path === undefined ? `New session on ${this.hub}` : `New session on ${this.hub} · ${this.label(this.path)}`;
+    return this.starting !== undefined
+      ? `Starting a session in ${this.label(this.starting)}…`
+      : this.mode === "recent" || this.path === undefined ? `New session on ${this.hub}` : `New session on ${this.hub} · ${this.label(this.path)}`;
   }
 
   rows(): NewSessionRow[] {
@@ -219,13 +227,23 @@ export class NewSession {
     } else if (row.kind === "browse") {
       await this.open(index);
     } else {
-      await this.deps.create(row.path);
+      this.starting = row.path;
+      this.deps.changed();
+      try {
+        await this.deps.create(row.path);
+      } catch (error) {
+        this.starting = undefined;
+        this.deps.changed();
+        this.deps.failed(error instanceof Error ? error.message : String(error));
+      }
     }
   }
 
   async key(key: NewSessionKey): Promise<void> {
     const rows = this.rows();
-    if (typeof key === "object") {
+    if (this.starting !== undefined) {
+      return; // its session is starting: the keys wait for its tab
+    } else if (typeof key === "object") {
       if (this.mode === "recent" && this.filter === "" && (key.char === "~" || key.char === "/")) {
         await this.browse(key.char === "~" ? (this.home ?? "~") : "/");
       } else if (key.char === "/") {

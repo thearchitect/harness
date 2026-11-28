@@ -678,8 +678,8 @@ export class Workbench {
     const choice = new NewSession(node, {
       list: (path, hidden) => this.client.connection(node).request("dirs_list", { path, hidden }),
       sessions: () => this.client.sessions(node),
+      // the choice stays, starting, until the new session's tab takes its place (activate)
       create: async (path) => {
-        this.newSessionChoice = undefined;
         await this.newTab(node, path);
       },
       cancel: () => {
@@ -1747,7 +1747,7 @@ export class Workbench {
 
   /** The operator's own command in the session (pi's user bash): its run shows in the transcript. */
   async operatorBash(command: string, excludeFromContext: boolean): Promise<void> {
-    const tab = this.activeTab();
+    const tab = await this.servedTab();
     if (tab?.agent === undefined) {
       this.notify("warning", NO_SESSION);
     } else {
@@ -1871,8 +1871,22 @@ export class Workbench {
   }
 
   /** Sends the editor's text to the active session in the mode it asks for. */
-  async prompt(text: string, mode: RunMode): Promise<void> {
+  /**
+   * The active tab with its agent: a session starting (after a restart, a hub's restart, a tab opened
+   * again) is waited for, so what the operator sends meanwhile reaches it rather than nothing.
+   */
+  private async servedTab(): Promise<Tab | undefined> {
     const tab = this.activeTab();
+    if (tab === undefined || tab.agent !== undefined || tab.unavailable !== undefined) {
+      return tab;
+    } else {
+      await this.ensureAgent(tab);
+      return this.tabs().find((candidate) => sameTab(candidate, tab));
+    }
+  }
+
+  async prompt(text: string, mode: RunMode): Promise<void> {
+    const tab = await this.servedTab();
     if (tab?.agent === undefined) {
       this.notify("warning", NO_SESSION);
     } else {
@@ -2198,8 +2212,8 @@ export class Workbench {
     }
   }
 
-  /** Tabs whose agent is starting now (`hub/sessionId`): `starting…` shows only for them. */
-  private readonly starting = new Set<string>();
+  /** Tabs whose agent is starting now (`hub/sessionId`), with the start: `starting…` shows only for them. */
+  private readonly starting = new Map<string, Promise<void>>();
 
   /**
    * A tab whose agent is not running gets one, on its session file. A file never written (a session
@@ -2208,34 +2222,43 @@ export class Workbench {
    */
   async ensureAgent(tab: Tab | undefined): Promise<void> {
     const key = tab !== undefined ? `${tab.hub}/${tab.sessionId}` : "";
-    if (tab === undefined || tab.agent !== undefined || tab.unavailable !== undefined || this.starting.has(key)) {
-      return; // nothing to start, or starting already
+    const pending = this.starting.get(key);
+    if (pending !== undefined) {
+      await pending; // starting already: done when it is
+    } else if (tab === undefined || tab.agent !== undefined || tab.unavailable !== undefined) {
+      return; // nothing to start
     } else {
-      this.starting.add(key);
-      this.client.changed();
-      this.client.log.info("tab_start", { hub: tab.hub, session: tab.sessionId, file: tab.sessionFile, cwd: tab.cwd });
-      try {
-        const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd, sessionFile: tab.sessionFile });
+      // known as starting before it begins: the screen shows `starting…` from the first frame
+      const started = Promise.resolve().then(() => this.startAgent(tab, key));
+      this.starting.set(key, started);
+      await started;
+    }
+  }
+
+  private async startAgent(tab: Tab, key: string): Promise<void> {
+    this.client.changed();
+    this.client.log.info("tab_start", { hub: tab.hub, session: tab.sessionId, file: tab.sessionFile, cwd: tab.cwd });
+    try {
+      const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd, sessionFile: tab.sessionFile });
+      this.client.noteAgent(tab.hub, agent);
+      this.client.log.info("tab_started", { hub: tab.hub, session: tab.sessionId, agent: agent.id, opened: agent.sessionId });
+      this.expectAgent(tab, agent.id);
+    } catch (error) {
+      this.client.log.warn("tab_start_failed", { hub: tab.hub, session: tab.sessionId, error: error instanceof Error ? error.message : String(error) });
+      if (error instanceof RequestError && error.code === "not_found" && this.draftText(tab) !== "") {
+        const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd });
         this.client.noteAgent(tab.hub, agent);
-        this.client.log.info("tab_started", { hub: tab.hub, session: tab.sessionId, agent: agent.id, opened: agent.sessionId });
-        this.expectAgent(tab, agent.id);
-      } catch (error) {
-        this.client.log.warn("tab_start_failed", { hub: tab.hub, session: tab.sessionId, error: error instanceof Error ? error.message : String(error) });
-        if (error instanceof RequestError && error.code === "not_found" && this.draftText(tab) !== "") {
-          const { agent } = await this.client.connection(tab.hub).request("agent_start", { cwd: tab.cwd });
-          this.client.noteAgent(tab.hub, agent);
-          this.client.applyWorkspace(tab.hub, await this.client.connection(tab.hub).request("workspace_tab_replace", { sessionId: tab.sessionId, next: { sessionId: agent.sessionId, sessionFile: agent.sessionFile ?? "" } }));
-          this.retarget(tab, { hub: tab.hub, sessionId: agent.sessionId });
-        } else if (error instanceof RequestError && error.code === "not_found") {
-          await this.updateTabs(tab.hub, (records) => records.filter((record) => record.sessionId !== tab.sessionId));
-          this.notify("warning", `tab ${tab.title}: its session file is gone, the tab was removed`);
-        } else {
-          this.notify("error", `tab ${tab.title}: ${error instanceof Error ? error.message : String(error)}`);
-        }
-      } finally {
-        this.starting.delete(key);
-        this.client.changed();
+        this.client.applyWorkspace(tab.hub, await this.client.connection(tab.hub).request("workspace_tab_replace", { sessionId: tab.sessionId, next: { sessionId: agent.sessionId, sessionFile: agent.sessionFile ?? "" } }));
+        this.retarget(tab, { hub: tab.hub, sessionId: agent.sessionId });
+      } else if (error instanceof RequestError && error.code === "not_found") {
+        await this.updateTabs(tab.hub, (records) => records.filter((record) => record.sessionId !== tab.sessionId));
+        this.notify("warning", `tab ${tab.title}: its session file is gone, the tab was removed`);
+      } else {
+        this.notify("error", `tab ${tab.title}: ${error instanceof Error ? error.message : String(error)}`);
       }
+    } finally {
+      this.starting.delete(key);
+      this.client.changed();
     }
   }
 

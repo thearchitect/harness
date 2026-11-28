@@ -12,6 +12,8 @@ export type ControlRequest =
   | { cmd: "state"; client: string }
   | { cmd: "shot"; client?: string }
   | { cmd: "logs"; lines?: number }
+  /** The scripted model's next turns (JSON: [{ text }, { toolCalls }]). */
+  | { cmd: "script"; turns: string }
   | { cmd: "down" };
 
 export type ControlAnswer = { ok: true; data: unknown } | { ok: false; error: string };

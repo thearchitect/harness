@@ -129,35 +129,45 @@ export class VirtualTerminal implements TuiTerminal {
 
   /** The visible screen as text, one string per row, trailing spaces trimmed. */
   text(): string[] {
-    const buffer = this.xterm.buffer.active;
-    return Array.from({ length: this.xterm.rows }, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? "");
+    return screenText(this.xterm);
   }
 
   /** The visible screen as cells with resolved colors (undefined: the terminal's default). */
   cells(): Cell[][] {
-    const buffer = this.xterm.buffer.active;
-    return Array.from({ length: this.xterm.rows }, (_, row) => {
-      const line = buffer.getLine(buffer.viewportY + row);
-      return Array.from({ length: this.xterm.cols }, (_, column) => {
-        const cell = line?.getCell(column);
-        if (cell === undefined) {
-          return { chars: " ", width: 1, fg: undefined, bg: undefined, bold: false, italic: false, dim: false, underline: false, inverse: false };
-        } else {
-          const fg = cell.isFgRGB() ? rgb(cell.getFgColor()) : cell.isFgPalette() ? palette(cell.getFgColor()) : undefined;
-          const bg = cell.isBgRGB() ? rgb(cell.getBgColor()) : cell.isBgPalette() ? palette(cell.getBgColor()) : undefined;
-          return {
-            chars: cell.getChars(),
-            width: cell.getWidth(),
-            fg,
-            bg,
-            bold: cell.isBold() !== 0,
-            italic: cell.isItalic() !== 0,
-            dim: cell.isDim() !== 0,
-            underline: cell.isUnderline() !== 0,
-            inverse: cell.isInverse() !== 0,
-          };
-        }
-      });
-    });
+    return screenCells(this.xterm);
   }
+}
+
+/** A headless xterm's visible screen as text, one string per row, trailing spaces trimmed. */
+export function screenText(term: InstanceType<typeof xterm.Terminal>): string[] {
+  const buffer = term.buffer.active;
+  return Array.from({ length: term.rows }, (_, row) => buffer.getLine(buffer.viewportY + row)?.translateToString(true) ?? "");
+}
+
+/** A headless xterm's visible screen as cells with resolved colors (undefined: the terminal's default). */
+export function screenCells(term: InstanceType<typeof xterm.Terminal>): Cell[][] {
+  const buffer = term.buffer.active;
+  return Array.from({ length: term.rows }, (_, row) => {
+    const line = buffer.getLine(buffer.viewportY + row);
+    return Array.from({ length: term.cols }, (_, column) => {
+      const cell = line?.getCell(column);
+      if (cell === undefined) {
+        return { chars: " ", width: 1, fg: undefined, bg: undefined, bold: false, italic: false, dim: false, underline: false, inverse: false };
+      } else {
+        const fg = cell.isFgRGB() ? rgb(cell.getFgColor()) : cell.isFgPalette() ? palette(cell.getFgColor()) : undefined;
+        const bg = cell.isBgRGB() ? rgb(cell.getBgColor()) : cell.isBgPalette() ? palette(cell.getBgColor()) : undefined;
+        return {
+          chars: cell.getChars(),
+          width: cell.getWidth(),
+          fg,
+          bg,
+          bold: cell.isBold() !== 0,
+          italic: cell.isItalic() !== 0,
+          dim: cell.isDim() !== 0,
+          underline: cell.isUnderline() !== 0,
+          inverse: cell.isInverse() !== 0,
+        };
+      }
+    });
+  });
 }

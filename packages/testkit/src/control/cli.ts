@@ -3,8 +3,11 @@
 //   harness-test [unit|integration|all] [<name>] [--shots <step|all>]   run tests (all by default)
 //   harness-test gallery [<filter>] [--compare <dir>]                    the TUI gallery
 //   harness-test up <scenario file> [--until <step>]                     a stand in the background; prints its id
+//   harness-test up --product [--web] [--kitty]                          the product: the bundle's harness (HARNESS_BUNDLE)
+//                                                                        in a pseudo-terminal, the web app its hub serves
 //   harness-test step|status|state|shot|logs|down <id> …                 control a stand
-//   harness-test do <id> <client> action|key|type <value>
+//   harness-test do <id> <client> action|key|type <value>                (a scenario's key: raw bytes; the product's: a key id, ctrl+n)
+//   harness-test script <id> '<turns json>'                              the scripted model's next turns
 //
 // Reports: .test-reports/<run>/ (latest: .test-reports/latest).
 
@@ -71,14 +74,14 @@ function control(id: string, request: ControlRequest): Promise<unknown> {
   }
 }
 
-async function up(file: string, until: string | undefined): Promise<void> {
+async function up(target: string[], until: string | undefined): Promise<void> {
   const id = Math.random().toString(36).slice(2, 8);
   const host = join(import.meta.dirname, "host.ts");
   mkdirSync(standsDir(), { recursive: true });
   // the host outlives this command: its output goes to a file next to its socket
   const logPath = join(standsDir(), `${id}.log`);
   const log = openSync(logPath, "a");
-  const child = spawn("node", [host, id, file, ...(until !== undefined ? [until] : [])], { cwd: ROOT, detached: true, stdio: ["ignore", log, log] });
+  const child = spawn("node", [host, id, ...target, ...(until !== undefined ? [until] : [])], { cwd: ROOT, detached: true, stdio: ["ignore", log, log] });
   closeSync(log);
   const recordPath = join(standsDir(), `${id}.json`);
   await new Promise<void>((resolve, reject) => {
@@ -102,7 +105,11 @@ async function up(file: string, until: string | undefined): Promise<void> {
 
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
-  const { values, positionals } = parseArgs({ args: rest, allowPositionals: true, options: { shots: { type: "string" }, until: { type: "string" }, compare: { type: "string" }, lines: { type: "string" } } });
+  const { values, positionals } = parseArgs({
+    args: rest,
+    allowPositionals: true,
+    options: { shots: { type: "string" }, until: { type: "string" }, compare: { type: "string" }, lines: { type: "string" }, product: { type: "boolean" }, web: { type: "boolean" }, kitty: { type: "boolean" } },
+  });
   const [id, ...args] = positionals;
   switch (command ?? "all") {
     case "all":
@@ -114,7 +121,14 @@ async function main(): Promise<void> {
       out(await runGallery({ filter: positionals[0], compare: values.compare }));
       break;
     case "up":
-      await up(id ?? "", values.until);
+      if (values.product === true) {
+        await up(["--product", ...(values.web === true ? ["--web"] : []), ...(values.kitty === true ? ["--kitty"] : [])], undefined);
+      } else {
+        await up([id ?? ""], values.until);
+      }
+      break;
+    case "script":
+      out(await control(id ?? "", { cmd: "script", turns: args[0] ?? "[]" }));
       break;
     case "status":
     case "step":

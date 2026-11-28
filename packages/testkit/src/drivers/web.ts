@@ -25,9 +25,10 @@ export type WebScreen = {
 export class WebDriver {
   readonly page: Page;
   private readonly browser: Browser;
-  private readonly app: WebApp;
+  /** The web server this driver started (a stand's); undefined when a hub serves the app (the product). */
+  private readonly app: WebApp | undefined;
 
-  private constructor(browser: Browser, page: Page, app: WebApp) {
+  private constructor(browser: Browser, page: Page, app: WebApp | undefined) {
     this.browser = browser;
     this.page = page;
     this.app = app;
@@ -38,13 +39,27 @@ export class WebDriver {
     return appWebDir() === undefined ? "no web build of the app (HARNESS_APP_WEB)" : bundledBrowser() === undefined ? "no bundle browser (HARNESS_MANIFEST)" : undefined;
   }
 
+  /** The app on a web server of its own over a stand's hub. */
   static async start(open: () => Promise<Transport>, options: WebDriverOptions = {}): Promise<WebDriver> {
     const staticDir = appWebDir();
-    const executablePath = bundledBrowser();
-    if (staticDir === undefined || executablePath === undefined) {
+    if (staticDir === undefined) {
       throw new Error(`the web driver needs ${WebDriver.available()}`);
     } else {
       const app = await startWebApp({ staticDir, open });
+      return await WebDriver.launch(app.url, app, options);
+    }
+  }
+
+  /** The app a hub serves, at `url` (a pairing link: the page pairs, gets its cookie and connects). */
+  static open(url: string, options: WebDriverOptions = {}): Promise<WebDriver> {
+    return WebDriver.launch(url, undefined, options);
+  }
+
+  private static async launch(url: string, app: WebApp | undefined, options: WebDriverOptions): Promise<WebDriver> {
+    const executablePath = bundledBrowser();
+    if (executablePath === undefined) {
+      throw new Error(`the web driver needs ${WebDriver.available()}`);
+    } else {
       const { chromium } = await import("playwright-core");
       // a fake microphone (a tone) that needs no permission prompt: voice input runs unattended
       const browser = await chromium.launch({
@@ -52,7 +67,7 @@ export class WebDriver {
         args: ["--no-sandbox", "--font-render-hinting=none", "--force-color-profile=srgb", "--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream"],
       });
       const page = await browser.newPage({ viewport: { width: options.width ?? 1400, height: options.height ?? 900 }, deviceScaleFactor: 1 });
-      await page.goto(app.url);
+      await page.goto(url);
       await page.getByRole("tablist", { name: "sessions" }).waitFor({ timeout: 30_000 });
       return new WebDriver(browser, page, app);
     }
@@ -85,6 +100,60 @@ export class WebDriver {
     await this.page.getByRole("textbox", { name: "Message" }).press("Control+Enter");
   }
 
+  /**
+   * A key by pi-tui's name (`ctrl+n`, `alt+/`, `escape`, `pageDown`), as a browser reports it: by
+   * the key's place (`KeyN`, `Slash`), so the app's code-based keys see what a keyboard sends.
+   */
+  async key(id: string): Promise<void> {
+    const parts = id.endsWith("++") ? [...id.slice(0, -2).split("+"), "+"] : id.split("+");
+    const name = parts.at(-1) ?? "";
+    const named: Record<string, string> = {
+      escape: "Escape",
+      enter: "Enter",
+      tab: "Tab",
+      backspace: "Backspace",
+      delete: "Delete",
+      up: "ArrowUp",
+      down: "ArrowDown",
+      left: "ArrowLeft",
+      right: "ArrowRight",
+      home: "Home",
+      end: "End",
+      pageUp: "PageUp",
+      pageDown: "PageDown",
+      space: "Space",
+      "/": "Slash",
+      "\\": "Backslash",
+    };
+    const key = named[name] ?? (/^[a-z]$/.test(name) ? `Key${name.toUpperCase()}` : /^[0-9]$/.test(name) ? `Digit${name}` : name);
+    const modifiers = [parts.includes("ctrl") ? "Control" : undefined, parts.includes("alt") ? "Alt" : undefined, parts.includes("shift") ? "Shift" : undefined].filter((part) => part !== undefined);
+    await this.page.keyboard.press([...modifiers, key].join("+"));
+  }
+
+  /** Text typed where the keyboard is (the message, a dialog's field, the folder list). */
+  async keys(text: string): Promise<void> {
+    await this.page.keyboard.type(text);
+  }
+
+  /** The page's visible text. */
+  text(): Promise<string> {
+    return this.page.locator("body").innerText();
+  }
+
+  async waitForText(predicate: (text: string) => boolean, timeoutMs = 20_000): Promise<string> {
+    const started = Date.now();
+    for (;;) {
+      const text = await this.text();
+      if (predicate(text)) {
+        return text;
+      } else if (Date.now() - started > timeoutMs) {
+        throw new Error(`the web page never matched; it shows:\n${text}`);
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+  }
+
   aria(): Promise<string> {
     return this.page.locator("body").ariaSnapshot();
   }
@@ -100,6 +169,6 @@ export class WebDriver {
 
   stop(): void {
     void this.browser.close();
-    this.app.close();
+    this.app?.close();
   }
 }
