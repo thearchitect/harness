@@ -69,6 +69,11 @@ harness-test state|shot|logs|down <id>
 
 Checks by hand go through these, never through a terminal multiplexer or ad-hoc runs.
 
+`tests/smoke/upgrade.test.ts` walks the way up from an older version: a home the product wrote,
+folded back into the flat layout of before (`ui.tabs` on node `default`, the window's state of
+version 1 with a draft, the old event log), is moved by the bundle's `harness` on start, and the
+session goes on with its draft in both clients, with no error in the log.
+
 ## Screens and their baselines
 
 `tests/smoke/screens.test.ts` brings the product (the bundle's TUI and the web app its hub
